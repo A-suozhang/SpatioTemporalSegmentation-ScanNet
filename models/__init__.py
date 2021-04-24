@@ -5,6 +5,7 @@
 # the code.
 import models.resnet as resnet
 import models.res16unet as res16unet
+import models.mink_transformer as mink_transformer
 
 MODELS = []
 
@@ -15,6 +16,7 @@ def add_models(module):
 
 add_models(resnet)
 add_models(res16unet)
+add_models(mink_transformer)
 
 
 def get_models():

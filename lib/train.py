@@ -23,8 +23,7 @@ def validate(model, val_data_loader, writer, curr_iter, config, transform_data_f
   v_loss, v_score, v_mAP, v_mIoU = test(model, val_data_loader, config, transform_data_fn)
   writer.add_scalar('validation/mIoU', v_mIoU, curr_iter)
   writer.add_scalar('validation/loss', v_loss, curr_iter)
-  writer.add_scalar('validation/precision_at_1', v_score, curr_iter)
-
+  writer.add_scalar('validation/precision_at_1', v_score, curr_iter) 
   return v_mIoU
 
 
@@ -88,7 +87,7 @@ def train(model, data_loader, val_data_loader, config, transform_data_fn=None):
         # Preprocess input
         if config.normalize_color:
           input[:, :3] = input[:, :3] / 255. - 0.5
-        sinput = SparseTensor(input, coords).to(device)
+        sinput = SparseTensor(input, coords, device=device)
 
         data_time += data_timer.toc(False)
 
@@ -107,6 +106,9 @@ def train(model, data_loader, val_data_loader, config, transform_data_fn=None):
       # Update number of steps
       optimizer.step()
       scheduler.step()
+
+      # CLEAR CACHE!
+      torch.cuda.empty_cache()
 
       data_time_avg.update(data_time)
       iter_time_avg.update(iter_timer.toc(False))

@@ -100,7 +100,8 @@ class DictDataset(Dataset, ABC):
       data_root = Path(data_root)
 
     self.data_root = data_root
-    self.data_paths = sorted(data_paths)
+    # self.data_paths = sorted(data_paths)
+    self.data_paths = data_paths
     self.input_transform = input_transform
     self.target_transform = target_transform
 
@@ -401,6 +402,7 @@ class SparseTemporalVoxelizationDataset(SparseVoxelizationDataset):
 
     ptcs = [self.convert_mat2cfl(ptc) for ptc in ptcs]
     coords, feats, labels = zip(*ptcs)
+
     outs = self.sparse_voxelizer.voxelize_temporal(
         coords, feats, labels, centers=centers, return_transformation=self.return_transformation)
 
@@ -502,6 +504,7 @@ def initialize_data_loader(DatasetClass,
         num_workers=threads,
         batch_size=batch_size,
         collate_fn=collate_fn,
+        worker_init_fn=_init_fn,
         sampler=InfSampler(dataset, shuffle))
   else:
     # Default shuffle=False
@@ -510,10 +513,13 @@ def initialize_data_loader(DatasetClass,
         num_workers=threads,
         batch_size=batch_size,
         collate_fn=collate_fn,
+        worker_init_fn=_init_fn,
         shuffle=shuffle)
 
   return data_loader
 
+def _init_fn(worker_id):
+        np.random.seed(2021)
 
 def generate_meta(voxels_path,
                   split_path,

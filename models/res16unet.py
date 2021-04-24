@@ -19,7 +19,8 @@ class Res16UNetBase(ResNetBase):
   OUT_PIXEL_DIST = 1
   NORM_TYPE = NormType.BATCH_NORM
   NON_BLOCK_CONV_TYPE = ConvType.SPATIAL_HYPERCUBE
-  CONV_TYPE = ConvType.SPATIAL_HYPERCUBE_TEMPORAL_HYPERCROSS
+  # CONV_TYPE = ConvType.SPATIAL_HYPERCUBE_TEMPORAL_HYPERCROSS
+  CONV_TYPE = ConvType.SPATIAL_HYPERCUBE
 
   # To use the model, must call initialize_coords before forward pass.
   # Once data is processed, call clear to reset the model before calling initialize_coords
@@ -59,6 +60,7 @@ class Res16UNetBase(ResNetBase):
         conv_type=self.NON_BLOCK_CONV_TYPE,
         D=D)
     self.bn1 = get_norm(self.NORM_TYPE, self.inplanes, D, bn_momentum=bn_momentum)
+    import ipdb; ipdb.set_trace()
     self.block1 = self._make_layer(
         self.BLOCK,
         self.PLANES[0],
@@ -205,6 +207,7 @@ class Res16UNetBase(ResNetBase):
     self.final = conv(self.PLANES[7], out_channels, kernel_size=1, stride=1, bias=True, D=D)
 
   def forward(self, x):
+    # import ipdb; ipdb.set_trace()
     out = self.conv0p1s1(x)
     out = self.bn0(out)
     out_p1 = get_nonlinearity_fn(self.config.nonlinearity, out)

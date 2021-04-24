@@ -125,3 +125,16 @@ class ScannetSparseVoxelizationDataset(SparseVoxelizationDataset):
 
 class ScannetSparseVoxelization2cmDataset(ScannetSparseVoxelizationDataset):
   VOXEL_SIZE = 0.02
+
+
+if __name__ == '__main__':
+
+    def setup_seed(seed):
+        torch.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+        np.random.seed(seed)
+        random.seed(seed)
+        torch.backends.cudnn.deterministic = True
+
+    setup_seed(2021)
+

@@ -69,7 +69,7 @@ class ConvType(Enum):
   HYPERCROSS = 3, 'HYPERCROSS'
   SPATIAL_HYPERCROSS = 4, 'SPATIAL_HYPERCROSS'
   SPATIO_TEMPORAL_HYPERCROSS = 5, 'SPATIO_TEMPORAL_HYPERCROSS'
-  SPATIAL_HYPERCUBE_TEMPORAL_HYPERCROSS = 6, 'SPATIAL_HYPERCUBE_TEMPORAL_HYPERCROSS '
+  # SPATIAL_HYPERCUBE_TEMPORAL_HYPERCROSS = 6, 'SPATIAL_HYPERCUBE_TEMPORAL_HYPERCROSS '
 
   def __new__(cls, value, name):
     member = object.__new__(cls)
@@ -84,16 +84,16 @@ class ConvType(Enum):
 # Covert the ConvType var to a RegionType var
 conv_to_region_type = {
     # kernel_size = [k, k, k, 1]
-    ConvType.HYPERCUBE: ME.RegionType.HYPERCUBE,
-    ConvType.SPATIAL_HYPERCUBE: ME.RegionType.HYPERCUBE,
-    ConvType.SPATIO_TEMPORAL_HYPERCUBE: ME.RegionType.HYPERCUBE,
-    ConvType.HYPERCROSS: ME.RegionType.HYPERCROSS,
-    ConvType.SPATIAL_HYPERCROSS: ME.RegionType.HYPERCROSS,
-    ConvType.SPATIO_TEMPORAL_HYPERCROSS: ME.RegionType.HYPERCROSS,
-    ConvType.SPATIAL_HYPERCUBE_TEMPORAL_HYPERCROSS: ME.RegionType.HYBRID
+    ConvType.HYPERCUBE: ME.RegionType.HYPER_CUBE,
+    ConvType.SPATIAL_HYPERCUBE: ME.RegionType.HYPER_CUBE,
+    ConvType.SPATIO_TEMPORAL_HYPERCUBE: ME.RegionType.HYPER_CUBE,
+    ConvType.HYPERCROSS: ME.RegionType.HYPER_CROSS,
+    ConvType.SPATIAL_HYPERCROSS: ME.RegionType.HYPER_CROSS,
+    ConvType.SPATIO_TEMPORAL_HYPERCROSS: ME.RegionType.HYPER_CROSS,
+    # ConvType.SPATIAL_HYPERCUBE_TEMPORAL_HYPERCROSS: ME.RegionType.HYBRID
 }
 
-int_to_region_type = {m.value: m for m in ME.RegionType}
+# int_to_region_type = {m.value: m for m in ME.RegionType}
 
 
 def convert_region_type(region_type):
@@ -167,7 +167,7 @@ def conv(in_planes,
       kernel_size=kernel_size,
       stride=stride,
       dilation=dilation,
-      has_bias=bias,
+      bias=bias,
       kernel_generator=kernel_generator,
       dimension=D)
 
@@ -196,7 +196,7 @@ def conv_tr(in_planes,
       kernel_size=kernel_size,
       stride=upsample_stride,
       dilation=dilation,
-      has_bias=bias,
+      bias=bias,
       kernel_generator=kernel_generator,
       dimension=D)
 

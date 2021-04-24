@@ -92,7 +92,7 @@ def test(model, data_loader, config, transform_data_fn=None, has_gt=True):
 
       if config.normalize_color:
         input[:, :3] = input[:, :3] / 255. - 0.5
-      sinput = ME.SparseTensor(input, coords).to(device)
+      sinput = ME.SparseTensor(input, coords, device=device)
 
       # Feed forward
       inputs = (sinput,)
@@ -138,7 +138,7 @@ def test(model, data_loader, config, transform_data_fn=None, has_gt=True):
             reordered_ap_class,
             class_names=class_names)
 
-      if iteration % config.empty_cache_freq == 0:
+      if iteration % 5 == 0:
         # Clear cache
         torch.cuda.empty_cache()
 

@@ -12,20 +12,18 @@ export EXPERIMENT=$2
 export TIME=$(date +"%Y-%m-%d_%H-%M-%S")
 
 export DATASET=${DATASET:-ScannetSparseVoxelizationDataset}
-export MODEL=${MODEL:-Res16UNet34A}
+export MODEL=${MODEL:-Res16UNet34C}
 export OPTIMIZER=${OPTIMIZER:-SGD}
-export LR=${LR:-1e-1}
+export LR=${LR:-1e-2}
 export BATCH_SIZE=${BATCH_SIZE:-12}
 export SCHEDULER=${SCHEDULER:-SquaredLR}
 export MAX_ITER=${MAX_ITER:-60000}
 
-export OUTPATH=./outputs/$DATASET/$MODEL/${OPTIMIZER}-l$LR-b$BATCH_SIZE-$SCHEDULER-i$MAX_ITER-$EXPERIMENT/$TIME
+export OUTPATH=./outputs/$DATASET/$MODEL/$LOG/
 export VERSION=$(git rev-parse HEAD)
 
 # Save the experiment detail and dir to the common log file
 mkdir -p $OUTPATH
-
-LOG="$OUTPATH/$TIME.txt"
 
 # put the arguments on the first line for easy resume
 echo -e "
@@ -38,29 +36,32 @@ echo -e "
     --batch_size $BATCH_SIZE \
     --scheduler $SCHEDULER \
     --max_iter $MAX_ITER \
-    $3" >> $LOG
+    $3" 
+
 echo Logging output to "$LOG"
-echo $(pwd) >> $LOG
-echo "Version: " $VERSION >> $LOG
-echo "Git diff" >> $LOG
-echo "" >> $LOG
-git diff | tee -a $LOG
-echo "" >> $LOG
-nvidia-smi | tee -a $LOG
+#echo $(pwd) >> $LOG
+#echo "Version: " $VERSION >> $LOG
+#echo "Git diff" >> $LOG
+#echo "" >> $LOG
+#git diff | tee -a $LOG
+#echo "" >> $LOG
+#nvidia-smi | tee -a $LOG
 
 time python -W ignore main.py \
-    --log_dir $OUTPATH \
-    --dataset $DATASET \
-    --model $MODEL \
-    --train_limit_numpoints 1200000 \
-    --lr $LR \
-    --optimizer $OPTIMIZER \
-    --batch_size $BATCH_SIZE \
-    --scheduler $SCHEDULER \
-    --max_iter $MAX_ITER \
-    $3 2>&1 | tee -a "$LOG"
+	--log_dir $OUTPATH \
+	--dataset $DATASET \
+	--model $MODEL \
+	--train_limit_numpoints 1200000 \
+	--lr $LR \
+	--optimizer $OPTIMIZER \
+	--batch_size $BATCH_SIZE \
+	--scheduler $SCHEDULER \
+	--max_iter $MAX_ITER \
+	$3 
 
-time python -W ignore main.py \
-    --test_config $OUT_PATH/config.json \
-    --weights $OUTPATH/weights.pth \
-    $3 2>&1 | tee -a "$LOG"
+#time python -W ignore main.py \
+    #--log_dir $OUTPATH \
+    #--test_config ${OUTPATH}config.json \
+    #--weights ${OUTPATH}weights.pth \
+    #$3 
+	##2>&1 | tee -a "$LOG"

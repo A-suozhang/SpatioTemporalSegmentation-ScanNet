@@ -4,6 +4,7 @@
 # Networks", CVPR'19 (https://arxiv.org/abs/1904.08755) if you use any part of
 # the code.
 import numpy as np
+import os
 import logging
 from plyfile import PlyData, PlyElement
 import pandas as pd
@@ -22,7 +23,7 @@ def retry_on_ioerror(exc):
     stop_max_delay=30000)
 def read_plyfile(filepath):
   """Read ply file and return it as numpy array. Returns None if emtpy."""
-  with open(filepath, 'rb') as f:
+  with open(str(filepath)+'.ply', 'rb') as f:
     plydata = PlyData.read(f)
   if plydata.elements:
     return pd.DataFrame(plydata.elements[0].data).values

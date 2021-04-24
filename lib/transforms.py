@@ -7,6 +7,7 @@ import random
 
 import logging
 import numpy as np
+import torch
 import scipy
 import scipy.ndimage
 import scipy.interpolate
@@ -44,6 +45,7 @@ class RandomHorizontalFlip(object):
     self.horz_axes = set(range(self.D)) - set([self.upright_axis])
 
   def __call__(self, coords, feats, labels):
+    coords = coords.numpy()
     if random.random() < 0.95:
       for curr_ax in self.horz_axes:
         if random.random() < 0.5:
@@ -248,9 +250,10 @@ class cfl_collate_fn_factory:
             f'limit. Truncating batch size at {batch_id} out of {num_full_batch_size} with {batch_num_points - num_points}.'
         )
         break
-      coords_batch.append(torch.from_numpy(coords[batch_id]).int())
+
+      coords_batch.append(coords[batch_id])
       feats_batch.append(torch.from_numpy(feats[batch_id]))
-      labels_batch.append(torch.from_numpy(labels[batch_id]).int())
+      labels_batch.append(torch.from_numpy(labels[batch_id]))
 
     # Concatenate all lists
     coords_batch, feats_batch, labels_batch = ME.utils.sparse_collate(coords_batch, feats_batch, labels_batch)
