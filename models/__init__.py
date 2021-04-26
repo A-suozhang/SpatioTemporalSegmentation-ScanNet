@@ -6,17 +6,19 @@
 import models.resnet as resnet
 import models.res16unet as res16unet
 import models.mink_transformer as mink_transformer
+import models.point_transformer as point_transformer
 
 MODELS = []
 
 
 def add_models(module):
-  MODELS.extend([getattr(module, a) for a in dir(module) if 'Net' in a])
+  MODELS.extend([getattr(module, a) for a in dir(module) if ('Net' in a or 'Transformer' in a)])
 
 
 add_models(resnet)
 add_models(res16unet)
 add_models(mink_transformer)
+add_models(point_transformer)
 
 
 def get_models():

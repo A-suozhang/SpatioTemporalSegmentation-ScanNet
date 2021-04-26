@@ -19,8 +19,6 @@ export BATCH_SIZE=${BATCH_SIZE:-12}
 export SCHEDULER=${SCHEDULER:-SquaredLR}
 export MAX_ITER=${MAX_ITER:-60000}
 
-export POINTS=${POINTS:-8192}
-
 export OUTPATH=./outputs/$DATASET/$MODEL/$LOG/
 #export VERSION=$(git rev-parse HEAD)
 
@@ -49,22 +47,20 @@ echo Logging output to "$LOG"
 #echo "" >> $LOG
 #nvidia-smi | tee -a $LOG
 
+#time python -W ignore main.py \
+	#--log_dir $OUTPATH \
+	#--dataset $DATASET \
+	#--model $MODEL \
+	#--train_limit_numpoints 1200000 \
+	#--lr $LR \
+	#--optimizer $OPTIMIZER \
+	#--batch_size $BATCH_SIZE \
+	#--scheduler $SCHEDULER \
+	#--max_iter $MAX_ITER \
+	#$3 
+
 time python -W ignore main.py \
 	--log_dir $OUTPATH \
-	--dataset $DATASET \
-	--model $MODEL \
-	--train_limit_numpoints 1200000 \
-	--lr $LR \
-	--optimizer $OPTIMIZER \
-	--batch_size $BATCH_SIZE \
-	--scheduler $SCHEDULER \
-	--max_iter $MAX_ITER \
-	--num_points $POINTS \
+	--test_config ${OUTPATH}config.json \
+	--weights ${OUTPATH}weights.pth \
 	$3 
-
-#time python -W ignore main.py \
-    #--log_dir $OUTPATH \
-    #--test_config ${OUTPATH}config.json \
-    #--weights ${OUTPATH}weights.pth \
-    #$3 
-	##2>&1 | tee -a "$LOG"

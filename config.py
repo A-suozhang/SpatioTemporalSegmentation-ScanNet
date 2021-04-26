@@ -82,7 +82,7 @@ data_arg.add_argument('--val_batch_size', type=int, default=1)
 data_arg.add_argument('--test_batch_size', type=int, default=1)
 data_arg.add_argument('--cache_data', type=str2bool, default=False)
 data_arg.add_argument(
-    '--threads', type=int, default=16, help='num threads for train/test dataloader')
+    '--threads', type=int, default=0, help='num threads for train/test dataloader')
 data_arg.add_argument('--val_threads', type=int, default=8, help='num threads for val dataloader')
 data_arg.add_argument('--ignore_label', type=int, default=255)
 data_arg.add_argument('--train_elastic_distortion', type=str2bool, default=True)
@@ -91,6 +91,12 @@ data_arg.add_argument('--return_transformation', type=str2bool, default=False)
 data_arg.add_argument('--ignore_duplicate_class', type=str2bool, default=False)
 data_arg.add_argument('--partial_crop', type=float, default=0.)
 data_arg.add_argument('--train_limit_numpoints', type=int, default=0)
+
+# data_arg.add_argument('--points', type=bool, default=False)
+data_arg.add_argument('--voxel_size', type=float, default=0.05)
+data_arg.add_argument('--num_points', type=int, default=8192)
+data_arg.add_argument('--pure_point', type=bool, default=False)
+
 
 # Point Cloud Dataset
 data_arg.add_argument(
@@ -104,7 +110,7 @@ train_arg = add_argument_group('Training')
 train_arg.add_argument('--is_train', type=str2bool, default=True)
 train_arg.add_argument('--stat_freq', type=int, default=50, help='print frequency')
 train_arg.add_argument('--test_stat_freq', type=int, default=100, help='print frequency')
-train_arg.add_argument('--save_freq', type=int, default=1000, help='save frequency')
+train_arg.add_argument('--save_freq', type=int, default=200, help='save frequency')
 train_arg.add_argument('--val_freq', type=int, default=500, help='validation frequency')
 train_arg.add_argument('--train_phase', type=str, default='train', help='Dataset for training')
 train_arg.add_argument('--val_phase', type=str, default='val', help='Dataset for validation')
@@ -148,6 +154,7 @@ test_arg = add_argument_group('Test')
 test_arg.add_argument(
     '--test_config', default=None, type=str, help='path to the json config file for testing.')
 test_arg.add_argument('--test_phase', type=str, default='test', help='Dataset for test')
+test_arg.add_argument('--weights_for_inner_model', type=bool, default=False, help='Dataset for test')
 
 # Misc
 misc_arg = add_argument_group('Misc')

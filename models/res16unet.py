@@ -60,7 +60,7 @@ class Res16UNetBase(ResNetBase):
         conv_type=self.NON_BLOCK_CONV_TYPE,
         D=D)
     self.bn1 = get_norm(self.NORM_TYPE, self.inplanes, D, bn_momentum=bn_momentum)
-    import ipdb; ipdb.set_trace()
+
     self.block1 = self._make_layer(
         self.BLOCK,
         self.PLANES[0],

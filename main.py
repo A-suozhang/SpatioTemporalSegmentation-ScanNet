@@ -26,11 +26,13 @@ import torch
 from config import get_config
 import shutil
 
-from lib.test import test
-from lib.train import train
+from lib.test import test, test_points
+from lib.train import train, train_point
 from lib.utils import load_state_with_same_shape, get_torch_device, count_parameters
-from lib.dataset import initialize_data_loader
+from lib.dataset import initialize_data_loader, _init_fn
 from lib.datasets import load_dataset
+from lib.dataloader import InfSampler
+import lib.transforms as t
 
 from models import load_model
 
@@ -42,7 +44,6 @@ def setup_seed(seed):
                 np.random.seed(seed)
                 random.seed(seed)
                 torch.backends.cudnn.deterministic = True
-
 
 def main():
     config = get_config()
@@ -97,42 +98,77 @@ def main():
     if config.is_train:
         setup_seed(2021)
 
-        train_data_loader = initialize_data_loader(
-                DatasetClass,
-                config,
-                phase=config.train_phase,
-                threads=config.threads,
-                # threads=8,
-                augment_data=True,
-                elastic_distortion=config.train_elastic_distortion,
-                # elastic_distortion=False,
-                # shuffle=True,
-                shuffle=True,
-                # repeat=True,
-                repeat=True,
+        if config.dataset == 'ScannetSparseVoxelizationDataset':
+            point_scannet = False
+
+            train_data_loader = initialize_data_loader(
+                    DatasetClass,
+                    config,
+                    phase=config.train_phase,
+                    threads=config.threads,
+                    # threads=8,
+                    augment_data=True,
+                    elastic_distortion=config.train_elastic_distortion,
+                    # elastic_distortion=False,
+                    # shuffle=True,
+                    shuffle=True,
+                    # repeat=True,
+                    repeat=True,
+                    batch_size=config.batch_size,
+                    # batch_size=8,
+                    limit_numpoints=config.train_limit_numpoints)
+
+            val_data_loader = initialize_data_loader(
+                    DatasetClass,
+                    config,
+                    # threads=0,
+                    threads=config.val_threads,
+                    phase=config.val_phase,
+                    augment_data=False,
+                    elastic_distortion=config.test_elastic_distortion,
+                    shuffle=False,
+                    repeat=False,
+                    # batch_size=config.val_batch_size,
+                    batch_size=config.batch_size,
+                    limit_numpoints=False)
+        elif config.dataset == 'ScannetDataset':
+            val_DatasetClass = load_dataset('ScannetDatasetWholeScene_evaluation')
+            point_scannet = True
+
+            collate_fn = t.cfl_collate_fn_factory(False) # no limit num-points
+
+            trainset = DatasetClass(root='/data/eva_share_users/zhaotianchen/scannet/raw/scannet_pickles',
+                                      npoints=config.num_points,
+                                      split='train',
+                                      with_norm=False,
+                                      )
+
+            valset = val_DatasetClass(root='/data/eva_share_users/zhaotianchen/scannet/raw/scannet_pickles',
+                                      scene_list_dir='/data/eva_share_users/zhaotianchen/scannet/raw/metadata',
+                                      split='eval',
+                                      block_points=config.num_points,
+                                      with_norm=False,
+                                      delta=1.0,
+                                      )
+
+
+            train_data_loader = torch.utils.data.DataLoader(
+                dataset=trainset,
+                # num_workers=config.threads,
+                num_workers=0,  # for loading big pth file, should use single-thread
                 batch_size=config.batch_size,
-                # batch_size=8,
-                limit_numpoints=config.train_limit_numpoints)
+                # collate_fn=collate_fn, # input points, should not have collate-fn 
+                worker_init_fn=_init_fn,
+                sampler=InfSampler(trainset, True)) # shuffle=True
 
-        # dat = iter(train_data_loader).__next__()
-        # import ipdb; ipdb.set_trace()
-
-        val_data_loader = initialize_data_loader(
-                DatasetClass,
-                config,
-                # threads=0,
-                threads=config.val_threads,
-                phase=config.val_phase,
-                augment_data=False,
-                elastic_distortion=config.test_elastic_distortion,
-                shuffle=False,
-                repeat=False,
-                # batch_size=config.val_batch_size,
-                batch_size=8,
-                limit_numpoints=False)
-
-        # dat = iter(val_data_loader).__next__()
-        # import ipdb; ipdb.set_trace()
+            val_data_loader = torch.utils.data.DataLoader(
+                dataset=valset,
+                # num_workers=config.threads,
+                num_workers=0,  # for loading big pth file, should use single-thread
+                batch_size=config.batch_size,
+                # collate_fn=collate_fn, # input points, should not have collate-fn 
+                worker_init_fn=_init_fn,
+            )
 
         if train_data_loader.dataset.NUM_IN_CHANNEL is not None:
             num_in_channel = train_data_loader.dataset.NUM_IN_CHANNEL
@@ -140,29 +176,64 @@ def main():
             num_in_channel = 3
 
         num_labels = train_data_loader.dataset.NUM_LABELS
-    else:
-        test_data_loader = initialize_data_loader(
-                DatasetClass,
-                config,
-                threads=config.threads,
-                phase=config.test_phase,
-                augment_data=False,
-                elastic_distortion=config.test_elastic_distortion,
-                shuffle=False,
-                repeat=False,
-                batch_size=config.test_batch_size,
-                limit_numpoints=False)
-        if test_data_loader.dataset.NUM_IN_CHANNEL is not None:
-            num_in_channel = test_data_loader.dataset.NUM_IN_CHANNEL
-        else:
-            num_in_channel = 3
 
-        num_labels = test_data_loader.dataset.NUM_LABELS
+    else:
+
+        val_DatasetClass = load_dataset('ScannetDatasetWholeScene_evaluation')
+
+        if config.dataset == 'ScannetSparseVoxelizationDataset':
+            val_data_loader = initialize_data_loader(
+                    DatasetClass,
+                    config,
+                    threads=config.threads,
+                    phase=config.val_phase,
+                    augment_data=False,
+                    elastic_distortion=config.test_elastic_distortion,
+                    shuffle=False,
+                    repeat=False,
+                    batch_size=config.test_batch_size,
+                    limit_numpoints=False)
+
+            if test_data_loader.dataset.NUM_IN_CHANNEL is not None:
+                num_in_channel = test_data_loader.dataset.NUM_IN_CHANNEL
+            else:
+                num_in_channel = 3
+
+            num_labels = test_data_loader.dataset.NUM_LABELS
+
+        elif config.dataset == 'ScannetDataset':
+            '''when using scannet-point, use val instead of test'''
+
+            point_scannet = True
+            valset = val_DatasetClass(root='/data/eva_share_users/zhaotianchen/scannet/raw/scannet_pickles',
+                                      scene_list_dir='/data/eva_share_users/zhaotianchen/scannet/raw/metadata',
+                                      split='eval',
+                                      block_points=config.num_points,
+                                      delta=1.0,
+                                      with_norm=False,
+                                      )
+            val_data_loader = torch.utils.data.DataLoader(
+                dataset=valset,
+                # num_workers=config.threads,
+                num_workers=0,  # for loading big pth file, should use single-thread
+                batch_size=config.batch_size,
+                # collate_fn=collate_fn, # input points, should not have collate-fn 
+                worker_init_fn=_init_fn,
+            )
+
+            num_labels = val_data_loader.dataset.NUM_LABELS
+            num_in_channel = 3
 
     logging.info('===> Building model')
 
+    if config.model == 'PointTransformer':
+        config.pure_point = True
+
     NetClass = load_model(config.model)
-    model = NetClass(num_in_channel, num_labels, config)
+    if config.pure_point:
+        model = NetClass(num_class=num_labels,N=config.num_points,normal_channel=num_in_channel)
+    else:
+        model = NetClass(num_in_channel, num_labels, config)
     logging.info('===> Number of trainable parameters: {}: {}'.format(NetClass.__name__,count_parameters(model)))
     logging.info(model)
 
@@ -178,8 +249,11 @@ def main():
     elif config.weights.lower() != 'none':
         logging.info('===> Loading weights: ' + config.weights)
         state = torch.load(config.weights)
+        # delete the keys containing the 'attn' since it raises size mismatch
+        d = {k:v for k,v in state['state''_dict'].items() if 'map' not in k }
+
         if config.weights_for_inner_model:
-            model.model.load_state_dict(state['state_dict'])
+            model.model.load_state_dict(d)
         else:
             if config.lenient_weight_loading:
                 matched_weights = load_state_with_same_shape(model, state['state_dict'])
@@ -187,13 +261,18 @@ def main():
                 model_dict.update(matched_weights)
                 model.load_state_dict(model_dict)
             else:
-                model.load_state_dict(state['state_dict'])
+                model.load_state_dict(d, strict=False)
 
     if config.is_train:
-        train(model, train_data_loader, val_data_loader, config)
+        if point_scannet:
+            train_point(model, train_data_loader, val_data_loader, config)
+        else:
+            train(model, train_data_loader, val_data_loader, config)
     else:
-        test(model, test_data_loader, config)
-
+        if point_scannet:
+            test_points(model, val_data_loader, config)
+        else:
+            test(model, val_data_loader, config)
 
 if __name__ == '__main__':
     __spec__ = None

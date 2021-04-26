@@ -345,7 +345,7 @@ class TransposeLayerNorm(nn.Module):
 
 class PTBlock(nn.Module):
     # TODO: set proper r, too small will cause less points
-    def __init__(self, in_dim, hidden_dim, is_firstlayer=False, n_sample=16, r=500, skip_knn=False):
+    def __init__(self, in_dim, hidden_dim, is_firstlayer=False, n_sample=16, r=15, skip_knn=False):
         super().__init__()
         '''
         Point Transformer Layer
@@ -373,13 +373,16 @@ class PTBlock(nn.Module):
         # 1 - BN
         # 2 - LN
 
-        self.use_bn = 1
+        self.use_bn = True
         # use transformer-like preLN before the attn & ff layer
         self.pre_ln = False
 
         # whether to use the vector att or the original attention
         self.use_vector_attn = True
         self.nhead = 4
+
+        # self.attn_map = nn.Parameter(torch.zeros(1))
+        # self.neighbor_map = nn.Parameter(torch.zeros(1))
 
         self.linear_top = nn.Sequential(
             ME.MinkowskiConvolution(in_dim, self.hidden_dim, kernel_size=3, dimension=3),
@@ -400,21 +403,6 @@ class PTBlock(nn.Module):
             ME.MinkowskiConvolution(self.hidden_dim, self.out_dim, kernel_size=3, dimension=3)
         )
 
-#        self.gamma = nn.Sequential(
-#            ME.MinkowskiConvolution(self.out_dim, self.hidden_dim, kernel_size=1, dimension=3),
-#            ME.MinkowskiBatchNorm(self.hidden_dim) if self.use_bn else nn.Identity(),
-#            ME.MinkowskiReLU(),
-#            ME.MinkowskiConvolution(self.hidden_dim, self.vector_dim, kernel_size=1, dimension=3),
-#            ME.MinkowskiBatchNorm(self.vector_dim) if self.use_bn else nn.Identity()
-#        )
-#
-#        self.delta = nn.Sequential(
-#            ME.MinkowskiConvolution(3, self.hidden_dim, kernel_size=1, dimension=3),
-#            ME.MinkowskiBatchNorm(self.hidden_dim) if self.use_bn else nn.Identity(),
-#            ME.MinkowskiReLU(),
-#            ME.MinkowskiConvolution(self.hidden_dim, self.out_dim, kernel_size=1, dimension=3),
-#            ME.MinkowskiBatchNorm(self.out_dim) if self.use_bn else nn.Identity()
-#        )
         self.gamma = nn.Sequential(
             nn.Conv1d(self.out_dim, self.hidden_dim, 1),
             nn.BatchNorm1d(self.hidden_dim) if self.use_bn else nn.Identity(),
@@ -431,23 +419,23 @@ class PTBlock(nn.Module):
         )
 
         if self.pre_ln:
-            self.ln_top = nn.LayerNorm(self.in_dim)
-            self.ln_attn = nn.LayerNorm(self.hidden_dim)
-            self.ln_down = nn.LayerNorm(self.out_dim)
-            # @Niansong: Minkowski doesn't seem to have layer norm, I'm using InstanceNorm instead
-            # self.in_top = ME.MinkowskiInstanceNorm(self.in_dim)
-            # self.in_attn = ME.MinkowskiInstanceNorm(self.hidden_dim)
-            # self.in_down = ME.MinkowskiInstanceNorm(self.out_dim)
 
-        # self.cube_query = cube_query(r=self.r, k=n_sample)
+            # self.ln_top = nn.LayerNorm(self.in_dim)
+            # self.ln_attn = nn.LayerNorm(self.hidden_dim)
+            # self.ln_down = nn.LayerNorm(self.out_dim)
 
+            self.ln_top = ME.MinkowskiInstanceNorm(self.in_dim)
+            self.ln_attn = ME.MinkowskiInstanceNorm(self.hidden_dim)
+            self.ln_down = ME.MinkowskiInstanceNorm(self.out_dim)
+
+
+        self.tmp_linear = nn.Sequential(ME.MinkowskiConvolution(self.in_dim, self.out_dim, kernel_size=3, dimension=3)).cuda()
 
     def forward(self, x : ME.SparseTensor):
         '''
         input_p:  B, 3, npoint
         input_x: B, in_dim, npoint
         '''
-
         PT_begin = time.perf_counter()
         self.B = (x.C[:,0]).max().item() + 1 # batch size
         npoint, in_dim = tuple(x.F.size())
@@ -455,12 +443,24 @@ class PTBlock(nn.Module):
         h = self.nhead
 
         res = x
+        self.register_buffer('input_map', x.C)
 
         if self.skip_knn:
-            x = self.linear_top(x)
-            y = self.linear_down(x)
-            return y+res
 
+            x = self.linear_top(x)
+            if npoint <= self.n_sample:
+                self.cube_query = cube_query(r=self.r, k=self.k)
+            else:
+                self.cube_query = cube_query(r=self.r, k=self.n_sample)
+
+            neighbor, mask, idx_ = self.cube_query.get_neighbor(x, x)
+            new_x = get_neighbor_feature(neighbor, x)
+
+            y = get_neighbor_feature(neighbor, self.tmp_linear(x))
+            y = y[:,0,:]   # the 1st should be self
+            y = ME.SparseTensor(features = y, coordinate_map_key=x.coordinate_map_key, coordinate_manager=x.coordinate_manager)
+            y = self.linear_down(y)
+            return y+res
         else:
             '''Cur knn interface still gives 16 points while the input is less'''
             if npoint <= self.n_sample:
@@ -474,6 +474,8 @@ class PTBlock(nn.Module):
             idx: [B_nq], used for scatter/gather
             '''
             neighbor, mask, idx_ = self.cube_query.get_neighbor(x, x)
+            self.register_buffer('neighbor_map', neighbor)
+            # self.neighbor_map = nn.Parameter(neighbor.float())
 
             if self.pre_ln:
                 x = self.ln_top(x)
@@ -481,7 +483,7 @@ class PTBlock(nn.Module):
             x = self.linear_top(x) # [B, in_dim, npoint], such as [16, 32, 4096]
 
             if self.pre_ln:
-                x = self.in_attn(x)
+                x = self.ln_attn(x)
 
             '''
             illustration on dimension notations:
@@ -494,15 +496,11 @@ class PTBlock(nn.Module):
 
             phi = self.phi(x).F # (nvoxel, feat_dim)
             phi = phi[:,None,:].repeat(1,self.k,1) # (nvoxel, k, feat_dim)
-
-            tick0 = time.perf_counter()
             psi = get_neighbor_feature(neighbor, self.psi(x)) # (nvoxel, k, feat_dim)
-            # @Niansong: psi is the feature of each voxel's k neighbors\
-
             alpha = get_neighbor_feature(neighbor, self.alpha(x)) # (nvoxel, k, feat_dim)
-            tick1 = time.perf_counter()
-            # print('Mapping Cost {}'.format((tick1 - tick0)*1e3))
 
+            # print(neighbor[:40,0,:])
+            # import ipdb; ipdb.set_trace()
 
             '''Gene the pos_encoding'''
             try:
@@ -512,25 +510,12 @@ class PTBlock(nn.Module):
 
             WITH_POSE_ENCODING = True
             if WITH_POSE_ENCODING:
-
                 relative_xyz[:,0,0] = x.C[:,0] # get back the correct batch index, because we messed batch index in the subtraction above
-                # since each batch could have different number of voxels, we need to pad them
                 relative_xyz = pad_zero(relative_xyz, mask) # [B, xyz, nvoxel_batch, k]
-                # @Niansong: a further illustration on batch_mask:
-                # type: dict, content: {batch_idx : num of voxel}
                 pose_encoding = self.delta(relative_xyz.float()) # (B, feat_dim, nvoxel_batch, k)
-                # now we squeeze pose_encoding to (nvoxel, hidden_size, k), this should correspond to k SparseTensors
-                # it is the positional encoding for each of the k neighbors
-
-                time_begin = time.perf_counter()
                 pose_tensor = make_position_tensor(pose_encoding, mask, idx_, x.C.shape[0]) # (nvoxel, k, feat_dim)
-
-                time_end = time.perf_counter()
-                # print('Overall took {}ms'.format((time_end - time_begin)*1e3))
-
-            
             '''The Self-Attn Part'''
-            
+
             if self.use_vector_attn:
                 '''
                 the attn_map: [vector_dim];
@@ -555,22 +540,31 @@ class PTBlock(nn.Module):
                 y = y.sum(dim=-1).view(x.C.shape[0], -1) # feature aggregation, y becomes (nvoxel, feat_dim)
                 y = ME.SparseTensor(features = y, coordinate_map_key=x.coordinate_map_key, coordinate_manager=x.coordinate_manager)
             else:
-                #phi = phi.reshape(B, h, self.out_dim//h, npoint, k)
-                #psi = psi.reshape(B, h, self.out_dim//h, npoint, k)
-                #attn_map = F.softmax((phi*psi).reshape(B, self.out_dim, npoint, k) + pos_encoding, dim=-1)
-                #y = attn_map*(alpha+pos_encoding)
-                #y = y.sum(dim=-1)
-                raise NotImplementedError
+                # phi = phi.reshape(npoint, h, self.out_dim//h, self.k)
+                # psi = psi.reshape(npoint, h, self.out_dim//h, self.k)
+                # attn_map = F.softmax((phi*psi).reshape(npoint, self.out_dim, self.k).transpose(1,2) + pose_tensor, dim=-1)
+                # y = attn_map*(alpha+pose_tensor)
+                # y = y.sum(dim=-2)  # [npoint, self.k, self.out_dim]
+
+                # dot_product(phi, psi)  -> [K,K,D] 
+                # dot_priduct(attn, alpha) -> [N,K,D]
+
+                phi = phi.permute([2,1,0]) # [out_dim, k, npoint]
+                psi = psi.permute([2,0,1]) # [out_dim. npoint, k]
+                attn_map = F.softmax(torch.matmul(phi,psi), dim=0) # [out_dim, k, k]
+                alpha = (alpha+pose_tensor).permute([2,0,1])  # [out_dim, npoint, k]
+                y = torch.matmul(alpha, attn_map)  # [out_dim, npoint, k]
+                y = y.sum(-1).transpose(0,1)  # [out_dim. npoint]
+
+                y = ME.SparseTensor(features = y, coordinate_map_key=x.coordinate_map_key, coordinate_manager=x.coordinate_manager)
 
             if self.pre_ln:
-                y = self.ln_down(y.transpose(1,2)).transpose(1,2)
+                y = self.ln_down(y)
 
             y = self.linear_down(y)
 
-            PT_end = time.perf_counter()
-            # print('PT blocks: {}ms'.format((PT_end - PT_begin)*1e3))
+            self.register_buffer('attn_map', attn_map.detach().cpu().data) # pack it with nn parameter to save in state-dict
 
-            # return y+res, attn_map.detach().cpu().data
             return y+res
 
 
