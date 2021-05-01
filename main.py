@@ -27,7 +27,7 @@ from config import get_config
 import shutil
 
 from lib.test import test, test_points
-from lib.train import train, train_point
+from lib.multitrain import train, train_point
 from lib.utils import load_state_with_same_shape, get_torch_device, count_parameters
 from lib.dataset import initialize_data_loader, _init_fn
 from lib.datasets import load_dataset
@@ -234,6 +234,8 @@ def main():
     if config.model == 'PointTransformer':
         config.pure_point = True
 
+    config.num_labels = num_labels
+    config.num_in_channel = num_in_channel
     NetClass = load_model(config.model)
     if config.pure_point:
         model = NetClass(num_class=num_labels,N=config.num_points,normal_channel=num_in_channel)
@@ -272,7 +274,7 @@ def main():
         if point_scannet:
             train_point(model, train_data_loader, val_data_loader, config)
         else:
-            train(model, train_data_loader, val_data_loader, config)
+            train(NetClass, train_data_loader, val_data_loader, config)
     else:
         if point_scannet:
             test_points(model, val_data_loader, config)

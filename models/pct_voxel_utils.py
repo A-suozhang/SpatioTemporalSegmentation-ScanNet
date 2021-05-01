@@ -56,7 +56,7 @@ def index_points_cuda(points, idx):
 
 def stem_knn(xyz, points, k):
     knn = KNN(k=k, transpose_mode=True)
-    xyz = xyz.permute([0,2,1])
+    xyz = xyz.permute([0,2,1]).contiguous()
     _, idx = knn(xyz.contiguous(), xyz) # xyz: [bs, npoints, coord] idx: [bs, npoint, k]
     idx = idx.int()
     
@@ -97,7 +97,7 @@ def sample_and_group_cuda(npoint, k, xyz, points):
     idx = idx.int()
     
     torch.cuda.empty_cache()
-    grouped_xyz = grouping_operation_cuda(xyz.transpose(1,2).contiguous(), idx).permute(0,2,3,1) # [B, npoint, k, C_xyz]
+    grouped_xyz = grouping_operation_cuda(xyz.transpose(1,2).contiguous(), idx).permute(0,2,3,1).contiguous() # [B, npoint, k, C_xyz]
     #print(grouped_xyz.size())
     torch.cuda.empty_cache()
     grouped_xyz_norm = grouped_xyz - new_xyz.view(B, npoint, 1, C_xyz) # [B, npoint, k, 3]
@@ -384,32 +384,33 @@ class PTBlock(nn.Module):
             ME.MinkowskiBatchNorm(self.in_dim) if self.use_bn else nn.Identity()
         )
         # feature transformations
-        self.phi = nn.Sequential(
-            ME.MinkowskiConvolution(self.hidden_dim, self.out_dim, kernel_size=3, dimension=3)
-        )
-        self.psi = nn.Sequential(
-            ME.MinkowskiConvolution(self.hidden_dim, self.out_dim, kernel_size=3, dimension=3)
-        )
-        self.alpha = nn.Sequential(
-            ME.MinkowskiConvolution(self.hidden_dim, self.out_dim, kernel_size=3, dimension=3)
-        )
+        if self.skip_knn:
+            self.tmp_linear = nn.Sequential(ME.MinkowskiConvolution(self.in_dim, self.out_dim, kernel_size=3, dimension=3)).cuda()
+        else:
+            self.phi = nn.Sequential(
+                ME.MinkowskiConvolution(self.hidden_dim, self.out_dim, kernel_size=3, dimension=3)
+            )
+            self.psi = nn.Sequential(
+                ME.MinkowskiConvolution(self.hidden_dim, self.out_dim, kernel_size=3, dimension=3)
+            )
+            self.alpha = nn.Sequential(
+                ME.MinkowskiConvolution(self.hidden_dim, self.out_dim, kernel_size=3, dimension=3)
+            )
+            self.gamma = nn.Sequential(
+                nn.Conv1d(self.out_dim, self.hidden_dim, 1),
+                nn.BatchNorm1d(self.hidden_dim) if self.use_bn else nn.Identity(),
+                nn.ReLU(),
+                nn.Conv1d(self.hidden_dim, self.vector_dim, 1),
+                nn.BatchNorm1d(self.vector_dim) if self.use_bn else nn.Identity()
+            )
+            self.delta = nn.Sequential(
+                nn.Conv2d(3, self.hidden_dim, 1),
+                nn.BatchNorm2d(self.hidden_dim) if self.use_bn else nn.Identity(),
+                nn.ReLU(),
+                nn.Conv2d(self.hidden_dim, self.out_dim, 1),
+                nn.BatchNorm2d(self.out_dim) if self.use_bn else nn.Identity()
+            )
 
-        self.gamma = nn.Sequential(
-            nn.Conv1d(self.out_dim, self.hidden_dim, 1),
-            nn.BatchNorm1d(self.hidden_dim) if self.use_bn else nn.Identity(),
-            nn.ReLU(),
-            nn.Conv1d(self.hidden_dim, self.vector_dim, 1),
-            nn.BatchNorm1d(self.vector_dim) if self.use_bn else nn.Identity()
-        )
-        self.delta = nn.Sequential(
-            nn.Conv2d(3, self.hidden_dim, 1),
-            nn.BatchNorm2d(self.hidden_dim) if self.use_bn else nn.Identity(),
-            nn.ReLU(),
-            nn.Conv2d(self.hidden_dim, self.out_dim, 1),
-            nn.BatchNorm2d(self.out_dim) if self.use_bn else nn.Identity()
-        )
-
-        self.tmp_linear = nn.Sequential(ME.MinkowskiConvolution(self.in_dim, self.out_dim, kernel_size=3, dimension=3)).cuda()
 
     def forward(self, x : ME.SparseTensor):
         '''
@@ -501,20 +502,20 @@ class PTBlock(nn.Module):
                     gamma_input = phi - psi + pose_tensor # (nvoxel, k, feat_dim)
                 else:
                     gamma_input = phi - psi # (nvoxel, k, feat_dim)
-                gamma_input = gamma_input.permute(0, 2, 1) # (nvoxel, feat_dim, k)
+                gamma_input = gamma_input.permute(0, 2, 1).contiguous() # (nvoxel, feat_dim, k)
                 attn_map = F.softmax(self.gamma(gamma_input), dim=-1) # (nvoxel, feat_dim, k)
                 if WITH_POSE_ENCODING:
-                    self_feat = (alpha + pose_tensor).permute(0,2,1) # (nvoxel, k, feat_dim) -> (nvoxel, feat_dim, k)
+                    self_feat = (alpha + pose_tensor).permute(0,2,1).contiguous() # (nvoxel, k, feat_dim) -> (nvoxel, feat_dim, k)
                 else:
-                    self_feat = (alpha).permute(0,2,1) # (nvoxel, k, feat_dim) -> (nvoxel, feat_dim, k)
+                    self_feat = (alpha).permute(0,2,1).contiguous() # (nvoxel, k, feat_dim) -> (nvoxel, feat_dim, k)
                 y = attn_map.repeat(1, self.out_dim // self.vector_dim, 1, 1) * self_feat # (nvoxel, feat_dim, k)
                 y = y.sum(dim=-1).view(x.C.shape[0], -1) # feature aggregation, y becomes (nvoxel, feat_dim)
                 y = ME.SparseTensor(features = y, coordinate_map_key=x.coordinate_map_key, coordinate_manager=x.coordinate_manager)
             else:
-                phi = phi.permute([2,1,0]) # [out_dim, k, npoint]
-                psi = psi.permute([2,0,1]) # [out_dim. npoint, k]
+                phi = phi.permute([2,1,0]).contiguous() # [out_dim, k, npoint]
+                psi = psi.permute([2,0,1]).contiguous() # [out_dim. npoint, k]
                 attn_map = F.softmax(torch.matmul(phi,psi), dim=0) # [out_dim, k, k]
-                alpha = (alpha+pose_tensor).permute([2,0,1])  # [out_dim, npoint, k]
+                alpha = (alpha+pose_tensor).permute([2,0,1]).contiguous()  # [out_dim, npoint, k]
                 y = torch.matmul(alpha, attn_map)  # [out_dim, npoint, k]
                 y = y.sum(-1).transpose(0,1)  # [out_dim. npoint]
                 y = ME.SparseTensor(features = y, coordinate_map_key=x.coordinate_map_key, coordinate_manager=x.coordinate_manager)
@@ -680,22 +681,22 @@ class MixedPTBlock(nn.Module):
                     gamma_input = phi - psi + pose_tensor # (nvoxel, k, feat_dim)
                 else:
                     gamma_input = phi - psi # (nvoxel, k, feat_dim)
-                gamma_input = gamma_input.permute(0, 2, 1) # (nvoxel, feat_dim, k)
+                gamma_input = gamma_input.permute(0, 2, 1).contiguous() # (nvoxel, feat_dim, k)
                 attn_map = F.softmax(self.gamma(gamma_input), dim=-1) # (nvoxel, feat_dim, k)
                 if WITH_POSE_ENCODING:
-                    self_feat = (alpha + pose_tensor).permute(0,2,1) # (nvoxel, k, feat_dim) -> (nvoxel, feat_dim, k)
+                    self_feat = (alpha + pose_tensor).permute(0,2,1).contiguous() # (nvoxel, k, feat_dim) -> (nvoxel, feat_dim, k)
                 else:
-                    self_feat = (alpha).permute(0,2,1) # (nvoxel, k, feat_dim) -> (nvoxel, feat_dim, k)
+                    self_feat = (alpha).permute(0,2,1).contiguous() # (nvoxel, k, feat_dim) -> (nvoxel, feat_dim, k)
                 y = attn_map.repeat(1, self.out_dim // self.vector_dim, 1, 1) * self_feat # (nvoxel, feat_dim, k)
                 y = y.sum(dim=-1).view(x.C.shape[0], -1) # feature aggregation, y becomes (nvoxel, feat_dim)
                 y = ME.SparseTensor(features = y, coordinate_map_key=x.coordinate_map_key, coordinate_manager=x.coordinate_manager)
             else:
-                phi = phi.permute([2,1,0]) # [out_dim, k, npoint]
-                psi = psi.permute([2,0,1]) # [out_dim. npoint, k]
+                phi = phi.permute([2,1,0]).contiguous() # [out_dim, k, npoint]
+                psi = psi.permute([2,0,1]).contiguous() # [out_dim. npoint, k]
                 attn_map = F.softmax(torch.matmul(phi,psi), dim=0) # [out_dim, k, k]
-                alpha = (alpha+pose_tensor).permute([2,0,1])  # [out_dim, npoint, k]
+                alpha = (alpha+pose_tensor).permute([2,0,1]).contiguous()  # [out_dim, npoint, k]
                 y = torch.matmul(alpha, attn_map)  # [out_dim, npoint, k]
-                y = y.sum(-1).transpose(0,1)  # [out_dim. npoint]
+                y = y.sum(-1).transpose(0,1).contiguous()  # [out_dim. npoint]
                 y = ME.SparseTensor(features = y, coordinate_map_key=x.coordinate_map_key, coordinate_manager=x.coordinate_manager)
 
             y = self.linear_down(y)
@@ -789,7 +790,7 @@ def pad_zero(tensor : torch.Tensor, mask: torch.Tensor):
         result[b_idx, :nvoxel, :, :] = tensor[pointer:pointer+nvoxel, :, :]
         pointer += nvoxel
     result = result[:,:,:,1:] # (B, N, k, 3)
-    result = result.permute(0, 3, 1, 2) # (B, N, k, 3) -> (B, 3, N, k)
+    result = result.permute(0, 3, 1, 2).contiguous() # (B, N, k, 3) -> (B, 3, N, k)
     return result
 
 
@@ -961,7 +962,7 @@ class cube_query(object):
             new_xyz=coord,
             features=coord.transpose(1,2).contiguous(),
         ) # idx: [bs, xyz, npoint, nsample]
-        idxs = idxs.permute([0,2,3,1]) # idx: [bs, npoint, nsample, xyz]
+        idxs = idxs.permute([0,2,3,1]).contiguous() # idx: [bs, npoint, nsample, xyz]
         result_padded = idxs
 
         knn_end = time.perf_counter()
