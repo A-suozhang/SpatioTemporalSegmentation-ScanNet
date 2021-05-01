@@ -11,7 +11,7 @@ from pathlib import Path
 import numpy as np
 from scipy import spatial
 
-from lib.dataset import SparseVoxelizationDataset, DatasetPhase, str2datasetphase_type
+from lib.dataset import SparseVoxelizationDataset, DatasetPhase, str2datasetphase_type, initialize_data_loader
 from lib.pc_utils import read_plyfile, save_point_cloud
 from lib.utils import read_txt, fast_hist, per_class_iu
 

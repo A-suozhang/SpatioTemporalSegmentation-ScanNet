@@ -55,11 +55,11 @@ class MinkowskiTransformerNet(ME.MinkowskiNetwork):
 
         ME.MinkowskiNetwork.__init__(self, dimension)
         # The normal channel for Modelnet is 3, for scannet is 6, for scanobjnn is 0
-        normal_channel = 3
+        normal_channel = 3  # the RGB
 
         self.CONV_TYPE = ConvType.SPATIAL_HYPERCUBE
 
-        self.dims = np.array([32, 64, 128, 256])
+        self.dims = np.array([32, 64, 128, 256, 512])
 
         # self.neighbor_ks = np.array([32, 64, 16])
         self.neighbor_ks = np.array([32, 32, 32, 32, 32]) // 2
@@ -67,7 +67,7 @@ class MinkowskiTransformerNet(ME.MinkowskiNetwork):
         self.final_dim = final_dim
 
         stem_dim =  self.dims[0]
-        # in_channel = normal_channel+3 # normal ch + xyz
+        in_channel = normal_channel+3 # normal ch + xyz
         self.normal_channel = normal_channel
 
         # pixel size 1
@@ -94,31 +94,37 @@ class MinkowskiTransformerNet(ME.MinkowskiNetwork):
                 ME.MinkowskiReLU(),
             )
 
-        base_r = 15
+        base_r = 10
 
         self.PTBlock1 = PTBlock(in_dim=self.dims[0], hidden_dim = self.dims[0], n_sample=self.neighbor_ks[0], skip_knn=False, r=base_r)
-        self.PTBlock2 = PTBlock(in_dim=self.dims[1], hidden_dim = self.dims[1], n_sample=self.neighbor_ks[1], skip_knn=False, r=base_r)
-        self.PTBlock3 = PTBlock(in_dim=self.dims[2],hidden_dim = self.dims[2], n_sample=self.neighbor_ks[2], skip_knn=False, r=base_r)
-        self.PTBlock4 = PTBlock(in_dim=self.dims[3], hidden_dim = self.dims[3], n_sample=self.neighbor_ks[3], skip_knn=False, r=int(2*base_r))
-        self.PTBlock5 = PTBlock(in_dim=self.dims[3], hidden_dim = self.dims[3], n_sample=self.neighbor_ks[3], skip_knn=False, r=base_r) # out: 256
-        self.PTBlock6 = PTBlock(in_dim=self.dims[2], hidden_dim=self.dims[2], n_sample=self.neighbor_ks[2], skip_knn=False, r=base_r) # out: 128
-        self.PTBlock7 = PTBlock(in_dim=self.dims[1], hidden_dim=self.dims[1], n_sample=self.neighbor_ks[1], skip_knn=False, r=base_r) # out: 64
+        self.PTBlock2 = PTBlock(in_dim=self.dims[1], hidden_dim = self.dims[1], n_sample=self.neighbor_ks[1], skip_knn=False, r=2*base_r)
+        self.PTBlock3 = PTBlock(in_dim=self.dims[2],hidden_dim = self.dims[2], n_sample=self.neighbor_ks[2], skip_knn=False, r=2*base_r)
+        self.PTBlock4 = PTBlock(in_dim=self.dims[3], hidden_dim = self.dims[3], n_sample=self.neighbor_ks[3], skip_knn=False, r=int(4*base_r))
+        self.PTBlock_middle = PTBlock(in_dim=self.dims[4], hidden_dim = self.dims[4], n_sample=self.neighbor_ks[3], skip_knn=False, r=int(16*base_r))
+        self.PTBlock5 = PTBlock(in_dim=self.dims[3], hidden_dim = self.dims[3], n_sample=self.neighbor_ks[3], skip_knn=False, r=4*base_r) # out: 256
+        self.PTBlock6 = PTBlock(in_dim=self.dims[2], hidden_dim=self.dims[2], n_sample=self.neighbor_ks[2], skip_knn=False, r=2*base_r) # out: 128
+        self.PTBlock7 = PTBlock(in_dim=self.dims[1], hidden_dim=self.dims[1], n_sample=self.neighbor_ks[1], skip_knn=False, r=2*base_r) # out: 64
+        self.PTBlock8 = PTBlock(in_dim=self.dims[0], hidden_dim=self.dims[0], n_sample=self.neighbor_ks[1], skip_knn=False, r=base_r) # out: 64
 
-        # self.PTBlock1 = PTBlock(in_dim=self.dims[0], hidden_dim = self.dims[0], n_sample=self.neighbor_ks[0], skip_knn=True)
-        # self.PTBlock2 = PTBlock(in_dim=self.dims[1], hidden_dim = self.dims[1], n_sample=self.neighbor_ks[1], skip_knn=True)
-        # self.PTBlock3 = PTBlock(in_dim=self.dims[2],hidden_dim = self.dims[2], n_sample=self.neighbor_ks[2], skip_knn=True)
-        # self.PTBlock4 = PTBlock(in_dim=self.dims[3], hidden_dim = self.dims[3], n_sample=self.neighbor_ks[3], skip_knn=True)
-        # self.PTBlock5 = PTBlock(in_dim=self.dims[3], hidden_dim = self.dims[3], n_sample=self.neighbor_ks[3], skip_knn=True) # out: 256
-        # self.PTBlock6 = PTBlock(in_dim=self.dims[2], hidden_dim=self.dims[2], n_sample=self.neighbor_ks[2], skip_knn=True) # out: 128
-        # self.PTBlock7 = PTBlock(in_dim=self.dims[1], hidden_dim=self.dims[1], n_sample=self.neighbor_ks[1], skip_knn=True) # out: 64
+        # self.PTBlock1 = PTBlock(in_dim=self.dims[0], hidden_dim = self.dims[0], n_sample=self.neighbor_ks[0], skip_knn=True, r=base_r)
+        # self.PTBlock2 = PTBlock(in_dim=self.dims[1], hidden_dim = self.dims[1], n_sample=self.neighbor_ks[1], skip_knn=True, r=2*base_r)
+        # self.PTBlock3 = PTBlock(in_dim=self.dims[2],hidden_dim = self.dims[2], n_sample=self.neighbor_ks[2], skip_knn=True, r=2*base_r)
+        # self.PTBlock4 = PTBlock(in_dim=self.dims[3], hidden_dim = self.dims[3], n_sample=self.neighbor_ks[3], skip_knn=True, r=int(4*base_r))
+        # self.PTBlock_middle = PTBlock(in_dim=self.dims[4], hidden_dim = self.dims[4], n_sample=self.neighbor_ks[3], skip_knn=True, r=int(16*base_r))
+        # self.PTBlock5 = PTBlock(in_dim=self.dims[3], hidden_dim = self.dims[3], n_sample=self.neighbor_ks[3], skip_knn=True, r=4*base_r) # out: 256
+        # self.PTBlock6 = PTBlock(in_dim=self.dims[2], hidden_dim=self.dims[2], n_sample=self.neighbor_ks[2], skip_knn=False, r=2*base_r) # out: 128
+        # self.PTBlock7 = PTBlock(in_dim=self.dims[1], hidden_dim=self.dims[1], n_sample=self.neighbor_ks[1], skip_knn=False, r=2*base_r) # out: 64
+        # self.PTBlock8 = PTBlock(in_dim=self.dims[0], hidden_dim=self.dims[0], n_sample=self.neighbor_ks[1], skip_knn=False, r=base_r) # out: 64
 
         # self.PTBlock1 = self._make_layer(block=BasicBlock, inplanes=self.dims[0], planes=self.dims[0], num_blocks=2)
         # self.PTBlock2 = self._make_layer(block=BasicBlock, inplanes=self.dims[1], planes=self.dims[1], num_blocks=2)
         # self.PTBlock3 = self._make_layer(block=BasicBlock, inplanes=self.dims[2], planes=self.dims[2], num_blocks=2)
         # self.PTBlock4 = self._make_layer(block=BasicBlock, inplanes=self.dims[3], planes=self.dims[3], num_blocks=2)
+        # self.PTBlock_middle = self._make_layer(block=BasicBlock, inplanes=self.dims[4], planes=self.dims[4], num_blocks=2)
         # self.PTBlock5 = self._make_layer(block=BasicBlock, inplanes=self.dims[3], planes=self.dims[3], num_blocks=2)
         # self.PTBlock6 = self._make_layer(block=BasicBlock, inplanes=self.dims[2], planes=self.dims[2], num_blocks=2)
         # self.PTBlock7 = self._make_layer(block=BasicBlock, inplanes=self.dims[1], planes=self.dims[1], num_blocks=2)
+        # self.PTBlock8 = self._make_layer(block=BasicBlock, inplanes=self.dims[0], planes=self.dims[0], num_blocks=2)
 
         # pixel size 2
         self.TDLayer1 = TDLayer(input_dim=self.dims[0], out_dim=self.dims[1]) # strided conv
@@ -130,15 +136,18 @@ class MinkowskiTransformerNet(ME.MinkowskiNetwork):
         self.TDLayer3 = TDLayer(input_dim=self.dims[2], out_dim=self.dims[3])
 
         # pixel size 16: PTBlock4
+        self.TDLayer4 = TDLayer(input_dim=self.dims[3], out_dim=self.dims[4])
 
         # pixel size 8
-        self.TULayer5 = TULayer(input_a_dim=self.dims[3], input_b_dim = self.dims[2], out_dim=self.dims[3]) # out: 256//2 + 128 = 256
+        self.TULayer5 = TULayer(input_a_dim=self.dims[4], input_b_dim = self.dims[3], out_dim=self.dims[3]) # out: 256//2 + 128 = 256
 
         # pixel size 4
-        self.TULayer6 = TULayer(input_a_dim=self.dims[3], input_b_dim = self.dims[1], out_dim=self.dims[2]) # out: 256//2 + 64 = 192
+        self.TULayer6 = TULayer(input_a_dim=self.dims[3], input_b_dim = self.dims[2], out_dim=self.dims[2]) # out: 256//2 + 64 = 192
 
         # pixel size 2
-        self.TULayer7 = TULayer(input_a_dim=self.dims[2], input_b_dim = self.dims[0], out_dim=self.dims[1]) # 128 // 2 + 32 = 96
+        self.TULayer7 = TULayer(input_a_dim=self.dims[2], input_b_dim = self.dims[1], out_dim=self.dims[1]) # 128 // 2 + 32 = 96
+
+        self.TULayer8 = TULayer(input_a_dim=self.dims[1], input_b_dim = self.dims[0], out_dim=self.dims[0]) # 128 // 2 + 32 = 96
 
         # pixel size 1
         # self.TULayer8 = TULayer(input_a_dim=self.dims[1], input_b_dim = self.dims[0], out_dim=self.dims[0]) # 64 // 2 + 32
@@ -147,11 +156,13 @@ class MinkowskiTransformerNet(ME.MinkowskiNetwork):
         # self.global_avg_pool = ME.MinkowskiGlobalAvgPooling()
         if split_scene:
             self.final_conv = nn.Sequential(
-                ME.MinkowskiConvolution(self.dims[1], self.final_dim, kernel_size=3, stride=1, dimension=3)
+                ME.MinkowskiConvolution(self.dims[0], self.final_dim, kernel_size=1, stride=1, dimension=3),
+                ME.MinkowskiDropout(0.1),
             )
         else:
             self.final_conv = nn.Sequential(
-                ME.MinkowskiConvolutionTranspose(self.dims[1], self.final_dim, kernel_size=2, stride=2, dimension=3)
+                ME.MinkowskiConvolutionTranspose(self.dims[0], self.final_dim, kernel_size=2, stride=2, dimension=3),
+                ME.MinkowskiDropout(0.2),
             )
         self.fc = ME.MinkowskiLinear(self.final_dim+self.dims[0], out_channel)
 
@@ -178,21 +189,27 @@ class MinkowskiTransformerNet(ME.MinkowskiNetwork):
         x = self.TDLayer3(x3)
         x4 = self.PTBlock4(x)
 
-        x = self.TULayer5(x4, x3)
+        x = self.TDLayer4(x4)
+        x_middle = self.PTBlock_middle(x)
+
+        x = self.TULayer5(x_middle, x4)
         x5 = self.PTBlock5(x)
 
-        x = self.TULayer6(x5, x2)
+        x = self.TULayer6(x5, x3)
         x6 = self.PTBlock6(x)
 
-        x = self.TULayer7(x6, x1)
+        x = self.TULayer7(x6, x2)
         x7 = self.PTBlock7(x)
+
+        x = self.TULayer8(x7, x1)
+        x8 = self.PTBlock8(x)
 
         # final big PTBlock
         # x = self.TULayer8(x7, x0)
         # x8, attn_8 = self.PTBlock8(x)
         # x = self.fc(x8)
 
-        x = self.final_conv(x7)
+        x = self.final_conv(x8)
         x = self.fc(me.cat(x0,x))
 
         # end = time.time()

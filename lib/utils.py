@@ -84,6 +84,17 @@ def checkpoint(model, optimizer, epoch, iteration, config, best_val=None, best_v
             if 'map' in n:
                 inter_d[n] = m
         torch.save(inter_d, os.path.join(config.log_dir, 'map.pth'))
+        logging.info('Map saved in {}'.format(config.log_dir))
+
+def save_map(model, config):
+    inter_d = {}
+    for n,m in model.named_buffers():
+        if 'map' in n:
+            inter_d[n] = m
+    torch.save(inter_d, os.path.join(config.log_dir, 'val_map.pth'))
+    logging.info('Map saved in {}'.format(config.log_dir))
+
+
 
 def feat_augmentation(data, normalized, config):
     # color shift

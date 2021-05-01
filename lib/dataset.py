@@ -279,6 +279,7 @@ class SparseVoxelizationDataset(VoxelizationDatasetBase):
     return pointcloud
 
   def __getitem__(self, index):
+
     if self.explicit_rotation > 1:
       rotation_space = np.linspace(-np.pi, np.pi, self.explicit_rotation + 1)
       rotation_angle = rotation_space[index % self.explicit_rotation]

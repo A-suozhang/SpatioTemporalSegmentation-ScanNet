@@ -6,6 +6,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+import logging
+
 import numpy as np
 import numpy.ma as ma
 
@@ -241,7 +243,7 @@ class TULayer(nn.Module):
                 dimension=3
             )
             self.bn = ME.MinkowskiBatchNorm(
-                self.intermediate_dim
+                self.input_a_dim // 2
             )
             self.relu = ME.MinkowskiReLU()
 
@@ -250,7 +252,7 @@ class TULayer(nn.Module):
             self.out_conv = ME.MinkowskiConvolution(
                 in_channels=input_a_dim//2 + input_b_dim,
                 out_channels=out_dim,
-                kernel_size=1,
+                kernel_size=3,
                 stride=1,
                 dimension=3
             )
@@ -304,10 +306,12 @@ class TULayer(nn.Module):
             x = ME.sum(x_a, x_b)
         else:
             x_a = self.conv(x_a)
+            x_a = self.bn(x_a)
+            x_a = self.relu(x_a)
             x = me.cat(x_a, x_b)
-            x = self.bn(x)
-            x = self.relu(x)
             x = self.out_conv(x)
+            x = self.out_bn(x)
+            x = self.out_relu(x)
 
         return x
 
@@ -345,44 +349,31 @@ class TransposeLayerNorm(nn.Module):
 
 class PTBlock(nn.Module):
     # TODO: set proper r, too small will cause less points
-    def __init__(self, in_dim, hidden_dim, is_firstlayer=False, n_sample=16, r=15, skip_knn=False):
+    def __init__(self, in_dim, hidden_dim, is_firstlayer=False, n_sample=16, r=10, skip_knn=False):
         super().__init__()
         '''
         Point Transformer Layer
 
         in_dim: feature dimension of the input feature x
         out_dim: feature dimension of the Point Transformer Layer(currently same with hidden-dim)
-        [?] - not sure how to set hidden. the paper only gives the out
         '''
 
         self.r = r # neighborhood cube radius
         self.in_dim = in_dim
-        self.is_firstlayer = is_firstlayer
         self.skip_knn = skip_knn
 
         # TODO: set the hidden/vector/out_dims
-        # self.out_dim = min(4*in_dim, 512)
         self.hidden_dim = hidden_dim
         self.out_dim = self.hidden_dim
         self.vector_dim = self.out_dim
 
         self.n_sample = n_sample
 
-        # whether use BN or LN or None
-        # 0 - None
-        # 1 - BN
-        # 2 - LN
-
         self.use_bn = True
-        # use transformer-like preLN before the attn & ff layer
-        self.pre_ln = False
 
         # whether to use the vector att or the original attention
         self.use_vector_attn = True
         self.nhead = 4
-
-        # self.attn_map = nn.Parameter(torch.zeros(1))
-        # self.neighbor_map = nn.Parameter(torch.zeros(1))
 
         self.linear_top = nn.Sequential(
             ME.MinkowskiConvolution(in_dim, self.hidden_dim, kernel_size=3, dimension=3),
@@ -418,17 +409,6 @@ class PTBlock(nn.Module):
             nn.BatchNorm2d(self.out_dim) if self.use_bn else nn.Identity()
         )
 
-        if self.pre_ln:
-
-            # self.ln_top = nn.LayerNorm(self.in_dim)
-            # self.ln_attn = nn.LayerNorm(self.hidden_dim)
-            # self.ln_down = nn.LayerNorm(self.out_dim)
-
-            self.ln_top = ME.MinkowskiInstanceNorm(self.in_dim)
-            self.ln_attn = ME.MinkowskiInstanceNorm(self.hidden_dim)
-            self.ln_down = ME.MinkowskiInstanceNorm(self.out_dim)
-
-
         self.tmp_linear = nn.Sequential(ME.MinkowskiConvolution(self.in_dim, self.out_dim, kernel_size=3, dimension=3)).cuda()
 
     def forward(self, x : ME.SparseTensor):
@@ -443,47 +423,44 @@ class PTBlock(nn.Module):
         h = self.nhead
 
         res = x
-        self.register_buffer('input_map', x.C)
 
         if self.skip_knn:
 
-            x = self.linear_top(x)
-            if npoint <= self.n_sample:
-                self.cube_query = cube_query(r=self.r, k=self.k)
-            else:
-                self.cube_query = cube_query(r=self.r, k=self.n_sample)
-
+            self.cube_query = cube_query(r=self.r, k=self.k)
             neighbor, mask, idx_ = self.cube_query.get_neighbor(x, x)
+            x = self.linear_top(x)
             new_x = get_neighbor_feature(neighbor, x)
 
             y = get_neighbor_feature(neighbor, self.tmp_linear(x))
-            y = y[:,0,:]   # the 1st should be self
+            y = y.mean(dim=1)
             y = ME.SparseTensor(features = y, coordinate_map_key=x.coordinate_map_key, coordinate_manager=x.coordinate_manager)
-            y = self.linear_down(y)
+            y = self.linear_down(x)
             return y+res
+
+        # ------------------------------------------------------------------------------
+
         else:
             '''Cur knn interface still gives 16 points while the input is less'''
-            if npoint <= self.n_sample:
-                self.cube_query = cube_query(r=self.r, k=self.k)
-            else:
-                self.cube_query = cube_query(r=self.r, k=self.n_sample)
+            self.cube_query = cube_query(r=self.r, k=self.k)
 
             '''
             neighbor: [B*npoint, k, bxyz]
             mask: [B*npoint, k]
             idx: [B_nq], used for scatter/gather
             '''
+
             neighbor, mask, idx_ = self.cube_query.get_neighbor(x, x)
             self.register_buffer('neighbor_map', neighbor)
-            # self.neighbor_map = nn.Parameter(neighbor.float())
+            self.register_buffer('input_map', x.C)
 
-            if self.pre_ln:
-                x = self.ln_top(x)
+            # check for dup
+            dist_map = (neighbor - neighbor[:,0,:].unsqueeze(1))[:,1:,:].abs()
+            num_different = (dist_map.sum(-1)>0).sum(-1) # how many out of ks are the same, of shape [nvoxel]
+            outlier_point = (num_different < int(self.k*2/3)-1).sum()
+            if not (outlier_point < max(npoint//100, 10)):  # sometimes npoint//100 could be 3
+                logging.info('Detected Abnormal neighbors, num outlier {}, all points {}'.format(outlier_point, x.shape[0]))
 
             x = self.linear_top(x) # [B, in_dim, npoint], such as [16, 32, 4096]
-
-            if self.pre_ln:
-                x = self.ln_attn(x)
 
             '''
             illustration on dimension notations:
@@ -498,24 +475,19 @@ class PTBlock(nn.Module):
             phi = phi[:,None,:].repeat(1,self.k,1) # (nvoxel, k, feat_dim)
             psi = get_neighbor_feature(neighbor, self.psi(x)) # (nvoxel, k, feat_dim)
             alpha = get_neighbor_feature(neighbor, self.alpha(x)) # (nvoxel, k, feat_dim)
-
-            # print(neighbor[:40,0,:])
-            # import ipdb; ipdb.set_trace()
-
             '''Gene the pos_encoding'''
             try:
                 relative_xyz = neighbor - x.C[:,None,:].repeat(1,self.k,1) # (nvoxel, k, bxyz), we later pad it to [B, xyz, nvoxel_batch, k]
             except RuntimeError:
                 import ipdb; ipdb.set_trace()
-
             WITH_POSE_ENCODING = True
             if WITH_POSE_ENCODING:
                 relative_xyz[:,0,0] = x.C[:,0] # get back the correct batch index, because we messed batch index in the subtraction above
                 relative_xyz = pad_zero(relative_xyz, mask) # [B, xyz, nvoxel_batch, k]
                 pose_encoding = self.delta(relative_xyz.float()) # (B, feat_dim, nvoxel_batch, k)
                 pose_tensor = make_position_tensor(pose_encoding, mask, idx_, x.C.shape[0]) # (nvoxel, k, feat_dim)
-            '''The Self-Attn Part'''
 
+            '''The Self-Attn Part'''
             if self.use_vector_attn:
                 '''
                 the attn_map: [vector_dim];
@@ -525,7 +497,6 @@ class PTBlock(nn.Module):
                 self.out_dim and self.vector_dim are all 32 here, so y is still [16, 32, 4096, 16]
                 y = y.sum(dim=-1) # feature aggregation, y becomes [B, out_dim, npoint]
                 '''
-
                 if WITH_POSE_ENCODING:
                     gamma_input = phi - psi + pose_tensor # (nvoxel, k, feat_dim)
                 else:
@@ -540,32 +511,200 @@ class PTBlock(nn.Module):
                 y = y.sum(dim=-1).view(x.C.shape[0], -1) # feature aggregation, y becomes (nvoxel, feat_dim)
                 y = ME.SparseTensor(features = y, coordinate_map_key=x.coordinate_map_key, coordinate_manager=x.coordinate_manager)
             else:
-                # phi = phi.reshape(npoint, h, self.out_dim//h, self.k)
-                # psi = psi.reshape(npoint, h, self.out_dim//h, self.k)
-                # attn_map = F.softmax((phi*psi).reshape(npoint, self.out_dim, self.k).transpose(1,2) + pose_tensor, dim=-1)
-                # y = attn_map*(alpha+pose_tensor)
-                # y = y.sum(dim=-2)  # [npoint, self.k, self.out_dim]
-
-                # dot_product(phi, psi)  -> [K,K,D] 
-                # dot_priduct(attn, alpha) -> [N,K,D]
-
                 phi = phi.permute([2,1,0]) # [out_dim, k, npoint]
                 psi = psi.permute([2,0,1]) # [out_dim. npoint, k]
                 attn_map = F.softmax(torch.matmul(phi,psi), dim=0) # [out_dim, k, k]
                 alpha = (alpha+pose_tensor).permute([2,0,1])  # [out_dim, npoint, k]
                 y = torch.matmul(alpha, attn_map)  # [out_dim, npoint, k]
                 y = y.sum(-1).transpose(0,1)  # [out_dim. npoint]
-
                 y = ME.SparseTensor(features = y, coordinate_map_key=x.coordinate_map_key, coordinate_manager=x.coordinate_manager)
-
-            if self.pre_ln:
-                y = self.ln_down(y)
 
             y = self.linear_down(y)
 
             self.register_buffer('attn_map', attn_map.detach().cpu().data) # pack it with nn parameter to save in state-dict
 
             return y+res
+
+class MixedPTBlock(nn.Module):
+    # TODO: set proper r, too small will cause less points
+    def __init__(self, in_dim, hidden_dim, is_firstlayer=False, n_sample=16, r=10, skip_knn=False):
+        super().__init__()
+        '''
+        Point Transformer Layer
+
+        in_dim: feature dimension of the input feature x
+        out_dim: feature dimension of the Point Transformer Layer(currently same with hidden-dim)
+        '''
+
+        self.r = r # neighborhood cube radius
+        self.in_dim = in_dim
+        self.skip_knn = skip_knn
+
+        # TODO: set the hidden/vector/out_dims
+        self.hidden_dim = hidden_dim
+        self.out_dim = self.hidden_dim
+        self.vector_dim = self.out_dim
+
+        self.n_sample = n_sample
+
+        self.use_bn = True
+
+        # whether to use the vector att or the original attention
+        self.use_vector_attn = True
+        self.nhead = 4
+
+        self.linear_top = nn.Sequential(
+            ME.MinkowskiConvolution(in_dim, self.hidden_dim, kernel_size=3, dimension=3),
+            ME.MinkowskiBatchNorm(self.hidden_dim) if self.use_bn else nn.Identity()
+        )
+        self.linear_down = nn.Sequential(
+            ME.MinkowskiConvolution(self.out_dim, self.in_dim, kernel_size=3, dimension=3),
+            ME.MinkowskiBatchNorm(self.in_dim) if self.use_bn else nn.Identity()
+        )
+        # feature transformations
+        self.phi = nn.Sequential(
+            ME.MinkowskiConvolution(self.hidden_dim, self.out_dim, kernel_size=3, dimension=3)
+        )
+        self.psi = nn.Sequential(
+            ME.MinkowskiConvolution(self.hidden_dim, self.out_dim, kernel_size=3, dimension=3)
+        )
+        self.alpha = nn.Sequential(
+            ME.MinkowskiConvolution(self.hidden_dim, self.out_dim, kernel_size=3, dimension=3)
+        )
+
+        self.gamma = nn.Sequential(
+            nn.Conv1d(self.out_dim, self.hidden_dim, 1),
+            nn.BatchNorm1d(self.hidden_dim) if self.use_bn else nn.Identity(),
+            nn.ReLU(),
+            nn.Conv1d(self.hidden_dim, self.vector_dim, 1),
+            nn.BatchNorm1d(self.vector_dim) if self.use_bn else nn.Identity()
+        )
+        self.delta = nn.Sequential(
+            nn.Conv2d(3, self.hidden_dim, 1),
+            nn.BatchNorm2d(self.hidden_dim) if self.use_bn else nn.Identity(),
+            nn.ReLU(),
+            nn.Conv2d(self.hidden_dim, self.out_dim, 1),
+            nn.BatchNorm2d(self.out_dim) if self.use_bn else nn.Identity()
+        )
+
+        self.tmp_linear = nn.Sequential(ME.MinkowskiConvolution(self.in_dim, self.out_dim, kernel_size=3, dimension=3)).cuda()
+
+    def forward(self, x : ME.SparseTensor):
+        '''
+        input_p:  B, 3, npoint
+        input_x: B, in_dim, npoint
+        '''
+        import ipdb; ipdb.set_trace()
+        PT_begin = time.perf_counter()
+        self.B = (x.C[:,0]).max().item() + 1 # batch size
+        npoint, in_dim = tuple(x.F.size())
+        self.k = min(self.n_sample, npoint)
+        h = self.nhead
+
+        res = x
+
+        if self.skip_knn:
+
+            self.cube_query = cube_query(r=self.r, k=self.k)
+            neighbor, mask, idx_ = self.cube_query.get_neighbor(x, x)
+            x = self.linear_top(x)
+            new_x = get_neighbor_feature(neighbor, x)
+
+            y = get_neighbor_feature(neighbor, self.tmp_linear(x))
+            y = y.mean(dim=1)
+            y = ME.SparseTensor(features = y, coordinate_map_key=x.coordinate_map_key, coordinate_manager=x.coordinate_manager)
+            y = self.linear_down(x)
+            return y+res
+
+        # ------------------------------------------------------------------------------
+
+        else:
+            '''Cur knn interface still gives 16 points while the input is less'''
+            self.cube_query = cube_query(r=self.r, k=self.k)
+
+            '''
+            neighbor: [B*npoint, k, bxyz]
+            mask: [B*npoint, k]
+            idx: [B_nq], used for scatter/gather
+            '''
+
+            neighbor, mask, idx_ = self.cube_query.get_neighbor(x, x)
+            self.register_buffer('neighbor_map', neighbor)
+            self.register_buffer('input_map', x.C)
+
+            # check for dup
+            dist_map = (neighbor - neighbor[:,0,:].unsqueeze(1))[:,1:,:].abs()
+            num_different = (dist_map.sum(-1)>0).sum(-1) # how many out of ks are the same, of shape [nvoxel]
+            outlier_point = (num_different < int(self.k*2/3)-1).sum()
+            if not (outlier_point < max(npoint//100, 10)):  # sometimes npoint//100 could be 3
+                logging.info('Detected Abnormal neighbors, num outlier {}, all points {}'.format(outlier_point, x.shape[0]))
+
+            x = self.linear_top(x) # [B, in_dim, npoint], such as [16, 32, 4096]
+
+            '''
+            illustration on dimension notations:
+            - B: batch size
+            - nvoxel: number of all voxels of the whole batch
+            - k: k neighbors
+            - feat_dim: feature dimension, or channel as others call it
+            - nvoxel_batch: the maximum voxel number of a single SparseTensor in the current batch
+            '''
+
+            phi = self.phi(x).F # (nvoxel, feat_dim)
+            phi = phi[:,None,:].repeat(1,self.k,1) # (nvoxel, k, feat_dim)
+            psi = get_neighbor_feature(neighbor, self.psi(x)) # (nvoxel, k, feat_dim)
+            alpha = get_neighbor_feature(neighbor, self.alpha(x)) # (nvoxel, k, feat_dim)
+            '''Gene the pos_encoding'''
+            try:
+                relative_xyz = neighbor - x.C[:,None,:].repeat(1,self.k,1) # (nvoxel, k, bxyz), we later pad it to [B, xyz, nvoxel_batch, k]
+            except RuntimeError:
+                import ipdb; ipdb.set_trace()
+            WITH_POSE_ENCODING = True
+            if WITH_POSE_ENCODING:
+                relative_xyz[:,0,0] = x.C[:,0] # get back the correct batch index, because we messed batch index in the subtraction above
+                relative_xyz = pad_zero(relative_xyz, mask) # [B, xyz, nvoxel_batch, k]
+                pose_encoding = self.delta(relative_xyz.float()) # (B, feat_dim, nvoxel_batch, k)
+                pose_tensor = make_position_tensor(pose_encoding, mask, idx_, x.C.shape[0]) # (nvoxel, k, feat_dim)
+
+            '''The Self-Attn Part'''
+            if self.use_vector_attn:
+                '''
+                the attn_map: [vector_dim];
+                the alpha:    [out_dim]
+                attn_map = F.softmax(self.gamma(phi - psi + pos_encoding), dim=-1) # [B, in_dim, npoint, k], such as [16, 32, 4096, 16]
+                y = attn_map.repeat(1, self.out_dim // self.vector_dim,1,1)*(alpha + pos_encoding) # multiplies attention weight
+                self.out_dim and self.vector_dim are all 32 here, so y is still [16, 32, 4096, 16]
+                y = y.sum(dim=-1) # feature aggregation, y becomes [B, out_dim, npoint]
+                '''
+                if WITH_POSE_ENCODING:
+                    gamma_input = phi - psi + pose_tensor # (nvoxel, k, feat_dim)
+                else:
+                    gamma_input = phi - psi # (nvoxel, k, feat_dim)
+                gamma_input = gamma_input.permute(0, 2, 1) # (nvoxel, feat_dim, k)
+                attn_map = F.softmax(self.gamma(gamma_input), dim=-1) # (nvoxel, feat_dim, k)
+                if WITH_POSE_ENCODING:
+                    self_feat = (alpha + pose_tensor).permute(0,2,1) # (nvoxel, k, feat_dim) -> (nvoxel, feat_dim, k)
+                else:
+                    self_feat = (alpha).permute(0,2,1) # (nvoxel, k, feat_dim) -> (nvoxel, feat_dim, k)
+                y = attn_map.repeat(1, self.out_dim // self.vector_dim, 1, 1) * self_feat # (nvoxel, feat_dim, k)
+                y = y.sum(dim=-1).view(x.C.shape[0], -1) # feature aggregation, y becomes (nvoxel, feat_dim)
+                y = ME.SparseTensor(features = y, coordinate_map_key=x.coordinate_map_key, coordinate_manager=x.coordinate_manager)
+            else:
+                phi = phi.permute([2,1,0]) # [out_dim, k, npoint]
+                psi = psi.permute([2,0,1]) # [out_dim. npoint, k]
+                attn_map = F.softmax(torch.matmul(phi,psi), dim=0) # [out_dim, k, k]
+                alpha = (alpha+pose_tensor).permute([2,0,1])  # [out_dim, npoint, k]
+                y = torch.matmul(alpha, attn_map)  # [out_dim, npoint, k]
+                y = y.sum(-1).transpose(0,1)  # [out_dim. npoint]
+                y = ME.SparseTensor(features = y, coordinate_map_key=x.coordinate_map_key, coordinate_manager=x.coordinate_manager)
+
+            y = self.linear_down(y)
+
+            self.register_buffer('attn_map', attn_map.detach().cpu().data) # pack it with nn parameter to save in state-dict
+
+            return y+res
+
+
 
 
 def make_position_tensor(pose_encoding : torch.Tensor, mask : torch.Tensor, idx_: torch.Tensor, nvoxel : int):

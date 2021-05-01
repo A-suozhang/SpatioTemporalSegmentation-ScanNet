@@ -6,7 +6,9 @@
 import models.resnet as resnet
 import models.res16unet as res16unet
 import models.mink_transformer as mink_transformer
+import models.mink_transformer_voxel as mink_transformer_voxel
 import models.point_transformer as point_transformer
+import models.mixed_transformer as mixed_transformer
 
 MODELS = []
 
@@ -19,6 +21,8 @@ add_models(resnet)
 add_models(res16unet)
 add_models(mink_transformer)
 add_models(point_transformer)
+add_models(mink_transformer_voxel)
+add_models(mixed_transformer)
 
 
 def get_models():

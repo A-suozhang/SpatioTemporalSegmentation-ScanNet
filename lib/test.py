@@ -13,7 +13,7 @@ from sklearn.metrics import average_precision_score
 from sklearn.preprocessing import label_binarize
 
 from lib.utils import Timer, AverageMeter, precision_at_one, fast_hist, per_class_iu, \
-    get_prediction, get_torch_device
+    get_prediction, get_torch_device, save_map
 
 import MinkowskiEngine as ME
 
@@ -255,7 +255,7 @@ def test_points(model,
             use voxel-forward for testing the scannet
             '''
             if use_voxel:
-                feats = torch.unbind(pc[:,:,3:], dim=0)
+                feats = torch.unbind(pc[:,:,:], dim=0) # use all 6 chs for eval
                 coords = torch.unbind(pc[:,:,:3]/config.voxel_size, dim=0)
                 coords, feats= ME.utils.sparse_collate(coords, feats) # the returned coords adds a batch-dim
                 pc = ME.TensorField(features=feats.float(),coordinates=coords.cuda()) # [xyz, norm_xyz, rgb]
@@ -264,6 +264,20 @@ def test_points(model,
                 inputs = voxels
 
             else:
+                # DEBUG: diiscrete input xyz for point-based method
+                feats = torch.unbind(pc[:,:,3:], dim=0)
+                coords = torch.unbind(pc[:,:,:3]/config.voxel_size, dim=0)
+                coords, feats= ME.utils.sparse_collate(coords, feats) # the returned coords adds a batch-dim
+
+                pc = ME.TensorField(features=feats.float(),coordinates=coords.cuda()) # [xyz, norm_xyz, rgb]
+                voxels = pc.sparse()
+                pc_ = voxels.slice(pc)
+                pc = torch.cat([pc_.C[:,1:],pc_.F],dim=1).reshape([-1, config.num_points, 6])
+                import ipdb; ipdb.set_trace()
+
+                # discrete_coords = coords.reshape([-1, config.num_points, 4])[:,:,1:] # the batch does not have drop-last
+                # pc[:,:,:3] = discrete_coords
+
                 pc = pc.transpose(1,2)
                 inputs = pc
 
@@ -314,6 +328,10 @@ def test_points(model,
             total_seen_class[l] += np.sum((labels == l) & (labels >= 0))
             total_correct_class[l] += np.sum((predict == l) & (labels == l))
             total_iou_deno_class[l] += np.sum(((predict == l) & (labels >= 0)) | (labels == l))
+
+        '''Uncomment this to save the map, this could take about 500M sapce'''
+        # save_map(model, config)
+        # import ipdb; ipdb.set_trace()
 
     # final save
     if save_dir is not None:

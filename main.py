@@ -71,11 +71,11 @@ def main():
     else:
         '''bakup files'''
         if not os.path.exists(os.path.join(config.log_dir,'models')):
-                os.mkdir(os.path.join(config.log_dir,'models'))
-                for filename in os.listdir('./models'):
-                        if ".py" in filename:
-                                shutil.copy(os.path.join("./models", filename), os.path.join(config.log_dir,'models'))
-                shutil.copy('./main.py', config.log_dir)
+            os.mkdir(os.path.join(config.log_dir,'models'))
+        for filename in os.listdir('./models'):
+                if ".py" in filename:
+                        shutil.copy(os.path.join("./models", filename), os.path.join(config.log_dir,'models'))
+        shutil.copy('./main.py', config.log_dir)
 
 
     if config.is_cuda and not torch.cuda.is_available():
@@ -100,13 +100,12 @@ def main():
 
         if config.dataset == 'ScannetSparseVoxelizationDataset':
             point_scannet = False
-
             train_data_loader = initialize_data_loader(
                     DatasetClass,
                     config,
                     phase=config.train_phase,
-                    threads=config.threads,
-                    # threads=8,
+                    # threads=config.threads,
+                    threads=0,
                     augment_data=True,
                     elastic_distortion=config.train_elastic_distortion,
                     # elastic_distortion=False,
@@ -131,11 +130,12 @@ def main():
                     # batch_size=config.val_batch_size,
                     batch_size=config.batch_size,
                     limit_numpoints=False)
+
         elif config.dataset == 'ScannetDataset':
             val_DatasetClass = load_dataset('ScannetDatasetWholeScene_evaluation')
             point_scannet = True
 
-            collate_fn = t.cfl_collate_fn_factory(False) # no limit num-points
+            # collate_fn = t.cfl_collate_fn_factory(False) # no limit num-points
 
             trainset = DatasetClass(root='/data/eva_share_users/zhaotianchen/scannet/raw/scannet_pickles',
                                       npoints=config.num_points,
@@ -176,6 +176,11 @@ def main():
             num_in_channel = 3
 
         num_labels = train_data_loader.dataset.NUM_LABELS
+
+        # it = iter(train_data_loader)
+        # for _ in range(100):
+            # data = it.__next__()
+            # print(data)
 
     else:
 
