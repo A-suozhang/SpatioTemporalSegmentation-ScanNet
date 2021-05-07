@@ -223,14 +223,14 @@ class TULayer(nn.Module):
         if self.POINT_TR_LIKE:
             self.conv_a = nn.Sequential(
                 ME.MinkowskiPoolingTranspose(kernel_size=2,stride=2,dimension=3),
-                ME.MinkowskiConvolution(in_channels=input_a_dim, out_channels=out_dim,kernel_size=1,stride=1,dimension=3),
+                ME.MinkowskiConvolution(in_channels=input_a_dim, out_channels=out_dim,kernel_size=3,stride=1,dimension=3),
                 ME.MinkowskiBatchNorm(out_dim),
                 ME.MinkowskiReLU()
             )
 
             self.conv_b = nn.Sequential(
                 # ME.MinkowskiPoolingTranspose(kernel_size=2,stride=2,dimension=3),
-                ME.MinkowskiConvolution(in_channels=input_b_dim, out_channels=out_dim,kernel_size=1,stride=1,dimension=3),
+                ME.MinkowskiConvolution(in_channels=input_b_dim, out_channels=out_dim,kernel_size=3,stride=1,dimension=3),
                 ME.MinkowskiBatchNorm(out_dim),
                 ME.MinkowskiReLU()
             )
@@ -589,12 +589,21 @@ class MixedPTBlock(nn.Module):
 
         self.tmp_linear = nn.Sequential(ME.MinkowskiConvolution(self.in_dim, self.out_dim, kernel_size=3, dimension=3)).cuda()
 
-    def forward(self, x : ME.SparseTensor):
+    def forward(self, xyz, points):
         '''
         input_p:  B, 3, npoint
         input_x: B, in_dim, npoint
+        convert the point-based model into the voxel than revert back each block
+        PROBLEM:??? how could the grad backward
         '''
         import ipdb; ipdb.set_trace()
+
+        voxel_size=0.05
+        feats = torch.unbind(points, dim=0)
+        coords = torch.unbind(xyz/voxel_size, dim=0)
+        coords, feats= ME.utils.sparse_collate(coords, feats)
+
+
         PT_begin = time.perf_counter()
         self.B = (x.C[:,0]).max().item() + 1 # batch size
         npoint, in_dim = tuple(x.F.size())

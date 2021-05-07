@@ -239,6 +239,7 @@ def train_point(model, data_loader, val_data_loader, config, transform_data_fn=N
                         sinput = points.transpose(1,2).cuda().float()
 
                         # DEBUG: use the discrete coord for point-based
+
                         feats = torch.unbind(points[:,:,3:], dim=0)
                         voxel_size = config.voxel_size
                         coords = torch.unbind(points[:,:,:3]/voxel_size, dim=0)  # 0.05 is the voxel-size
@@ -268,9 +269,11 @@ def train_point(model, data_loader, val_data_loader, config, transform_data_fn=N
 
                 else:
                         # feats = torch.unbind(points[:,:,3:], dim=0) # WRONG: should also feed in xyz as inupt feature
-                        feats = torch.unbind(points[:,:,:], dim=0)
                         voxel_size = config.voxel_size
                         coords = torch.unbind(points[:,:,:3]/voxel_size, dim=0)  # 0.05 is the voxel-size
+                        # Normalize the xyz in feature
+                        points[:,:,:3] = points[:,:,:3] / points[:,:,:3].mean()
+                        feats = torch.unbind(points[:,:,:], dim=0)
                         coords, feats= ME.utils.sparse_collate(coords, feats)
 
                         # For some networks, making the network invariant to even, odd coords is important

@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import numpy as np
 from models.pct_utils import TDLayer, TULayer, stem_knn
 from models.pct_voxel_utils import MixedPTBlock as PTBlock
 
@@ -17,6 +18,7 @@ class MixedTransformer(nn.Module):
             nn.Conv1d(32, 32, 1),
             nn.BatchNorm1d(32))
 
+        self.dims = np.array([32, 64, 128, 256, 512])
         self.in_dims = [32, 64, 128, 256]
         self.out_dims = [64, 128, 256, 512]
         self.neighbor_ks = [16, 16, 16, 16, 16]
@@ -32,7 +34,9 @@ class MixedTransformer(nn.Module):
         # self.PTBlock7= PTBlock(in_dim=self.in_dims[1], n_sample=self.neighbor_ks[2])
         # self.PTBlock8= PTBlock(in_dim=self.in_dims[0], n_sample=self.neighbor_ks[1])
 
+        base_r = 10
 
+        self.PTBlock0 = PTBlock(in_dim=self.dims[0], hidden_dim = self.dims[0], n_sample=self.neighbor_ks[0], skip_knn=False, r=base_r)
         self.PTBlock1 = PTBlock(in_dim=self.dims[0], hidden_dim = self.dims[0], n_sample=self.neighbor_ks[0], skip_knn=False, r=base_r)
         self.PTBlock2 = PTBlock(in_dim=self.dims[1], hidden_dim = self.dims[1], n_sample=self.neighbor_ks[1], skip_knn=False, r=2*base_r)
         self.PTBlock3 = PTBlock(in_dim=self.dims[2],hidden_dim = self.dims[2], n_sample=self.neighbor_ks[2], skip_knn=False, r=2*base_r)
@@ -96,31 +100,31 @@ class MixedTransformer(nn.Module):
         l0_points, attn_0 = self.PTBlock0(l0_xyz, input_points)
 
         l1_xyz, l1_points, l1_xyz_local, l1_points_local = self.TDLayer1(l0_xyz, l0_points)
-        l1_points, attn_1 = self.PTBlock1(l1_xyz, l1_points)
+        l1_points = self.PTBlock1(l1_xyz, l1_points)
 
         l2_xyz, l2_points, l2_xyz_local, l2_points_local = self.TDLayer2(l1_xyz, l1_points)
-        l2_points, attn_2 = self.PTBlock2(l2_xyz, l2_points)
+        l2_points = self.PTBlock2(l2_xyz, l2_points)
 
         l3_xyz, l3_points, l3_xyz_local, l3_points_local = self.TDLayer3(l2_xyz, l2_points)
-        l3_points, attn_3 = self.PTBlock3(l3_xyz, l3_points)
+        l3_points = self.PTBlock3(l3_xyz, l3_points)
 
         l4_xyz, l4_points, l4_xyz_local, l4_points_local = self.TDLayer4(l3_xyz, l3_points)
-        l4_points, attn_4 = self.PTBlock4(l4_xyz, l4_points)
+        l4_points = self.PTBlock4(l4_xyz, l4_points)
 
         l4_points = self.middle_linear(l4_points)
-        l4_points, attn_4 = self.PTBlock_middle(l4_xyz, l4_points)
+        l4_points = self.PTBlock_middle(l4_xyz, l4_points)
 
         l5_xyz, l5_points = self.TULayer5(l4_xyz, l3_xyz, l4_points, l3_points)
-        l5_points, attn_5 = self.PTBlock5(l5_xyz, l5_points)
+        l5_points = self.PTBlock5(l5_xyz, l5_points)
 
         l6_xyz, l6_points = self.TULayer6(l5_xyz, l2_xyz, l5_points, l2_points)
-        l6_points, attn_6 = self.PTBlock6(l6_xyz, l6_points)
+        l6_points = self.PTBlock6(l6_xyz, l6_points)
 
         l7_xyz, l7_points = self.TULayer7(l6_xyz, l1_xyz, l6_points, l1_points)
-        l7_points, attn_7 = self.PTBlock7(l7_xyz, l7_points)
+        l7_points = self.PTBlock7(l7_xyz, l7_points)
 
         l8_xyz, l8_points = self.TULayer8(l7_xyz, l0_xyz, l7_points, l0_points)
-        l8_points, attn_8 = self.PTBlock8(l8_xyz, l8_points)
+        l8_points = self.PTBlock8(l8_xyz, l8_points)
 
         x = self.fc(l8_points.transpose(1,2))
 

@@ -89,7 +89,7 @@ class MinkowskiTransformerNet(ME.MinkowskiNetwork):
             )
         else:
             self.stem2 = nn.Sequential(
-                ME.MinkowskiConvolution(stem_dim, stem_dim, kernel_size=3, dimension=2, stride=2),
+                ME.MinkowskiConvolution(stem_dim, stem_dim, kernel_size=2, dimension=3, stride=2),
                 ME.MinkowskiBatchNorm(stem_dim),
                 ME.MinkowskiReLU(),
             )
@@ -157,12 +157,12 @@ class MinkowskiTransformerNet(ME.MinkowskiNetwork):
         if split_scene:
             self.final_conv = nn.Sequential(
                 ME.MinkowskiConvolution(self.dims[0], self.final_dim, kernel_size=1, stride=1, dimension=3),
-                ME.MinkowskiDropout(0.1),
+                # ME.MinkowskiDropout(0.1),
             )
         else:
             self.final_conv = nn.Sequential(
                 ME.MinkowskiConvolutionTranspose(self.dims[0], self.final_dim, kernel_size=2, stride=2, dimension=3),
-                ME.MinkowskiDropout(0.2),
+                # ME.MinkowskiDropout(0.2),
             )
         self.fc = ME.MinkowskiLinear(self.final_dim+self.dims[0], out_channel)
 

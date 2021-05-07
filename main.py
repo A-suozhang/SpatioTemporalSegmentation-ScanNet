@@ -76,6 +76,8 @@ def main():
                 if ".py" in filename:
                         shutil.copy(os.path.join("./models", filename), os.path.join(config.log_dir,'models'))
         shutil.copy('./main.py', config.log_dir)
+        shutil.copy('./lib/train.py', config.log_dir)
+        shutil.copy('./lib/test.py', config.log_dir)
 
 
     if config.is_cuda and not torch.cuda.is_available():
@@ -231,8 +233,10 @@ def main():
 
     logging.info('===> Building model')
 
-    if config.model == 'PointTransformer':
+    if config.model == 'PointTransformer' or config.model == 'MixedTransformer':
         config.pure_point = True
+    elif 'Res' in config.model:
+        num_in_channel = num_in_channel + 3 # DEBUG: dirty fix for feeding xyz+rgb for resnet
 
     NetClass = load_model(config.model)
     if config.pure_point:

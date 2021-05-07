@@ -255,9 +255,11 @@ def test_points(model,
             use voxel-forward for testing the scannet
             '''
             if use_voxel:
-                feats = torch.unbind(pc[:,:,:], dim=0) # use all 6 chs for eval
                 coords = torch.unbind(pc[:,:,:3]/config.voxel_size, dim=0)
-                coords, feats= ME.utils.sparse_collate(coords, feats) # the returned coords adds a batch-dim
+                # Normalize the xyz after the coord is set
+                pc[:,:,:3] = pc[:,:,:3] / pc[:,:,:3].mean()
+                feats = torch.unbind(pc[:,:,:], dim=0) # use all 6 chs for eval
+                coords, feats= ME.utils.sparse_collate(coords, feats) # the returned coords adds a batch-dimw
                 pc = ME.TensorField(features=feats.float(),coordinates=coords.cuda()) # [xyz, norm_xyz, rgb]
                 voxels = pc.sparse()
                 seg = seg.view(-1)
