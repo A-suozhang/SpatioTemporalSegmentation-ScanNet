@@ -7,6 +7,8 @@ from pointnet2_utils import gather_operation as index_points_cuda_transpose
 from pointnet2_utils import grouping_operation as grouping_operation_cuda
 from pointnet2_utils import ball_query as query_ball_point_cuda
 
+import MinkowskiEngine as ME
+
 from knn_cuda import KNN
 
 def square_distance(src, dst):
@@ -86,7 +88,12 @@ def sample_and_group_cuda(npoint, k, xyz, points):
     grouped_xyz = grouping_operation_cuda(xyz.transpose(1,2).contiguous(), idx).permute(0,2,3,1) # [B, npoint, k, C_xyz]
     #print(grouped_xyz.size())
     torch.cuda.empty_cache()
-    grouped_xyz_norm = grouped_xyz - new_xyz.view(B, npoint, 1, C_xyz) # [B, npoint, k, 3]
+    try:
+        # grouped_xyz_norm = grouped_xyz - new_xyz.view(B, npoint, 1, C_xyz) # [B, npoint, k, 3]
+        # DEBUG: when using the mixed-trans, some last voxels may have less points
+        grouped_xyz_norm = grouped_xyz - new_xyz.view(-1, min(npoint,N), 1, C_xyz) # [B, npoint, k, 3]
+    except:
+        import ipdb; ipdb.set_trace()
     grouped_xyz_norm = grouped_xyz_norm.permute(0,3,1,2).contiguous()# [B, 3, npoint, k]
     torch.cuda.empty_cache()
 
@@ -144,7 +151,6 @@ class TDLayer(nn.Module):
             bn = self.mlp_bns[i]
             new_points =  F.relu(bn(conv(new_points)))
 
-
         new_points_pooled = torch.max(new_points, 3)[0] # local max pooling
         #new_xyz = new_xyz.permute(0, 2, 1)
         #print(new_points_pooled.size())
@@ -196,13 +202,12 @@ class TULayer(nn.Module):
         dists, idx = dists.sort(dim=-1)
         dists, idx = dists[:,:,:self.k], idx[:,:,:self.k]
 
-        dist_recip = 1.0 / (dists + 1e-8)
+        dist_recip = 1.0 / (dists + 1e-1)
         norm = torch.sum(dist_recip, dim=2, keepdim=True)
         weight = dist_recip / norm
         interpolated_points = torch.sum( \
                         grouping_operation_cuda(points_1, idx.int())*weight.view(B, 1, N, 3)
                                                 ,dim=-1)
-
 
         return xyz_2 , (interpolated_points + points_2)
 
@@ -323,6 +328,7 @@ class PTBlock(nn.Module):
             self.ln_down = nn.LayerNorm(self.out_dim)
 
         self.knn = KNN(k=n_sample, transpose_mode=True)
+        self.skip_knn = True
 
     def forward(self, input_p, input_x):
         '''
@@ -336,6 +342,12 @@ class PTBlock(nn.Module):
         h = self.nhead
 
         res = input_x
+
+        if self.skip_knn:
+            # import ipdb; ipdb.set_trace()
+            x = self.linear_top(input_x)
+            y = self.linear_down(x)
+            return y+res, None
 
         input_p = input_p.permute([0,2,1])
 

@@ -24,11 +24,9 @@ add_models(point_transformer)
 add_models(mink_transformer_voxel)
 add_models(mixed_transformer)
 
-
 def get_models():
   '''Returns a tuple of sample models.'''
   return MODELS
-
 
 def load_model(name):
   '''Creates and returns an instance of the model given its class name.

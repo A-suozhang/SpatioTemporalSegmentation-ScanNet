@@ -233,7 +233,8 @@ def main():
 
     logging.info('===> Building model')
 
-    if config.model == 'PointTransformer' or config.model == 'MixedTransformer':
+    # if config.model == 'PointTransformer' or config.model == 'MixedTransformer':
+    if config.model == 'PointTransformer':
         config.pure_point = True
     elif 'Res' in config.model:
         num_in_channel = num_in_channel + 3 # DEBUG: dirty fix for feeding xyz+rgb for resnet
@@ -242,7 +243,10 @@ def main():
     if config.pure_point:
         model = NetClass(num_class=num_labels,N=config.num_points,normal_channel=num_in_channel)
     else:
-        model = NetClass(num_in_channel, num_labels, config)
+        if config.model == 'MixedTransformer':
+            model = NetClass(num_class=num_labels,N=config.num_points,normal_channel=num_in_channel)
+        else:
+            model = NetClass(num_in_channel, num_labels, config)
     logging.info('===> Number of trainable parameters: {}: {}'.format(NetClass.__name__,count_parameters(model)))
     logging.info(model)
 

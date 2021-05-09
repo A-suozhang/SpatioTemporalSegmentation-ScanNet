@@ -240,7 +240,7 @@ def train_point(model, data_loader, val_data_loader, config, transform_data_fn=N
 
                         # DEBUG: use the discrete coord for point-based
 
-                        feats = torch.unbind(points[:,:,3:], dim=0)
+                        feats = torch.unbind(points[:,:,:], dim=0)
                         voxel_size = config.voxel_size
                         coords = torch.unbind(points[:,:,:3]/voxel_size, dim=0)  # 0.05 is the voxel-size
                         coords, feats= ME.utils.sparse_collate(coords, feats)
@@ -248,8 +248,8 @@ def train_point(model, data_loader, val_data_loader, config, transform_data_fn=N
                         points_ = ME.TensorField(features=feats.float(), coordinates=coords, device=device)
                         tmp_voxel = points_.sparse()
                         sinput_ = tmp_voxel.slice(points_)
-
-                        sinput = torch.cat([sinput_.C[:,1:], sinput_.F],dim=1).reshape([config.batch_size, config.num_points, 6])
+                        sinput = torch.cat([sinput_.C[:,1:]*config.voxel_size, sinput_.F[:,3:]],dim=1).reshape([config.batch_size, config.num_points, 6])
+                        # sinput = sinput_.F.reshape([config.batch_size, config.num_points, 6])
                         sinput = sinput.transpose(1,2).cuda().float()
 
                         # sinput = torch.cat([coords[:,1:], feats],dim=1).reshape([config.batch_size, config.num_points, 6])
@@ -272,7 +272,7 @@ def train_point(model, data_loader, val_data_loader, config, transform_data_fn=N
                         voxel_size = config.voxel_size
                         coords = torch.unbind(points[:,:,:3]/voxel_size, dim=0)  # 0.05 is the voxel-size
                         # Normalize the xyz in feature
-                        points[:,:,:3] = points[:,:,:3] / points[:,:,:3].mean()
+                        # points[:,:,:3] = points[:,:,:3] / points[:,:,:3].mean()
                         feats = torch.unbind(points[:,:,:], dim=0)
                         coords, feats= ME.utils.sparse_collate(coords, feats)
 
@@ -307,7 +307,7 @@ def train_point(model, data_loader, val_data_loader, config, transform_data_fn=N
                 target = (target-1).view(-1).long().to(device)
 
                 # catch NAN
-                if torch.isnan(target).sum() > 0:
+                if torch.isnan(soutput).sum() > 0:
                         import ipdb; ipdb.set_trace()
 
                 loss = criterion(soutput, target)

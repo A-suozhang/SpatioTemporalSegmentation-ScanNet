@@ -257,7 +257,7 @@ def test_points(model,
             if use_voxel:
                 coords = torch.unbind(pc[:,:,:3]/config.voxel_size, dim=0)
                 # Normalize the xyz after the coord is set
-                pc[:,:,:3] = pc[:,:,:3] / pc[:,:,:3].mean()
+                # pc[:,:,:3] = pc[:,:,:3] / pc[:,:,:3].mean()
                 feats = torch.unbind(pc[:,:,:], dim=0) # use all 6 chs for eval
                 coords, feats= ME.utils.sparse_collate(coords, feats) # the returned coords adds a batch-dimw
                 pc = ME.TensorField(features=feats.float(),coordinates=coords.cuda()) # [xyz, norm_xyz, rgb]
@@ -266,16 +266,16 @@ def test_points(model,
                 inputs = voxels
 
             else:
-                # DEBUG: diiscrete input xyz for point-based method
-                feats = torch.unbind(pc[:,:,3:], dim=0)
+                # DEBUG: discrete input xyz for point-based method
+                feats = torch.unbind(pc[:,:,:], dim=0)
                 coords = torch.unbind(pc[:,:,:3]/config.voxel_size, dim=0)
                 coords, feats= ME.utils.sparse_collate(coords, feats) # the returned coords adds a batch-dim
 
                 pc = ME.TensorField(features=feats.float(),coordinates=coords.cuda()) # [xyz, norm_xyz, rgb]
                 voxels = pc.sparse()
                 pc_ = voxels.slice(pc)
-                pc = torch.cat([pc_.C[:,1:],pc_.F],dim=1).reshape([-1, config.num_points, 6])
-                import ipdb; ipdb.set_trace()
+                # pc = torch.cat([pc_.C[:,1:],pc_.F[:,:3:]],dim=1).reshape([-1, config.num_points, 6])
+                pc = pc_.F.reshape([-1, config.num_points, 6])
 
                 # discrete_coords = coords.reshape([-1, config.num_points, 4])[:,:,1:] # the batch does not have drop-last
                 # pc[:,:,:3] = discrete_coords

@@ -67,6 +67,12 @@ class PointTransformer(nn.Module):
         for i in range(5):
             self.save_dict['attn_{}'.format(i)] = []
 
+        self.conv1 = nn.Conv1d(self.in_dims[0], self.out_dims[0], 1)
+        self.conv2 = nn.Conv1d(self.in_dims[1], self.out_dims[1], 1)
+        self.conv3 = nn.Conv1d(self.in_dims[2], self.out_dims[2], 1)
+        self.conv4 = nn.Conv1d(self.in_dims[3], self.out_dims[3], 1)
+        self.conv5 = nn.Conv1d(self.out_dims[3], num_class, 1)
+
     def save_intermediate(self):
 
         save_dict = self.save_dict
@@ -77,6 +83,7 @@ class PointTransformer(nn.Module):
 
 
     def forward(self, inputs):
+        import ipdb; ipdb.set_trace()
         self.register_buffer('input_map', inputs)
         B,_,_ = list(inputs.size())
 
@@ -86,6 +93,19 @@ class PointTransformer(nn.Module):
             l0_xyz = inputs
 
         input_points = self.input_mlp(inputs)
+
+        # DEBUG
+        # x = input_points
+
+        # x = self.conv1(x)
+        # x = self.conv2(x)
+        # x = self.conv3(x)
+        # x = self.conv4(x)
+        # x = self.conv5(x)
+
+        # return x.transpose(1,2)
+        # --------------------
+
         l0_points, attn_0 = self.PTBlock0(l0_xyz, input_points)
 
         l1_xyz, l1_points, l1_xyz_local, l1_points_local = self.TDLayer1(l0_xyz, l0_points)
@@ -116,6 +136,9 @@ class PointTransformer(nn.Module):
         l8_points, attn_8 = self.PTBlock8(l8_xyz, l8_points)
 
         x = self.fc(l8_points.transpose(1,2))
+
+        if torch.isinf(x).sum() > 0:
+            import ipdb; ipdb.set_trace()
 
         # if self.save_flag:
             # self.save_dict['attn_0'].append(attn_0)

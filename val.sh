@@ -1,4 +1,5 @@
 export BATCH_SIZE=16
+#export MODEL=MixedTransformer
 export MODEL=MinkowskiTransformerNet
 #export MODEL=PointTransformer
 export DATASET=ScannetDataset
