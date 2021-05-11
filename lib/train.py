@@ -58,7 +58,8 @@ def train(model, data_loader, val_data_loader, config, transform_data_fn=None):
             state = torch.load(checkpoint_fn)
             curr_iter = state['iteration'] + 1
             epoch = state['epoch']
-            model.load_state_dict(state['state_dict'])
+            d = {k:v for k,v in state['state_dict'].items() if 'map' not in k }
+            model.load_state_dict(d)
             if config.resume_optimizer:
                 scheduler = initialize_scheduler(optimizer, config, last_step=curr_iter)
                 optimizer.load_state_dict(state['optimizer'])
@@ -208,7 +209,8 @@ def train_point(model, data_loader, val_data_loader, config, transform_data_fn=N
             state = torch.load(checkpoint_fn)
             curr_iter = state['iteration'] + 1
             epoch = state['epoch']
-            model.load_state_dict(state['state_dict'])
+            d = {k:v for k,v in state['state_dict'].items() if 'map' not in k }
+            model.load_state_dict(d)
             if config.resume_optimizer:
                 scheduler = initialize_scheduler(optimizer, config, last_step=curr_iter)
                 optimizer.load_state_dict(state['optimizer'])

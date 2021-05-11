@@ -56,7 +56,7 @@ def stem_knn(xyz, points, k):
     return grouped_xyz, grouped_points
 
 
-def sample_and_group_cuda(npoint, k, xyz, points):
+def sample_and_group_cuda(npoint, k, xyz, points, cat_xyz_feature=True):
     """
     Input:
         npoint:
@@ -83,13 +83,11 @@ def sample_and_group_cuda(npoint, k, xyz, points):
     torch.cuda.empty_cache()
     _, idx = knn(xyz.contiguous(), new_xyz) # B, npoint, k
     idx = idx.int()
-    
+
     torch.cuda.empty_cache()
     grouped_xyz = grouping_operation_cuda(xyz.transpose(1,2).contiguous(), idx).permute(0,2,3,1) # [B, npoint, k, C_xyz]
-    #print(grouped_xyz.size())
     torch.cuda.empty_cache()
     try:
-        # grouped_xyz_norm = grouped_xyz - new_xyz.view(B, npoint, 1, C_xyz) # [B, npoint, k, 3]
         # DEBUG: when using the mixed-trans, some last voxels may have less points
         grouped_xyz_norm = grouped_xyz - new_xyz.view(-1, min(npoint,N), 1, C_xyz) # [B, npoint, k, 3]
     except:
@@ -99,8 +97,11 @@ def sample_and_group_cuda(npoint, k, xyz, points):
 
     grouped_points = grouping_operation_cuda(points.contiguous(), idx) #B, C, npoint, k
 
-    new_points = torch.cat([grouped_xyz_norm, grouped_points], dim=1) # [B, C+C_xyz, npoint, k]
-    
+    if cat_xyz_feature:
+        new_points = torch.cat([grouped_xyz_norm, grouped_points], dim=1) # [B, C+C_xyz, npoint, k]
+    else:
+        new_points = grouped_points # [B, C+C_xyz, npoint, k]
+
 
     return new_xyz.transpose(1,2), grouped_xyz_norm, new_points
 
@@ -123,7 +124,12 @@ class TDLayer(nn.Module):
         self.mlp_convs = nn.ModuleList()
         self.mlp_bns = nn.ModuleList()
 
-        self.mlp_convs.append(nn.Conv2d(input_dim+3, input_dim, 1))
+        # by default the xyz information is concated to feature
+        self.cat_xyz_feature=False
+        if self.cat_xyz_feature:
+            self.mlp_convs.append(nn.Conv2d(input_dim+3, input_dim, 1))
+        else:
+            self.mlp_convs.append(nn.Conv2d(input_dim, input_dim, 1))
         self.mlp_convs.append(nn.Conv2d(input_dim, out_dim, 1))
         self.mlp_bns.append(nn.BatchNorm2d(input_dim))
         self.mlp_bns.append(nn.BatchNorm2d(out_dim))
@@ -140,29 +146,23 @@ class TDLayer(nn.Module):
         B, input_dim, npoint = list(xyz.size())
         xyz = xyz.permute(0, 2, 1)
 
-        # import ipdb; ipdb.set_trace()
+        FIXED_NUM_POINTS=False
+        if FIXED_NUM_POINTS:
+            npoint = self.npoint
+        else:
+            ds_ratio=2
+            npoint = npoint // ds_ratio
 
-        # ds_ratio=2
-        # npoint = npoint // ds_ratio
-
-        # DEBUG: for mixed-transformer, also half the point by 2, not//4
-        # new_xyz, grouped_xyz_norm, new_points = sample_and_group_cuda(self.npoint, self.k, xyz, points)
-        npoint = self.npoint
-        new_xyz, grouped_xyz_norm, new_points = sample_and_group_cuda(npoint, self.k, xyz, points)
-
+        new_xyz, grouped_xyz_norm, new_points = sample_and_group_cuda(npoint, self.k, xyz, points, cat_xyz_feature=self.cat_xyz_feature)
         # new_xyz: sampled points position data, [B, 3, npoint]
         # new_points: sampled points data, [B, C+C_xyz, npoint,k]
         # grouped_xyz_norm: [B, 3, npoint,k]
 
-        #new_points = new_points.permute(0, 3, 2, 1) # [B, C+D, nsample,npoint]
-        #print(new_points.size())
         for i, conv in enumerate(self.mlp_convs):
             bn = self.mlp_bns[i]
             new_points =  F.relu(bn(conv(new_points)))
 
         new_points_pooled = torch.max(new_points, 3)[0] # local max pooling
-        #new_xyz = new_xyz.permute(0, 2, 1)
-        #print(new_points_pooled.size())
         return new_xyz, new_points_pooled, grouped_xyz_norm, new_points
 
 class TULayer(nn.Module):
@@ -253,90 +253,73 @@ class TransposeLayerNorm(nn.Module):
         return self.norm(x.transpose(1,-1)).transpose(1,-1)
 
 class PTBlock(nn.Module):
-    def __init__(self, in_dim, is_firstlayer=False, n_sample=16):
+    def __init__(self, in_dim, n_sample=16):
         super().__init__()
         '''
-        Point Transformer Layer
+        --- Point Transformer Layer ---
 
         in_dim: feature dimension of the input feature x
-        out_dim: feature dimension of the Point Transformer Layer(currently same with hidden-dim)
-        [?] - not sure how to set hidden. the paper only gives the out
+        hidden_dim: feature after the linear-top, normally = in_dim, could be different
+        out_dim: feature dimension of the Point Transformer Layer(qkv dim)
+        vector_dim: the dim of the vector attn, should be out_dim/N, set here same as out_dim
+
+        linear_top: in_dim -> hidden
+        qkv: hidden -> out(vector)
+        gamma: out -> vector (qkv as its input, attn_map as its output)
+        pos_encoding: hidden -> out
+        linear_down: out_dim -> in_dim
         '''
 
 
         self.in_dim = in_dim
-        self.is_firstlayer = is_firstlayer
-
-        # TODO: set the hidden/vector/out_dims
         self.hidden_dim = in_dim
-        # self.out_dim = min(4*in_dim, 512)
         self.out_dim = in_dim
-        self.vector_dim = self.out_dim
+        self.vector_dim = self.out_dim // 1
         self.n_sample = n_sample
 
-        # whether use BN or LN or None
-        # 0 - None
-        # 1 - BN
-        # 2 - LN
-
-        self.use_bn = 1
-        # use transformer-like preLN before the attn & ff layer
-        self.pre_ln = False
-
-        # whether to use the vector att or the original attention
+        # whether to use the vector att/original attention
         self.use_vector_attn = True
-        self.nhead = 4
+        if not self.use_vector_attn:
+            self.nhead = 4
 
         self.linear_top = nn.Sequential(
             nn.Conv1d(in_dim, self.hidden_dim, 1),
-            # TransposeLayerNorm(self.hidden_dim),
-            nn.BatchNorm1d(self.hidden_dim) if self.use_bn else nn.Identity()
+            nn.BatchNorm1d(self.hidden_dim)
         )
         self.linear_down = nn.Sequential(
             nn.Conv1d(self.out_dim, self.in_dim, 1),
-            # TransposeLayerNorm(self.in_dim),
-            nn.BatchNorm1d(self.in_dim) if self.use_bn else nn.Identity()
+            nn.BatchNorm1d(self.in_dim)
         )
 
         self.phi = nn.Sequential(
             nn.Conv1d(self.hidden_dim, self.out_dim, 1),
-            # nn.BatchNorm1d(self.out_dim) if self.use_bn else nn.Identity()
+            # nn.BatchNorm1d(self.out_dim) 
         )
         self.psi = nn.Sequential(
             nn.Conv1d(self.hidden_dim, self.out_dim, 1),
-            # nn.BatchNorm1d(self.out_dim) if self.use_bn else nn.Identity()
+            # nn.BatchNorm1d(self.out_dim) 
         )
         self.alpha = nn.Sequential(
             nn.Conv1d(self.hidden_dim, self.out_dim, 1),
-            # nn.BatchNorm1d(self.out_dim) if self.use_bn else nn.Identity()
+            # nn.BatchNorm1d(self.out_dim) 
         )
 
         self.gamma = nn.Sequential(
             nn.Conv2d(self.out_dim, self.hidden_dim, 1),
-            # TransposeLayerNorm(self.hidden_dim),
-            nn.BatchNorm2d(self.hidden_dim) if self.use_bn else nn.Identity(),
+            nn.BatchNorm2d(self.hidden_dim),
             nn.ReLU(),
             nn.Conv2d(self.hidden_dim, self.vector_dim, 1),
-            # TransposeLayerNorm(self.vector_dim),
-            nn.BatchNorm2d(self.vector_dim) if self.use_bn else nn.Identity()
+            nn.BatchNorm2d(self.vector_dim),
         )
 
         self.delta = nn.Sequential(
             nn.Conv2d(3, self.hidden_dim, 1),
-            # TransposeLayerNorm(self.hidden_dim),
-            nn.BatchNorm2d(self.hidden_dim) if self.use_bn else nn.Identity(),
+            nn.BatchNorm2d(self.hidden_dim),
             nn.ReLU(),
             nn.Conv2d(self.hidden_dim, self.out_dim, 1),
-            nn.BatchNorm2d(self.out_dim) if self.use_bn else nn.Identity()
-            # TransposeLayerNorm(self.out_dim),
+            nn.BatchNorm2d(self.out_dim),
             )
 
-        if self.pre_ln:
-            self.ln_top = nn.LayerNorm(self.in_dim)
-            self.ln_attn = nn.LayerNorm(self.hidden_dim)
-            self.ln_down = nn.LayerNorm(self.out_dim)
-
-        self.knn = KNN(k=n_sample, transpose_mode=True)
         self.skip_knn = False
 
     def forward(self, input_p, input_x):
@@ -345,29 +328,29 @@ class PTBlock(nn.Module):
         input_x: B, in_dim, npoint
         '''
 
-        B, in_dim, npoint = list(input_x.size())
-        n_sample = self.n_sample
-        k = min(n_sample, npoint)
-        h = self.nhead
+        B, in_dim, npoint = list(input_x.size()) # npoint: the input point-num
+        n_sample = self.n_sample       # the knn-sample num cur block
+        k = min(n_sample, npoint)      # denoting the num_point cur layer
+        if not self.use_vector_attn:
+            h = self.nhead                  # only used in non-vextor attn
 
         res = input_x
 
         if self.skip_knn:
             import ipdb; ipdb.set_trace()
-            # import ipdb; ipdb.set_trace()
             x = self.linear_top(input_x)
             y = self.linear_down(x)
             return y+res, None
 
         input_p = input_p.permute([0,2,1])
 
-        # DEBUG: error here is that in the last block only 4-points;
-        # however the knn still gives 16 idxs
-        if npoint < self.n_sample:
-            self.knn = KNN(k=npoint, transpose_mode=True)
+        # The input npoint coule be less than the n_sample(k)
+        # however, if keep init the knn(k=npoint), it will still give k output
+        # so just skip the knn part
 
-        # DEBUG ONLY: using the input_x: feature space knn!
-        # _, idx = self.knn(input_x.transpose(1,2), input_x.transpose(1,2))
+        self.knn = KNN(k=k, transpose_mode=True)
+        # if npoint < self.n_sample:
+            # self.knn = KNN(k=npoint, transpose_mode=True)
 
         _, idx = self.knn(input_p.contiguous(), input_p)
         idx = idx.int()
@@ -376,18 +359,11 @@ class PTBlock(nn.Module):
 
         grouped_input_p = grouping_operation_cuda(input_p.transpose(1,2).contiguous(), idx) # [bs, xyz, npoint, k]
 
-        if self.pre_ln:
-            input_x = self.ln_top(input_x.transpose(1,2)).transpose(1,2)
-
         input_x = self.linear_top(input_x)
-
-        # TODO: apply the layer-norm
-        # however the original is [bs, dim, npoint]
-        if self.pre_ln:
-            input_x = self.ln_attn(input_x.transpose(1,2)).transpose(1,2)
 
         # grouped_input_x = index_points(input_x.permute([0,2,1]), idx.long()).permute([0,3,1,2])
         # grouped_input_x = grouping_operation_cuda(input_x.contiguous(), idx)  # [bs, xyz, npoint, K]
+
         phi = self.phi(input_x)
         phi = phi[:,:,:,None].repeat(1,1,1,k)
         psi = grouping_operation_cuda(self.psi(input_x).contiguous(), idx)
@@ -411,10 +387,7 @@ class PTBlock(nn.Module):
 
         self.register_buffer('attn_map', attn_map)
 
-        if self.pre_ln:
-            y = self.ln_down(y.transpose(1,2)).transpose(1,2)
-
         y = self.linear_down(y)
 
-        return y+res, attn_map.detach().cpu().data
+        return y+res, None
 

@@ -65,10 +65,6 @@ def main():
         json_config['weights'] = config.weights
         config = edict(json_config)
         config.val_batch_size = val_bs
-    elif config.resume:
-        json_config = json.load(open(config.resume + '/config.json', 'r'))
-        json_config['resume'] = config.resume
-        config = edict(json_config)
     else:
         '''bakup files'''
         if not os.path.exists(os.path.join(config.log_dir,'models')):
@@ -80,6 +76,19 @@ def main():
         shutil.copy('./lib/train.py', config.log_dir)
         shutil.copy('./lib/test.py', config.log_dir)
 
+    if config.resume == 'True':
+        new_iter_size = config.max_iter
+        new_bs = config.batch_size
+        config.resume = config.log_dir
+        json_config = json.load(open(config.resume + '/config.json', 'r'))
+        json_config['resume'] = config.resume
+        config = edict(json_config)
+        config.weights = os.path.join(config.log_dir, 'weights.pth')   # use the pre-trained weights
+        logging.info('==== resuming from {}, Total {} ======'.format(config.max_iter, new_iter_size))
+        config.max_iter = new_iter_size
+        config.batch_size = new_bs
+    else:
+        config.resume = None
 
     if config.is_cuda and not torch.cuda.is_available():
         raise Exception("No GPU found")
@@ -263,7 +272,7 @@ def main():
         logging.info('===> Loading weights: ' + config.weights)
         state = torch.load(config.weights)
         # delete the keys containing the 'attn' since it raises size mismatch
-        d = {k:v for k,v in state['state''_dict'].items() if 'map' not in k }
+        d = {k:v for k,v in state['state_dict'].items() if 'map' not in k }
 
         if config.weights_for_inner_model:
             model.model.load_state_dict(d)

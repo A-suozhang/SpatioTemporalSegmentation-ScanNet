@@ -19,6 +19,7 @@ export BATCH_SIZE=${BATCH_SIZE:-12}
 export SCHEDULER=${SCHEDULER:-SquaredLR}
 export MAX_ITER=${MAX_ITER:-60000}
 
+export RESUME=${RESUME:-none}
 export POINTS=${POINTS:-8192}
 
 export OUTPATH=./outputs/$DATASET/$MODEL/$LOG/
@@ -60,6 +61,7 @@ time python -W ignore main.py \
 	--scheduler $SCHEDULER \
 	--max_iter $MAX_ITER \
 	--num_points $POINTS \
+	--resume $RESUME \
 	$3 
 
 #time python -W ignore main.py \
