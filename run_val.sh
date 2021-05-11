@@ -63,4 +63,5 @@ time python -W ignore main.py \
 	--log_dir $OUTPATH \
 	--test_config ${OUTPATH}config.json \
 	--weights ${OUTPATH}weights.pth \
+	--val_batch_size $BATCH_SIZE \
 	$3 

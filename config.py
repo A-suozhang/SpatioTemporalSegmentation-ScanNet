@@ -78,7 +78,7 @@ data_arg.add_argument('--dataset', type=str, default='ScannetSparseVoxelizationD
 data_arg.add_argument('--point_lim', type=int, default=-1)
 data_arg.add_argument('--pre_point_lim', type=int, default=-1)
 data_arg.add_argument('--batch_size', type=int, default=16)
-data_arg.add_argument('--val_batch_size', type=int, default=1)
+data_arg.add_argument('--val_batch_size', type=int, default=8)
 data_arg.add_argument('--test_batch_size', type=int, default=1)
 data_arg.add_argument('--cache_data', type=str2bool, default=False)
 data_arg.add_argument(

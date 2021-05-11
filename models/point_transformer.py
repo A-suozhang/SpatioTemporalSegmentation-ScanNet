@@ -83,7 +83,6 @@ class PointTransformer(nn.Module):
 
 
     def forward(self, inputs):
-        import ipdb; ipdb.set_trace()
         self.register_buffer('input_map', inputs)
         B,_,_ = list(inputs.size())
 

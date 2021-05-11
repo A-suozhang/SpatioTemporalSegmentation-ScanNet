@@ -106,7 +106,10 @@ def sample_and_group_cuda(npoint, k, xyz, points):
 
     grouped_points = grouping_operation_cuda(points.contiguous(), idx) #B, C, npoint, k
 
+
+    # DEBUG: if non xyz concat, should use upper
     new_points = torch.cat([grouped_xyz_norm, grouped_points], dim=1) # [B, C+C_xyz, npoint, k]
+    # new_points = grouped_points
 
     return new_xyz.transpose(1,2), grouped_xyz_norm, new_points, idx
 
@@ -172,6 +175,7 @@ class TDLayer(nn.Module):
             self.mlp_bns = nn.ModuleList()
 
             self.mlp_convs.append(nn.Conv2d(input_dim+3, input_dim, 1))
+            # self.mlp_convs.append(nn.Conv2d(input_dim, input_dim, 1))
             self.mlp_convs.append(nn.Conv2d(input_dim, out_dim, 1))
             self.mlp_bns.append(nn.BatchNorm2d(input_dim))
             self.mlp_bns.append(nn.BatchNorm2d(out_dim))
@@ -524,6 +528,7 @@ class PTBlock(nn.Module):
         res = x
 
         if self.skip_knn:
+            import ipdb; ipdb.set_trace()
             x = self.linear_top(x)
             y = self.linear_down(x)
             return y+res

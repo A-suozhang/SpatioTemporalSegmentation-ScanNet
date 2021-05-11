@@ -134,13 +134,22 @@ class TDLayer(nn.Module):
             xyz: input points position data, [B, 3, N]
             points: input points data, [B, C, N]
         Return:
-            new_xyz: sampled points position data, [B, C, S]
+            gew_xyz: sampled points position data, [B, C, S]
             new_points_concat: sample points feature data, [B, D', S]
         """
         B, input_dim, npoint = list(xyz.size())
         xyz = xyz.permute(0, 2, 1)
 
-        new_xyz, grouped_xyz_norm, new_points = sample_and_group_cuda(self.npoint, self.k, xyz, points)
+        # import ipdb; ipdb.set_trace()
+
+        # ds_ratio=2
+        # npoint = npoint // ds_ratio
+
+        # DEBUG: for mixed-transformer, also half the point by 2, not//4
+        # new_xyz, grouped_xyz_norm, new_points = sample_and_group_cuda(self.npoint, self.k, xyz, points)
+        npoint = self.npoint
+        new_xyz, grouped_xyz_norm, new_points = sample_and_group_cuda(npoint, self.k, xyz, points)
+
         # new_xyz: sampled points position data, [B, 3, npoint]
         # new_points: sampled points data, [B, C+C_xyz, npoint,k]
         # grouped_xyz_norm: [B, 3, npoint,k]
@@ -328,7 +337,7 @@ class PTBlock(nn.Module):
             self.ln_down = nn.LayerNorm(self.out_dim)
 
         self.knn = KNN(k=n_sample, transpose_mode=True)
-        self.skip_knn = True
+        self.skip_knn = False
 
     def forward(self, input_p, input_x):
         '''
@@ -344,6 +353,7 @@ class PTBlock(nn.Module):
         res = input_x
 
         if self.skip_knn:
+            import ipdb; ipdb.set_trace()
             # import ipdb; ipdb.set_trace()
             x = self.linear_top(input_x)
             y = self.linear_down(x)

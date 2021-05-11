@@ -47,7 +47,6 @@ def setup_seed(seed):
 
 def main():
     config = get_config()
-
     ch = logging.StreamHandler(sys.stdout)
     logging.getLogger().setLevel(logging.INFO)
     formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -60,10 +59,12 @@ def main():
                 handlers=[ch, file_handler])
 
     if config.test_config:
+        val_bs = config.val_batch_size
         json_config = json.load(open(config.test_config, 'r'))
         json_config['is_train'] = False
         json_config['weights'] = config.weights
         config = edict(json_config)
+        config.val_batch_size = val_bs
     elif config.resume:
         json_config = json.load(open(config.resume + '/config.json', 'r'))
         json_config['resume'] = config.resume
@@ -129,8 +130,7 @@ def main():
                     elastic_distortion=config.test_elastic_distortion,
                     shuffle=False,
                     repeat=False,
-                    # batch_size=config.val_batch_size,
-                    batch_size=config.batch_size,
+                    batch_size=config.val_batch_size,
                     limit_numpoints=False)
 
         elif config.dataset == 'ScannetDataset':
@@ -167,7 +167,7 @@ def main():
                 dataset=valset,
                 # num_workers=config.threads,
                 num_workers=0,  # for loading big pth file, should use single-thread
-                batch_size=config.batch_size,
+                batch_size=config.val_batch_size,
                 # collate_fn=collate_fn, # input points, should not have collate-fn 
                 worker_init_fn=_init_fn,
             )
@@ -198,7 +198,7 @@ def main():
                     elastic_distortion=config.test_elastic_distortion,
                     shuffle=False,
                     repeat=False,
-                    batch_size=config.test_batch_size,
+                    batch_size=config.val_batch_size,
                     limit_numpoints=False)
 
             if test_data_loader.dataset.NUM_IN_CHANNEL is not None:
@@ -223,7 +223,7 @@ def main():
                 dataset=valset,
                 # num_workers=config.threads,
                 num_workers=0,  # for loading big pth file, should use single-thread
-                batch_size=config.batch_size,
+                batch_size=config.val_batch_size,
                 # collate_fn=collate_fn, # input points, should not have collate-fn 
                 worker_init_fn=_init_fn,
             )

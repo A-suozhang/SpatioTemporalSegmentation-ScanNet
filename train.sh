@@ -1,9 +1,9 @@
 #export BATCH_SIZE=8
 export BATCH_SIZE=16
-export MODEL=MinkowskiTransformerNet
+#export MODEL=MinkowskiTransformerNet
 #export MODEL=Res16UNet34C
 #export MODEL=MixedTransformer
-#export MODEL=PointTransformer
+export MODEL=PointTransformer
 export DATASET=ScannetDataset
 #export DATASET=ScannetVoxelizationDataset
 export MAX_ITER=12000
