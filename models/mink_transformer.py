@@ -1,27 +1,3 @@
-# Copyright (c) 2020 NVIDIA CORPORATION.
-# Copyright (c) 2018-2020 Chris Choy (chrischoy@ai.stanford.edu).
-#
-# Permission is hereby granted, free of charge, to any person obtaining a copy of
-# this software and associated documentation files (the "Software"), to deal in
-# the Software without restriction, including without limitation the rights to
-# use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
-# of the Software, and to permit persons to whom the Software is furnished to do
-# so, subject to the following conditions:
-#
-# The above copyright notice and this permission notice shall be included in all
-# copies or substantial portions of the Software.
-#
-# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-# SOFTWARE.
-#
-# Please cite "4D Spatio-Temporal ConvNets: Minkowski Convolutional Neural
-# Networks", CVPR'19 (https://arxiv.org/abs/1904.08755) if you use any part
-# of the code.
 import os
 import random
 import numpy as np
@@ -46,22 +22,18 @@ from models.modules.common import ConvType, NormType, get_norm, conv, sum_pool
 from models.modules.resnet_block import BasicBlock, Bottleneck
 
 import sys
-# sys.path.append('/home/zhaotianchen/project/point-transformer/pt-cls/model')
 from models.pct_voxel_utils import TDLayer, TULayer, PTBlock
 
 class MinkowskiTransformerNet(ME.MinkowskiNetwork):
 
     def __init__(self, in_channel, out_channel, num_class, final_dim=96, dimension=3):
 
-        ME.MinkowskiNetwork.__init__(self, dimension)
-        # The normal channel for Modelnet is 3, for scannet is 6, for scanobjnn is 0
+        ME.MinkowskiNetwork.__init__(self, dimension)  # The normal channel for Modelnet is 3, for scannet is 6, for scanobjnn is 0
         normal_channel = 3  # the RGB
 
         self.CONV_TYPE = ConvType.SPATIAL_HYPERCUBE
 
         self.dims = np.array([32, 64, 128, 256, 512])
-
-        # self.neighbor_ks = np.array([32, 64, 16])
         self.neighbor_ks = np.array([32, 32, 32, 32, 32]) // 2
 
         self.final_dim = final_dim
@@ -79,14 +51,14 @@ class MinkowskiTransformerNet(ME.MinkowskiNetwork):
 
         # when using split-scnee, no stride here
         split_scene = True
-        # does the spatial downsampling
-        # pixel size 2
         if split_scene:
             self.stem2 = nn.Sequential(
                 ME.MinkowskiConvolution(stem_dim, stem_dim, kernel_size=1, dimension=3, stride=1),
                 ME.MinkowskiBatchNorm(stem_dim),
                 ME.MinkowskiReLU(),
             )
+        # does the spatial downsampling
+        # pixel size 2
         else:
             self.stem2 = nn.Sequential(
                 ME.MinkowskiConvolution(stem_dim, stem_dim, kernel_size=2, dimension=3, stride=2),
@@ -153,11 +125,6 @@ class MinkowskiTransformerNet(ME.MinkowskiNetwork):
 
         self.TULayer8 = TULayer(input_a_dim=self.dims[1], input_b_dim = self.dims[0], out_dim=self.dims[0]) # 128 // 2 + 32 = 96
 
-        # pixel size 1
-        # self.TULayer8 = TULayer(input_a_dim=self.dims[1], input_b_dim = self.dims[0], out_dim=self.dims[0]) # 64 // 2 + 32
-        # self.PTBlock8 = PTBlock(in_dim=self.dims[0], hidden_dim=self.dims[0], n_sample=self.neighbor_ks[1])  # 32
-
-        # self.global_avg_pool = ME.MinkowskiGlobalAvgPooling()
         self.final_dim = 32
         if split_scene:
             self.final_conv = nn.Sequential(
@@ -167,40 +134,21 @@ class MinkowskiTransformerNet(ME.MinkowskiNetwork):
         else:
             self.final_conv = nn.Sequential(
                 ME.MinkowskiConvolutionTranspose(self.dims[0], self.final_dim, kernel_size=2, stride=2, dimension=3),
-                # ME.MinkowskiDropout(0.2),
+                ME.MinkowskiDropout(0.4),
             )
-        # self.fc = ME.MinkowskiLinear(self.final_dim+self.dims[0], out_channel)
         self.fc = ME.MinkowskiLinear(self.final_dim, out_channel)
 
 
-        # debugging
-        self.conv1 = ME.MinkowskiConvolution(self.dims[0], self.dims[1], 1, dimension=3)
-        self.conv2 = ME.MinkowskiConvolution(self.dims[1], self.dims[2], 1, dimension=3)
-        self.conv3 = ME.MinkowskiConvolution(self.dims[2], self.dims[3], 1, dimension=3)
-        self.conv4 = ME.MinkowskiConvolution(self.dims[3], self.dims[4], 1, dimension=3)
-        self.conv5 = ME.MinkowskiConvolution(self.dims[4], out_channel, 1, dimension=3)
-
-
+        
     def forward(self, in_field: ME.TensorField):
-        # import time
-        # start = time.perf_counter()
 
         # x = in_field.sparse() # when using tensorfield into model, if use vxoek , no need
-        x = in_field
         # print('total {} voxels'.format(x.shape[0]))
 
+        x = in_field
         x0 = self.stem1(x)
+
         x = self.stem2(x0)
-
-        # x = self.conv1(x)
-        # x = self.conv2(x)
-        # x = self.conv3(x)
-        # x = self.conv4(x)
-        # x = self.conv5(x)
-
-        # return x
-        # -------------------------
-
         x1 = self.PTBlock0(x)
 
         x = self.TDLayer1(x1)
@@ -230,19 +178,10 @@ class MinkowskiTransformerNet(ME.MinkowskiNetwork):
         x = self.TULayer8(x7, x1)
         x8 = self.PTBlock8(x)
 
-        # final big PTBlock
-        # x = self.TULayer8(x7, x0)
-        # x8, attn_8 = self.PTBlock8(x)
-        # x = self.fc(x8)
-
         x = self.final_conv(x8)
-        x = self.fc(x)  # DEBUG： should use below
+        x = self.fc(x)
         # x = self.fc(me.cat(x0,x))
 
-        # end = time.time()
-
-        #print(f"forward time: {end-start} s")
-        # print('PT ratio:{}'.format((pt2 - pt1) / (pt2 - pt0)))
         if torch.isnan(x.F).sum() > 0:
             import ipdb; ipdb.set_trace()
 

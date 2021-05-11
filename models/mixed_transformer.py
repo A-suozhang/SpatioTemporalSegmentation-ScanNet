@@ -20,14 +20,6 @@ class MixedTransformer(nn.Module):
             nn.Conv1d(32, 32, 1),
             nn.BatchNorm1d(32))
 
-        # self.input_mlp = nn.Sequential(
-            # ME.MinkowskiConvolution(in_channel, 32, kernel_size=1, dimension=3),
-            # ME.MinkowskiBatchNorm(32),
-            # ME.MinkowskiReLU(),
-            # ME.MinkowskiConvolution(32, 32, kernel_size=1, dimension=3),
-            # ME.MinkowskiBatchNorm(32),
-        # )
-
         self.in_dims = [32, 64, 128, 256]
         self.out_dims = [64, 128, 256, 512]
         self.neighbor_ks = [16, 16, 16, 16, 16]
@@ -60,9 +52,6 @@ class MixedTransformer(nn.Module):
 
         self.TULayer8 = TULayer(npoint=int(N),input_dim=self.out_dims[0], out_dim=self.in_dims[0], k=3)
         self.PTBlock8= PTBlock(in_dim=self.in_dims[0], n_sample=self.neighbor_ks[1])
-
-        # self.fc = nn.Linear(32, num_class)
-        # self.drop = nn.Dropout(0.4)
 
         self.fc = nn.Sequential(
             nn.Linear(32,32),
@@ -106,36 +95,6 @@ class MixedTransformer(nn.Module):
 
         input_points = self.input_mlp(inputs_)
 
-        # x = inputs
-        # x_c, mask, idx = separate_batch(x.C)
-        # B = x_c.shape[0]
-        # N = x_c.shape[1]
-        # dim = x.F.shape[1]
-        # idx_ = idx.reshape(-1,1).repeat(1,dim)
-        # x_f = torch.zeros(B*N, dim).cuda()
-        # x_f.scatter_(dim=0, index=idx_, src=x.F)
-        # x_f = x_f.reshape([B,N,dim])
-
-        # test gather works well
-        # new_x = torch.gather(x_f.reshape(B*N,6), dim=0, index=idx.reshape(-1,1).repeat(1,6))
-        # assert new_x == inputs.F
-
-        # self.register_buffer('input_map', inputs)
-        # B,_,_ = list(inputs.size())
-        # inputs_ = x_f.transpose(1,2)
-
-        # DEBUG
-        # x = input_points
-
-        # x = self.conv1(x)
-        # x = self.conv2(x)
-        # x = self.conv3(x)
-        # x = self.conv4(x)
-        # x = self.conv5(x)
-
-        # return x.transpose(1,2)
-        # --------------------
-
         l0_points, attn_0 = self.PTBlock0(l0_xyz, input_points)
         l1_xyz, l1_points, l1_xyz_local, l1_points_local = self.TDLayer1(l0_xyz, l0_points)
 
@@ -170,35 +129,11 @@ class MixedTransformer(nn.Module):
         num_class = x.shape[-1]
 
         new_x = points2voxel(x, idx)
-        # new_x = torch.gather(x.reshape(B*N, num_class), dim=0, index=idx.reshape(-1,1).repeat(1,num_class))
         y = ME.SparseTensor(features=new_x, coordinates=inputs.C, coordinate_manager=inputs.coordinate_manager)
 
         if torch.isinf(x).sum() > 0:
             import ipdb; ipdb.set_trace()
 
-        # if self.save_flag:
-            # self.save_dict['attn_0'].append(attn_0)
-            # self.save_dict['attn_1'].append(attn_1)
-            # self.save_dict['attn_2'].append(attn_2)
-            # self.save_dict['attn_3'].append(attn_3)
-            # self.save_dict['attn_4'].append(attn_4)
-
-        # del attn_0
-        # del attn_1
-        # del attn_2
-        # del attn_3
-        # del attn_4
-
-        # l4_points = l4_points.mean(dim=-1)
-
-        # x = l4_points.view(B, -1)
-        # x = self.drop1(F.relu(self.bn1(self.fc1(x))))
-        # # apply the final LN for pre-LN scheme
-        # if self.use_ln:
-            # x = self.final_ln(x)
-
-        # x = self.fc2(x)
-        # x = F.log_softmax(x, -1)
         return y
 
 

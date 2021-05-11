@@ -17,7 +17,6 @@ from pointnet2_utils import grouping_operation as grouping_operation_cuda
 from pointnet2_utils import ball_query as query_ball_point_cuda
 from pointnet2_utils import QueryAndGroup
 
-
 from knn_cuda import KNN
 import MinkowskiEngine as ME
 import MinkowskiEngine.MinkowskiOps as me
@@ -67,7 +66,7 @@ def stem_knn(xyz, points, k):
     return grouped_xyz, grouped_points
 
 
-def sample_and_group_cuda(npoint, k, xyz, points):
+def sample_and_group_cuda(npoint, k, xyz, points, cat_xyz_feature=True):
     """
     Input:
         npoint:
@@ -91,14 +90,12 @@ def sample_and_group_cuda(npoint, k, xyz, points):
     else:
         new_xyz = xyz
 
-    
     torch.cuda.empty_cache()
     _, idx = knn(xyz.contiguous(), new_xyz) # B, npoint, k
     idx = idx.int()
     
     torch.cuda.empty_cache()
     grouped_xyz = grouping_operation_cuda(xyz.transpose(1,2).contiguous(), idx).permute(0,2,3,1) # [B, npoint, k, C_xyz]
-    #print(grouped_xyz.size())
     torch.cuda.empty_cache()
     grouped_xyz_norm = grouped_xyz - new_xyz.view(B, npoint, 1, C_xyz) # [B, npoint, k, 3]
     grouped_xyz_norm = grouped_xyz_norm.permute(0,3,1,2).contiguous()# [B, 3, npoint, k]
@@ -106,14 +103,20 @@ def sample_and_group_cuda(npoint, k, xyz, points):
 
     grouped_points = grouping_operation_cuda(points.contiguous(), idx) #B, C, npoint, k
 
-
-    # DEBUG: if non xyz concat, should use upper
-    new_points = torch.cat([grouped_xyz_norm, grouped_points], dim=1) # [B, C+C_xyz, npoint, k]
-    # new_points = grouped_points
+    if cat_xyz_feature:
+        new_points = torch.cat([grouped_xyz_norm, grouped_points], dim=1) # [B, C+C_xyz, npoint, k]
+    else:
+        new_points = grouped_points # [B, C+C_xyz, npoint, k]
 
     return new_xyz.transpose(1,2), grouped_xyz_norm, new_points, idx
 
 def voxel2points(x: ME.SparseTensor):
+    '''
+    pack the ME Sparse Tensor feature(batch-dim information within first col of coord)
+    [N_voxel_all_batches, dims] -> [bs, max_n_voxel_per_batch, dim]
+
+    idx are used to denote the mask
+    '''
 
     x_c, mask, idx = separate_batch(x.C)
     B = x_c.shape[0]
@@ -127,6 +130,10 @@ def voxel2points(x: ME.SparseTensor):
     return x_c, x_f, idx
 
 def points2voxel(x, idx):
+    '''
+    revert the points into voxel's feature
+    returns the new feat
+    '''
     # the origi_x provides the cooed_map
     B, N, dim = list(x.shape)
     new_x = torch.gather(x.reshape(B*N, dim), dim=0, index=idx.reshape(-1,1).repeat(1,dim))
@@ -141,36 +148,14 @@ class TDLayer(nn.Module):
         nsample: k in kNN, default 16
         in_dim: feature dimension of the input feature x (output of the PCTLayer)
         out_dim: feature dimension of the TDLayer
-
         '''
         self.k = k
         self.input_dim = input_dim
         self.out_dim = out_dim
 
-        # self.mlp_convs = nn.ModuleList()
-        # self.mlp_bns = nn.ModuleList()
+        self.POINT_TR_LIKE = False
 
-        # # self.mlp_convs.append(nn.Conv2d(input_dim+3, input_dim, 1))
-        # self.mlp_convs.append(nn.Conv2d(input_dim, out_dim, 1))
-
-        # self.mlp_bns.append(nn.BatchNorm2d(input_dim))
-        # self.mlp_bns.append(nn.BatchNorm2d(out_dim))
-        self.POINT_TR_LIKE = True
-        # -----------------------------------------------
         if self.POINT_TR_LIKE:
-            # self.pool = ME.MinkowskiSumPooling(
-                # kernel_size=2,
-                # stride=2,
-                # dimension=3,
-            # )
-            # self.normal_conv = ME.MinkowskiConvolution(
-                # input_dim,
-                # out_dim,
-                # kernel_size=1,
-                # stride=1,
-                # bias=False,
-                # dimension=3
-            # )
             self.mlp_convs = nn.ModuleList()
             self.mlp_bns = nn.ModuleList()
 
@@ -179,7 +164,6 @@ class TDLayer(nn.Module):
             self.mlp_convs.append(nn.Conv2d(input_dim, out_dim, 1))
             self.mlp_bns.append(nn.BatchNorm2d(input_dim))
             self.mlp_bns.append(nn.BatchNorm2d(out_dim))
-
         else:
             self.conv = ME.MinkowskiConvolution(
                 input_dim,
@@ -189,10 +173,10 @@ class TDLayer(nn.Module):
                 bias=False,
                 dimension=3
             )
-        self.bn = ME.MinkowskiBatchNorm(
-            out_dim
-        )
-        self.relu = ME.MinkowskiReLU()
+            self.bn = ME.MinkowskiBatchNorm(
+                out_dim
+            )
+            self.relu = ME.MinkowskiReLU()
 
     def forward(self, x : ME.SparseTensor):
         """
@@ -203,17 +187,6 @@ class TDLayer(nn.Module):
             new_xyz: sampled points position data, [B, C, S]
             new_points_concat: sample points feature data, [B, D', S]
         """
-        # B, input_dim, npoint = list(xyz.size())
-        #xyz = xyz.permute(0, 2, 1)
-
-        # new_xyz, grouped_xyz_norm, new_points = sample_and_group_cuda(self.npoint, self.k, xyz, points)
-        # new_xyz: sampled points position data, [B, 3, npoint]
-        # new_points: sampled points data, [B, C+C_xyz, npoint,k]
-        # grouped_xyz_norm: [B, 3, npoint,k]
-
-        # for i, conv in enumerate(self.mlp_convs):
-        #     bn = self.mlp_bns[i]
-        #     new_points =  F.relu(bn(conv(new_points)))
         if self.POINT_TR_LIKE:
             x_c, mask, idx = separate_batch(x.C)
             B = x_c.shape[0]
@@ -232,7 +205,7 @@ class TDLayer(nn.Module):
 
             new_xyz, grouped_xyz_norm, new_points, new_indices  = sample_and_group_cuda(npoint, k, x_c.float(), x_f)
 
-            # make the new idx, and ck is in 
+            # --- make the new idx, and ck if all new coord in old_coord ---
             # to_sum = (torch.arange(B).reshape(-1,1)*N).cuda() # the batch-dim
             # new_idx = torch.sort(new_indices[:,:,0],dim=-1)[0]
             # new_idx = new_idx + to_sum
@@ -262,6 +235,7 @@ class TDLayer(nn.Module):
             x = self.conv(x)
             x = self.bn(x)
             y = self.relu(x)
+
         return y
 
 class TULayer(nn.Module):
@@ -282,26 +256,10 @@ class TULayer(nn.Module):
         self.intermediate_dim = (input_a_dim // 2) + input_b_dim
         self.out_dim = out_dim
 
-        # self.linear_1 = nn.Conv1d(input_dim, out_dim, 1)
-        # self.linear_2 = nn.Conv1d(out_dim, out_dim, 1)
-
         self.POINT_TR_LIKE = True
 
         # -------- Point TR like -----------
         if self.POINT_TR_LIKE:
-            self.conv_a = nn.Sequential(
-                # ME.MinkowskiPoolingTranspose(kernel_size=2,stride=2,dimension=3),
-                ME.MinkowskiConvolution(in_channels=input_a_dim, out_channels=out_dim,kernel_size=1,stride=1,dimension=3),
-                ME.MinkowskiBatchNorm(out_dim),
-                # ME.MinkowskiReLU()
-            )
-
-            self.conv_b = nn.Sequential(
-                # ME.MinkowskiPoolingTranspose(kernel_size=2,stride=2,dimension=3),
-                ME.MinkowskiConvolution(in_channels=input_b_dim, out_channels=out_dim,kernel_size=1,stride=1,dimension=3),
-                ME.MinkowskiBatchNorm(out_dim),
-                # ME.MinkowskiReLU()
-            )
             self.linear_a = nn.Linear(input_a_dim, out_dim)
             self.linear_b = nn.Linear(input_b_dim, out_dim)
         else:
@@ -331,8 +289,6 @@ class TULayer(nn.Module):
             )
             self.out_relu = ME.MinkowskiReLU()
 
-
-
     def forward(self, x_a : ME.SparseTensor, x_b: ME.SparseTensor):
         """
         Input:
@@ -348,28 +304,6 @@ class TULayer(nn.Module):
             new_xyz: sampled points position data, [B, C, S]
             new_points_concat: sample points feature data, [B, D', S]
         """
-
-        # B, input_dim, M = list(points_1.size())
-        # B, output_dim, N = list(points_2.size())
-
-        # points_1 = self.linear_1(points_1)
-        # points_2 = self.linear_2(points_2)
-
-
-        # dists = square_distance(xyz_2.transpose(1,2), xyz_1.transpose(1,2)) # [B, N, M]
-        # dists, idx = dists.sort(dim=-1)
-        # dists, idx = dists[:,:,:self.k], idx[:,:,:self.k]
-
-        # dist_recip = 1.0 / (dists + 1e-8)
-        # norm = torch.sum(dist_recip, dim=2, keepdim=True)
-        # weight = dist_recip / norm
-        # interpolated_points = torch.sum( \
-        #                grouping_operation_cuda(points_1, idx.int())*weight.view(B, 1, N, 3)
-        #                                       ,dim=-1)
-
-
-        # return xyz_2 , (interpolated_points + points_2)
-
 
         if self.POINT_TR_LIKE:
             dim = x_b.F.shape[1]
@@ -407,7 +341,9 @@ class TULayer(nn.Module):
             # DEBUG: only assign to the b-branch is ok?
             out = torch.gather(out.reshape(B*N_b,dim), dim=0, index=idx_b) # should be the same size with x_a.F
             x = ME.SparseTensor(features = out, coordinate_map_key=x_b.coordinate_map_key, coordinate_manager=x_b.coordinate_manager)
+
         else:
+
             x_a = self.conv(x_a)
             x_a = self.bn(x_a)
             x_a = self.relu(x_a)
@@ -462,29 +398,27 @@ class PTBlock(nn.Module):
         '''
 
         self.r = r # neighborhood cube radius
-        self.in_dim = in_dim
         self.skip_knn = skip_knn
 
-        # TODO: set the hidden/vector/out_dims
+        self.in_dim = in_dim
         self.hidden_dim = hidden_dim
         self.out_dim = self.hidden_dim
-        self.vector_dim = self.out_dim
+        self.vector_dim = self.out_dim // 1
 
         self.n_sample = n_sample
 
-        self.use_bn = True
-
         # whether to use the vector att or the original attention
         self.use_vector_attn = True
-        self.nhead = 4
+        if not self.use_vector_attn:
+            self.nhead = 4
 
         self.linear_top = nn.Sequential(
             ME.MinkowskiConvolution(in_dim, self.hidden_dim, kernel_size=1, dimension=3),
-            ME.MinkowskiBatchNorm(self.hidden_dim) if self.use_bn else nn.Identity()
+            ME.MinkowskiBatchNorm(self.hidden_dim),
         )
         self.linear_down = nn.Sequential(
             ME.MinkowskiConvolution(self.out_dim, self.in_dim, kernel_size=1, dimension=3),
-            ME.MinkowskiBatchNorm(self.in_dim) if self.use_bn else nn.Identity()
+            ME.MinkowskiBatchNorm(self.in_dim),
         )
         # feature transformations
         self.phi = nn.Sequential(
@@ -499,20 +433,18 @@ class PTBlock(nn.Module):
 
         self.gamma = nn.Sequential(
             nn.Conv1d(self.out_dim, self.hidden_dim, 1),
-            nn.BatchNorm1d(self.hidden_dim) if self.use_bn else nn.Identity(),
+            nn.BatchNorm1d(self.hidden_dim),
             nn.ReLU(),
             nn.Conv1d(self.hidden_dim, self.vector_dim, 1),
-            nn.BatchNorm1d(self.vector_dim) if self.use_bn else nn.Identity()
+            nn.BatchNorm1d(self.vector_dim),
         )
         self.delta = nn.Sequential(
             nn.Conv2d(3, self.hidden_dim, 1),
-            nn.BatchNorm2d(self.hidden_dim) if self.use_bn else nn.Identity(),
+            nn.BatchNorm2d(self.hidden_dim),
             nn.ReLU(),
             nn.Conv2d(self.hidden_dim, self.out_dim, 1),
-            nn.BatchNorm2d(self.out_dim) if self.use_bn else nn.Identity()
+            nn.BatchNorm2d(self.out_dim),
         )
-
-        self.tmp_linear = nn.Sequential(ME.MinkowskiConvolution(self.in_dim, self.out_dim, kernel_size=1, dimension=3)).cuda()
 
     def forward(self, x : ME.SparseTensor):
         '''
@@ -523,11 +455,13 @@ class PTBlock(nn.Module):
         self.B = (x.C[:,0]).max().item() + 1 # batch size
         npoint, in_dim = tuple(x.F.size())
         self.k = min(self.n_sample, npoint)
-        h = self.nhead
+        if not self.use_vector_attn:
+            h = self.nhead
 
         res = x
 
         if self.skip_knn:
+            # --- for debugging only ---
             import ipdb; ipdb.set_trace()
             x = self.linear_top(x)
             y = self.linear_down(x)
@@ -547,25 +481,23 @@ class PTBlock(nn.Module):
         # ------------------------------------------------------------------------------
 
         else:
-            '''Cur knn interface still gives 16 points while the input is less'''
             self.cube_query = cube_query(r=self.r, k=self.k)
 
-            '''
-            neighbor: [B*npoint, k, bxyz]
-            mask: [B*npoint, k]
-            idx: [B_nq], used for scatter/gather
-            '''
-
+            # neighbor: [B*npoint, k, bxyz]
+            # mask: [B*npoint, k]
+            # idx: [B_nq], used for scatter/gather
             neighbor, mask, idx_ = self.cube_query.get_neighbor(x, x)
             self.register_buffer('neighbor_map', neighbor)
             self.register_buffer('input_map', x.C)
 
-            # check for dup
-            dist_map = (neighbor - neighbor[:,0,:].unsqueeze(1))[:,1:,:].abs()
-            num_different = (dist_map.sum(-1)>0).sum(-1) # how many out of ks are the same, of shape [nvoxel]
-            outlier_point = (num_different < int(self.k*2/3)-1).sum()
-            if not (outlier_point < max(npoint//100, 10)):  # sometimes npoint//100 could be 3
-                logging.info('Detected Abnormal neighbors, num outlier {}, all points {}'.format(outlier_point, x.shape[0]))
+            # check for duplicate neighbor(not enough voxels within radius that fits k)
+            CHECK_FOR_DUP_NEIGHBOR=True
+            if CHECK_FOR_DUP_NEIGHBOR:
+                dist_map = (neighbor - neighbor[:,0,:].unsqueeze(1))[:,1:,:].abs()
+                num_different = (dist_map.sum(-1)>0).sum(-1) # how many out of ks are the same, of shape [nvoxel]
+                outlier_point = (num_different < int(self.k*2/3)-1).sum()
+                if not (outlier_point < max(npoint//100, 10)):  # sometimes npoint//100 could be 3
+                    logging.info('Detected Abnormal neighbors, num outlier {}, all points {}'.format(outlier_point, x.shape[0]))
 
             x = self.linear_top(x) # [B, in_dim, npoint], such as [16, 32, 4096]
 
@@ -587,193 +519,7 @@ class PTBlock(nn.Module):
                 relative_xyz = neighbor - x.C[:,None,:].repeat(1,self.k,1) # (nvoxel, k, bxyz), we later pad it to [B, xyz, nvoxel_batch, k]
             except RuntimeError:
                 import ipdb; ipdb.set_trace()
-            WITH_POSE_ENCODING = True
-            if WITH_POSE_ENCODING:
-                relative_xyz[:,0,0] = x.C[:,0] # get back the correct batch index, because we messed batch index in the subtraction above
-                relative_xyz = pad_zero(relative_xyz, mask) # [B, xyz, nvoxel_batch, k]
-                pose_encoding = self.delta(relative_xyz.float()) # (B, feat_dim, nvoxel_batch, k)
-                pose_tensor = make_position_tensor(pose_encoding, mask, idx_, x.C.shape[0]) # (nvoxel, k, feat_dim)
 
-            '''The Self-Attn Part'''
-            if self.use_vector_attn:
-                '''
-                the attn_map: [vector_dim];
-                the alpha:    [out_dim]
-                attn_map = F.softmax(self.gamma(phi - psi + pos_encoding), dim=-1) # [B, in_dim, npoint, k], such as [16, 32, 4096, 16]
-                y = attn_map.repeat(1, self.out_dim // self.vector_dim,1,1)*(alpha + pos_encoding) # multiplies attention weight
-                self.out_dim and self.vector_dim are all 32 here, so y is still [16, 32, 4096, 16]
-                y = y.sum(dim=-1) # feature aggregation, y becomes [B, out_dim, npoint]
-                '''
-                if WITH_POSE_ENCODING:
-                    gamma_input = phi - psi + pose_tensor # (nvoxel, k, feat_dim)
-                else:
-                    gamma_input = phi - psi # (nvoxel, k, feat_dim)
-                gamma_input = gamma_input.permute(0, 2, 1) # (nvoxel, feat_dim, k)
-                attn_map = F.softmax(self.gamma(gamma_input), dim=-1) # (nvoxel, feat_dim, k)
-                if WITH_POSE_ENCODING:
-                    self_feat = (alpha + pose_tensor).permute(0,2,1) # (nvoxel, k, feat_dim) -> (nvoxel, feat_dim, k)
-                else:
-                    self_feat = (alpha).permute(0,2,1) # (nvoxel, k, feat_dim) -> (nvoxel, feat_dim, k)
-                y = attn_map.repeat(1, self.out_dim // self.vector_dim, 1, 1) * self_feat # (nvoxel, feat_dim, k)
-                y = y.sum(dim=-1).view(x.C.shape[0], -1) # feature aggregation, y becomes (nvoxel, feat_dim)
-                y = ME.SparseTensor(features = y, coordinate_map_key=x.coordinate_map_key, coordinate_manager=x.coordinate_manager)
-            else:
-                phi = phi.permute([2,1,0]) # [out_dim, k, npoint]
-                psi = psi.permute([2,0,1]) # [out_dim. npoint, k]
-                attn_map = F.softmax(torch.matmul(phi,psi), dim=0) # [out_dim, k, k]
-                alpha = (alpha+pose_tensor).permute([2,0,1])  # [out_dim, npoint, k]
-                y = torch.matmul(alpha, attn_map)  # [out_dim, npoint, k]
-                y = y.sum(-1).transpose(0,1)  # [out_dim. npoint]
-                y = ME.SparseTensor(features = y, coordinate_map_key=x.coordinate_map_key, coordinate_manager=x.coordinate_manager)
-
-            y = self.linear_down(y)
-
-            self.register_buffer('attn_map', attn_map.detach().cpu().data) # pack it with nn parameter to save in state-dict
-
-            return y+res
-
-class MixedPTBlock(nn.Module):
-    # TODO: set proper r, too small will cause less points
-    def __init__(self, in_dim, hidden_dim, is_firstlayer=False, n_sample=16, r=10, skip_knn=False):
-        super().__init__()
-        '''
-        Point Transformer Layer
-
-        in_dim: feature dimension of the input feature x
-        out_dim: feature dimension of the Point Transformer Layer(currently same with hidden-dim)
-        '''
-
-        self.r = r # neighborhood cube radius
-        self.in_dim = in_dim
-        self.skip_knn = skip_knn
-
-        # TODO: set the hidden/vector/out_dims
-        self.hidden_dim = hidden_dim
-        self.out_dim = self.hidden_dim
-        self.vector_dim = self.out_dim
-
-        self.n_sample = n_sample
-
-        self.use_bn = True
-
-        # whether to use the vector att or the original attention
-        self.use_vector_attn = True
-        self.nhead = 4
-
-        self.linear_top = nn.Sequential(
-            ME.MinkowskiConvolution(in_dim, self.hidden_dim, kernel_size=1, dimension=3),
-            ME.MinkowskiBatchNorm(self.hidden_dim) if self.use_bn else nn.Identity()
-        )
-        self.linear_down = nn.Sequential(
-            ME.MinkowskiConvolution(self.out_dim, self.in_dim, kernel_size=1, dimension=3),
-            ME.MinkowskiBatchNorm(self.in_dim) if self.use_bn else nn.Identity()
-        )
-        # feature transformations
-        self.phi = nn.Sequential(
-            ME.MinkowskiConvolution(self.hidden_dim, self.out_dim, kernel_size=1, dimension=3)
-        )
-        self.psi = nn.Sequential(
-            ME.MinkowskiConvolution(self.hidden_dim, self.out_dim, kernel_size=1, dimension=3)
-        )
-        self.alpha = nn.Sequential(
-            ME.MinkowskiConvolution(self.hidden_dim, self.out_dim, kernel_size=1, dimension=3)
-        )
-
-        self.gamma = nn.Sequential(
-            nn.Conv1d(self.out_dim, self.hidden_dim, 1),
-            nn.BatchNorm1d(self.hidden_dim) if self.use_bn else nn.Identity(),
-            nn.ReLU(),
-            nn.Conv1d(self.hidden_dim, self.vector_dim, 1),
-            nn.BatchNorm1d(self.vector_dim) if self.use_bn else nn.Identity()
-        )
-        self.delta = nn.Sequential(
-            nn.Conv2d(3, self.hidden_dim, 1),
-            nn.BatchNorm2d(self.hidden_dim) if self.use_bn else nn.Identity(),
-            nn.ReLU(),
-            nn.Conv2d(self.hidden_dim, self.out_dim, 1),
-            nn.BatchNorm2d(self.out_dim) if self.use_bn else nn.Identity()
-        )
-
-        self.tmp_linear = nn.Sequential(ME.MinkowskiConvolution(self.in_dim, self.out_dim, kernel_size=1, dimension=3)).cuda()
-
-    def forward(self, xyz, points):
-        '''
-        input_p:  B, 3, npoint
-        input_x: B, in_dim, npoint
-        convert the point-based model into the voxel than revert back each block
-        PROBLEM:??? how could the grad backward
-        '''
-
-        voxel_size=0.05
-        feats = torch.unbind(points, dim=0)
-        coords = torch.unbind(xyz/voxel_size, dim=0)
-        coords, feats= ME.utils.sparse_collate(coords, feats)
-
-
-        PT_begin = time.perf_counter()
-        self.B = (x.C[:,0]).max().item() + 1 # batch size
-        npoint, in_dim = tuple(x.F.size())
-        self.k = min(self.n_sample, npoint)
-        h = self.nhead
-
-        res = x
-
-        if self.skip_knn:
-
-            self.cube_query = cube_query(r=self.r, k=self.k)
-            neighbor, mask, idx_ = self.cube_query.get_neighbor(x, x)
-            x = self.linear_top(x)
-            new_x = get_neighbor_feature(neighbor, x)
-
-            y = get_neighbor_feature(neighbor, self.tmp_linear(x))
-            y = y.mean(dim=1)
-            y = ME.SparseTensor(features = y, coordinate_map_key=x.coordinate_map_key, coordinate_manager=x.coordinate_manager)
-            y = self.linear_down(x)
-            return y+res
-
-        # ------------------------------------------------------------------------------
-
-        else:
-            '''Cur knn interface still gives 16 points while the input is less'''
-            self.cube_query = cube_query(r=self.r, k=self.k)
-
-            '''
-            neighbor: [B*npoint, k, bxyz]
-            mask: [B*npoint, k]
-            idx: [B_nq], used for scatter/gather
-            '''
-
-            neighbor, mask, idx_ = self.cube_query.get_neighbor(x, x)
-            self.register_buffer('neighbor_map', neighbor)
-            self.register_buffer('input_map', x.C)
-
-            # check for dup
-            dist_map = (neighbor - neighbor[:,0,:].unsqueeze(1))[:,1:,:].abs()
-            num_different = (dist_map.sum(-1)>0).sum(-1) # how many out of ks are the same, of shape [nvoxel]
-            outlier_point = (num_different < int(self.k*2/3)-1).sum()
-            if not (outlier_point < max(npoint//100, 10)):  # sometimes npoint//100 could be 3
-                logging.info('Detected Abnormal neighbors, num outlier {}, all points {}'.format(outlier_point, x.shape[0]))
-
-            x = self.linear_top(x) # [B, in_dim, npoint], such as [16, 32, 4096]
-
-            '''
-            illustration on dimension notations:
-            - B: batch size
-            - nvoxel: number of all voxels of the whole batch
-            - k: k neighbors
-            - feat_dim: feature dimension, or channel as others call it
-            - nvoxel_batch: the maximum voxel number of a single SparseTensor in the current batch
-            '''
-
-            phi = self.phi(x).F # (nvoxel, feat_dim)
-            phi = phi[:,None,:].repeat(1,self.k,1) # (nvoxel, k, feat_dim)
-            psi = get_neighbor_feature(neighbor, self.psi(x)) # (nvoxel, k, feat_dim)
-            alpha = get_neighbor_feature(neighbor, self.alpha(x)) # (nvoxel, k, feat_dim)
-            '''Gene the pos_encoding'''
-            try:
-                relative_xyz = neighbor - x.C[:,None,:].repeat(1,self.k,1) # (nvoxel, k, bxyz), we later pad it to [B, xyz, nvoxel_batch, k]
-            except RuntimeError:
-                import ipdb; ipdb.set_trace()
             WITH_POSE_ENCODING = True
             if WITH_POSE_ENCODING:
                 relative_xyz[:,0,0] = x.C[:,0] # get back the correct batch index, because we messed batch index in the subtraction above
@@ -828,12 +574,10 @@ def make_position_tensor(pose_encoding : torch.Tensor, mask : torch.Tensor, idx_
         batch_tensor:  (B, N)
     """
 
-    begin = time.perf_counter()
     assert idx_.shape[0] == nvoxel # the idx and the nvoxel should be the same
 
     B, feat_dim, nvoxel_batch, k = pose_encoding.shape
     pose_encoding = pose_encoding.permute(0, 2, 3, 1) # (B, feat_dim, nvoxel_batch, k) -> (B, nvoxel_batch, k, feat_dim)
-    # masked_encoding = torch.zeros([nvoxel, k, feat_dim], device=pose_encoding.device)  # (B_nq, k, feat_dim)
 
     '''use idx to scatter the result'''
     masked_encoding = torch.gather(
@@ -841,36 +585,6 @@ def make_position_tensor(pose_encoding : torch.Tensor, mask : torch.Tensor, idx_
         0,
         idx_.reshape(-1,1,1).repeat(1, k, feat_dim)
     ).reshape(nvoxel, k, feat_dim)
-
-    '''
-    # Older version of revert
-    # TODO: check why pose_enecoding is int()???
-
-    nums = mask.sum(-1)
-    nvoxels = nums.repeat(nums.shape[0],1).tril().sum(dim=1)
-    # nvoxels_leftshift = torch.cat([torch.zeros([]), nvoxels[:-1]])
-    nvoxels_leftshift = nvoxels.roll(shifts=1)
-    nvoxels_leftshift[0] = 0
-
-    torch.cuda.synchronize()
-
-    # indexs_ = torch.cat([torch.arange(nums[i])+i*nvoxel_batch for i in range(len(nums))])
-
-    for batch_idx in range(B):
-        torch.cuda.synchronize()
-
-        tick1 = time.perf_counter()
-
-        # num = nums[batch_idx]
-        masked_encoding[nvoxels_leftshift[batch_idx]:nvoxels[batch_idx], :, :] = pose_encoding[batch_idx, :nums[batch_idx], :, :] # @Niansong: feels wierd that we just throw away some feature
-        # voxel_idx += num
-        tick4 = time.perf_counter()
-        # print('for-loop took {}ms'.format((tick4 - tick1)*1e3))
-
-    '''
-
-    end = time.perf_counter()
-    # print('Overall took {}ms'.format((end - begin)*1e3))
     return masked_encoding # (nvoxel, k, feat_dim)
 
 def get_neighbor_feature(neighbor: torch.Tensor, x: ME.SparseTensor):
@@ -888,10 +602,12 @@ def get_neighbor_feature(neighbor: torch.Tensor, x: ME.SparseTensor):
     return features
 
 def pad_zero(tensor : torch.Tensor, mask: torch.Tensor):
-    # input is [B*npoint, k, bxyz], we want [B, xyz, npoint, k]
-    # need to pad zero because each batch may have different voxel number
-    # B = int(max(tensor[:,0,0]).item() + 1)
-    # k = tuple(tensor.shape)[1]
+    '''
+    input is [B*npoint, k, bxyz], we want [B, xyz, npoint, k]
+    need to pad zero because each batch may have different voxel number
+    B = int(max(tensor[:,0,0]).item() + 1)
+    k = tuple(tensor.shape)[1]
+    '''
     B, N = mask.shape
     _, k, bxyz = tensor.shape
     result = torch.zeros([B, N, k, 4], dtype=torch.int, device=tensor.device)
@@ -903,8 +619,6 @@ def pad_zero(tensor : torch.Tensor, mask: torch.Tensor):
     result = result[:,:,:,1:] # (B, N, k, 3)
     result = result.permute(0, 3, 1, 2) # (B, N, k, 3) -> (B, 3, N, k)
     return result
-
-
 
 def manhattan_dist(dxyz: tuple):
     dxyz = [abs(v) for v in dxyz]
@@ -927,7 +641,6 @@ def separate_batch(coord: torch.Tensor):
 
     # get the splits of different i_batchA
     splits_at = torch.stack([torch.where(batch_ids == i)[0][-1] for i in torch.unique(batch_ids)]).int() # iter at i_batch_level
-    # splits_at_leftshift_one = torch.cat([torch.tensor([0.]).to(coord.device) , splits_at[:-1]], dim=0).int()
     splits_at_leftshift_one = splits_at.roll(shifts=1)   # left shift the splits_at
     splits_at_leftshift_one[0] = 0
 
@@ -940,7 +653,6 @@ def separate_batch(coord: torch.Tensor):
     mask = torch.zeros([B*N], device=coord.device).int()
     new_coord = torch.zeros([B*N, 3], device=coord.device).int() # (B, N, xyz)
 
-    # TODO: maybe use torch.scatter could further boost speed here?
     '''
     new_coord: [B,N,3]
     coord-part : [n_voxel, 3]
@@ -953,59 +665,7 @@ def separate_batch(coord: torch.Tensor):
     mask = mask.reshape([B,N])
     new_coord = new_coord.reshape([B,N,3])
 
-    '''
-    for i_bs in range(B):
-        if i_bs == 0:
-            new_coord[i_bs][:len_per_batch[i_bs]] = coord[splits_at_leftshift_one[i_bs]:splits_at[i_bs]+1,1:]
-            mask[i_bs][:len_per_batch[i_bs]] = 1
-        else:
-            new_coord[i_bs][:len_per_batch[i_bs]] = coord[splits_at_leftshift_one[i_bs]:splits_at[i_bs],1:]
-            mask[i_bs][:len_per_batch[i_bs]] = 1
-    dat = new_coord
-    '''
-
-    '''
-    voxeln = dict() # number of voxels of each object in the batch
-    for b_idx in coord[:,0]:
-        b_idx = int(b_idx)
-        if not b_idx in voxeln: voxeln[b_idx] = 0
-        voxeln[b_idx] += 1
-    # TODO: since dict is on cpu, so slow, should fix em
-    N = max(voxeln.values())
-    # N = max(voxeln.items(), key=operator.itemgetter(1))[1]
-    dat = torch.zeros([B, N, 3]).int().to(coord.device) # (B, N, xyz)
-    mask   = torch.zeros([B, N]).int().to(coord.device) # (B, N)
-    axis_idx = 0
-    while axis_idx < coord.shape[0]:
-        batch_idx = coord[axis_idx,0].item()
-        num = voxeln[batch_idx]
-        dat[batch_idx, 0:num, :] = torch.clone(coord[axis_idx:axis_idx+num, 1:])
-        mask[batch_idx, 0:num] = 1
-        axis_idx += num
-    '''
-
     return new_coord, mask, idx_
-
-def apply_coord_mask(indices, mask):
-    """
-        Input:
-            indices: a tuple of three torch.Tensor (B-list, N-list, N-list)
-            mask: torch.Tensor (B, N)
-    """
-    b_list = list()
-    n1_list = list()
-    n2_list = list()
-    for idx in range(len(indices[0])):
-        b = indices[0][idx].item()
-        n1 = indices[1][idx].item()
-        n2 = indices[2][idx].item()
-        if mask[b][n1] == 0 or mask[b][n2] == 0: continue
-        b_list.append(b)
-        n1_list.append(n1)
-        n2_list.append(n2)
-
-    return (torch.tensor(b_list).long(), torch.tensor(n1_list).long(), torch.tensor(n2_list).long() )
-
 
 # cube query for sparse tensors
 class cube_query(object):
@@ -1029,42 +689,12 @@ class cube_query(object):
         self.k = k
 
     def get_neighbor(self, ref : ME.SparseTensor, query : ME.SparseTensor):
-
-        # make ref's coord list a hash set
-        # ref_set = set()
-        # for i in range(B_nr):
-            # coord_tuple = tuple([v.item() for v in ref.C[i] ] )
-            # ref_set.add(coord_tuple)
-        # build return tensorA
-
         B_nq, _ = query.C.shape
-
-        # result = torch.zeros([B_nq, self.k, 4]).to(query.device)
-        # mask   = torch.ones([B_nq, self.k]).to(query.device)
-        # use torch tensor
-        # directly operate on query.C cuda tensor
-        # (nvoxel_q, 4) -> (nvoxel_q, 21*21*21, 4)
-        # neighbors = query.C[:,None,:].repeat(1,(self.r*2+1)**3,1)
-        # offset = torch.tensor([ (0,) + tuple(it) for it in itertools.product(range(-self.r,self.r+1), repeat=3) ]).to(query.C.device)
-        # offset = offset[None,:,:].repeat(B_nq,1,1) # (nvoxel_q, cube_n, bxyz)
-        # neighbors = neighbors + offset
-
-        batch_begin = time.perf_counter()
 
         coord = query.C # (N, 4)
         batch_info = coord[:,0]
         coord, mask, idx_ = separate_batch(coord) # (b, n, 3)
         b, n, _ = coord.shape
-
-        batch_end = time.perf_counter()
-        # print('Batch packing  tooks {}'.format((batch_end - batch_begin)*1e3))
-
-        '''
-        use pointnet++ like operation to acquire the idxes
-        '''
-        # time_begin = time.perf_counter()
-
-        knn_begin = time.perf_counter()
 
         query_and_group_cuda = QueryAndGroup(radius=self.r, nsample=self.k, use_xyz=False)
         coord = coord.float()
@@ -1076,50 +706,7 @@ class cube_query(object):
         idxs = idxs.permute([0,2,3,1]) # idx: [bs, npoint, nsample, xyz]
         result_padded = idxs
 
-        knn_end = time.perf_counter()
-        # print('KNN  tooks {}'.format((knn_end - knn_begin)*1e3))
-
-        # time_end = time.perf_counter()
-        # print('took {} ms'.format((time_end - time_begin)*1e3))
-
-
-        # extended_coord = coord.unsqueeze(2).repeat(1,1,coord.shape[1],1)
-        # diff = torch.abs(coord.unsqueeze(2) - coord.unsqueeze(1)) # (b, n, n, 3)
-        # # (b, n, 1, 3) - (b, 1, n, 3)
-        # diff = diff.sum(dim=-1)
-        # indices = torch.argsort(diff, dim=-1)[:,:,:self.k] # (b,n,k)
-
-        '''
-        older_version
-
-        indices = torch.where(diff <= self.r) # we can reshape it to (b, n, n)
-        #masked_indices = apply_coord_mask(indices, mask)
-        # neighbors = coord[indices]
-
-        # if there's not enough k neighbors, we fill with random neighbors
-        # centers = coord[masked_indices[0], masked_indices[1]] # (pair number, 3)
-        # neighbors = coord[masked_indices[0], masked_indices[2]] # (pair number, 3)
-
-        # TODO: FIX here, maybe cant reshape
-        result_padded = torch.zeros([b, n, self.k, 3]).int().to(diff.device) # (b, n, k, 3)
-        neighbors = coord[indices[0], indices[2]].reshape(diff.shape[0], diff.shape[1], diff.shape[2], 3) # (b, n, n, 3)
-        if min(mask.sum(dim=-1)) >= self.k:
-            # if there are guaranteed more than k voxels in the object
-            result_padded = neighbors[:,:,self.k,:]
-        else:
-            # if there are less than k voxels in the object, we have to fill k neighbors with repeated voxels
-            # we have to loop through batch because each object has different voxel number
-            for b in range(diff.shape[0]):
-                n = mask.sum(dim=-1)[b]
-                pointer = 0
-                while pointer < self.k:
-                    end = min(pointer + n, self.k)
-                    result_padded[b,:,pointer:end,:] = neighbors[b,:,:min(n, self.k-pointer),:]
-                    pointer += n
-        '''
-
         # unpad result (b, n, k, 3) -> (B_nq, k, 4) by applying mask
-        pack_begin = time.perf_counter()
         result = torch.zeros([B_nq, self.k, 4], dtype=torch.int32, device=query.device)
         result[:,:,1:] = torch.gather(
             result_padded.reshape(-1, self.k, 3),
@@ -1128,63 +715,6 @@ class cube_query(object):
         )
         result[:,:,0] = batch_info.unsqueeze(-1).repeat(1, self.k)
 
-        '''
-        # == older version of revert the [B,N,K,3] -> [B_nq, K, 3] ==
-        pointer = 0
-        for b_idx in range(result_padded.shape[0]):
-            n = mask.sum(dim=-1)[b_idx]
-            result[pointer:pointer+n, :, 1:] = result_padded[b_idx,:n, :, :]
-            result[pointer:pointer+n, :, 0]  = b_idx
-            pointer += n
-        '''
-
-        pack_end = time.perf_counter()
-        # print('Pack tooks {}'.format((pack_end - pack_begin)*1e3))
-
-#        for i in range(B_nq):
-#            # neighborhood
-#            # n, x, y, z = query.C[i][0].item(), query.C[i][1].item(), query.C[i][2].item(), query.C[i][3].item()
-#            n, x, y, z = [v.item() for v in query.C[i]]
-#            neighbor = list()
-##            offset_loop_start = time.perf_counter()
-##            hash_time = 0
-#            # we need to optimize this loop, it costs around 10 ms
-##            for offset in itertools.product(range(-self.r, self.r+1), repeat=3):
-##                if offset == (0,0,0): continue # skip center
-##                nb = tuple(sum(x) for x in zip(offset, (x,y,z))) # a neighbor voxel's coordinate
-##                nb = (n, *nb) # don't forget batch index          
-##                hash_start = time.perf_counter()
-##                if nb in ref_set: neighbor.append((nb, manhattan_dist(offset) ) ) # a tuple: (coord, manhattan distance)
-##                hash_end = time.perf_counter()
-##                hash_time += hash_end - hash_start
-##            offset_loop_end = time.perf_counter()
-##            print(f"offset loop : {(offset_loop_end - offset_loop_start)*1e3} ms") # about 13 ms
-##            print(f"    hash time: {hash_time*1e3} ms") # about 1 ms
-#
-#            # try vectorization with numpy
-#            offset = np.mgrid[-self.r:self.r+1, -self.r:self.r+1, -self.r:self.r+1]
-#            offset[0] += x; offset[1] += y; offset[2] += z
-#            offset = np.transpose(offset, (1,2,3,0))
-#            vec_start = time.perf_counter()
-#            # offset (20,20,20,3) 
-#            cond = [(n,) + tuple(offset[it]) in ref_set for it in itertools.product(range(-self.r,self.r+1), repeat=3)]
-#            # this condition building is slow ~13ms
-#            vec_end = time.perf_counter()
-#            cond = np.reshape(cond, (2*self.r+1, 2*self.r+1, 2*self.r+1))
-#            masked = np.where(cond)
-#            nb_array = offset[masked[0], masked[1], masked[2]]
-#            print(f"vectorized mask time : {(vec_end-vec_start)*1e3}")
-#            for idx in range(nb_array.shape[0]):
-#                nb = (n,) + tuple(nb_array[idx,:])
-#                neighbor.append((nb, manhattan_dist((nb[0], nb[1]-x, nb[2]-y, nb[3]-z)) ) )
-#            # sort neighbor according to manhattan distance
-#            neighbor = sorted(neighbor, key=lambda t : t[1])
-#            for k_idx in range(self.k):
-#                if k_idx > len(neighbor)-1 :
-#                    mask[i][k_idx] = 0
-#                    continue
-#                bxyz = neighbor[k_idx][0]
-#                result[i][k_idx] = torch.tensor([*bxyz])
         return result, mask, idx_
 
 if __name__ == "__main__":
