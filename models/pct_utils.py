@@ -184,6 +184,17 @@ class TULayer(nn.Module):
         self.linear_1 = nn.Conv1d(input_dim, out_dim, 1)
         self.linear_2 = nn.Conv1d(out_dim, out_dim, 1)
 
+        self.CONCAT_FEATS = False
+        # if use pointnet++ like concat_feats TU
+        # linear before the interpolation, 
+        # and use concat instead of sum for aggregation
+        self.projection = nn.Sequential(
+                nn.Conv1d(input_dim+out_dim, out_dim,1),
+                nn.Conv1d(out_dim, out_dim,1),
+                nn.Conv1d(out_dim, out_dim,1),
+                )
+
+
     def forward(self, xyz_1, xyz_2, points_1, points_2):
         """
         Input:
@@ -203,9 +214,11 @@ class TULayer(nn.Module):
         B, input_dim, M = list(points_1.size())
         B, output_dim, N = list(points_2.size())
 
-        points_1 = self.linear_1(points_1)
-        points_2 = self.linear_2(points_2)
-
+        if self.CONCAT_FEATS:
+            pass
+        else:
+            points_1 = self.linear_1(points_1)
+            points_2 = self.linear_2(points_2)
 
         dists = square_distance(xyz_2.transpose(1,2), xyz_1.transpose(1,2)) # [B, N, M]
         dists, idx = dists.sort(dim=-1)
@@ -217,6 +230,10 @@ class TULayer(nn.Module):
         interpolated_points = torch.sum( \
                         grouping_operation_cuda(points_1, idx.int())*weight.view(B, 1, N, 3)
                                                 ,dim=-1)
+        if self.CONCAT_FEATS:
+            new_points = torch.cat([interpolated_points, points_2], dim=1)
+            new_points = self.projection(new_points)
+            return xyz_2 , new_points
 
         return xyz_2 , (interpolated_points + points_2)
 
@@ -253,7 +270,7 @@ class TransposeLayerNorm(nn.Module):
         return self.norm(x.transpose(1,-1)).transpose(1,-1)
 
 class PTBlock(nn.Module):
-    def __init__(self, in_dim, n_sample=16):
+    def __init__(self, in_dim, expansion=1, n_sample=16, fps_rate=None):
         super().__init__()
         '''
         --- Point Transformer Layer ---
@@ -270,12 +287,13 @@ class PTBlock(nn.Module):
         linear_down: out_dim -> in_dim
         '''
 
-
         self.in_dim = in_dim
-        self.hidden_dim = in_dim
-        self.out_dim = in_dim
+        self.expansion = expansion # expansion = out_dim // in_dim, for ds block, should have multuiple expansion
+        self.hidden_dim = in_dim*self.expansion
+        self.out_dim = in_dim*self.expansion
         self.vector_dim = self.out_dim // 1
         self.n_sample = n_sample
+        self.fps_rate = fps_rate # if apply fps rate, use the FPS to downsample the points first
 
         # whether to use the vector att/original attention
         self.use_vector_attn = True
@@ -287,25 +305,46 @@ class PTBlock(nn.Module):
             nn.BatchNorm1d(self.hidden_dim)
         )
         self.linear_down = nn.Sequential(
-            nn.Conv1d(self.out_dim, self.in_dim, 1),
-            nn.BatchNorm1d(self.in_dim)
+            nn.Conv1d(self.hidden_dim, self.out_dim, 1),
+            nn.BatchNorm1d(self.out_dim)
         )
 
         self.phi = nn.Sequential(
-            nn.Conv1d(self.hidden_dim, self.out_dim, 1),
+            nn.Conv1d(self.hidden_dim, self.hidden_dim, 1),
             # nn.BatchNorm1d(self.out_dim) 
         )
         self.psi = nn.Sequential(
-            nn.Conv1d(self.hidden_dim, self.out_dim, 1),
-            # nn.BatchNorm1d(self.out_dim) 
-        )
-        self.alpha = nn.Sequential(
-            nn.Conv1d(self.hidden_dim, self.out_dim, 1),
+            nn.Conv1d(self.hidden_dim, self.hidden_dim, 1),
             # nn.BatchNorm1d(self.out_dim) 
         )
 
+        self.POS_ENCODING=True
+        self.CAT_POS=False
+        self.SKIP_ATTN = False
+
+        self.QK_POS_ONLY = False
+        self.V_POS_ONLY = True
+        self.MAX_POOL = False
+
+        if self.SKIP_ATTN:
+            self.alpha = nn.Sequential(
+                    # nn.Conv2d(self.hidden_dim, self.out_dim, 1),
+                    # nn.Conv2d(self.out_dim, self.out_dim, 1),
+                    # nn.Conv2d(self.out_dim, self.out_dim, 1),
+                    # nn.Conv2d(self.out_dim, self.out_dim, 1),
+                    nn.Conv2d(self.hidden_dim+3, self.hidden_dim, 1) if self.CAT_POS else nn.Conv2d(self.hidden_dim, self.hidden_dim, 1),
+                    nn.BatchNorm2d(self.hidden_dim),
+                    nn.Conv2d(self.hidden_dim, self.hidden_dim, 1),
+                    nn.BatchNorm2d(self.hidden_dim),
+                    )
+        else:
+            self.alpha = nn.Sequential(
+                nn.Conv1d(self.hidden_dim, self.hidden_dim, 1),
+                # nn.BatchNorm1d(self.out_dim) 
+            )
+
         self.gamma = nn.Sequential(
-            nn.Conv2d(self.out_dim, self.hidden_dim, 1),
+            nn.Conv2d(self.hidden_dim, self.hidden_dim, 1),
             nn.BatchNorm2d(self.hidden_dim),
             nn.ReLU(),
             nn.Conv2d(self.hidden_dim, self.vector_dim, 1),
@@ -316,11 +355,9 @@ class PTBlock(nn.Module):
             nn.Conv2d(3, self.hidden_dim, 1),
             nn.BatchNorm2d(self.hidden_dim),
             nn.ReLU(),
-            nn.Conv2d(self.hidden_dim, self.out_dim, 1),
-            nn.BatchNorm2d(self.out_dim),
+            nn.Conv2d(self.hidden_dim, self.hidden_dim, 1),
+            nn.BatchNorm2d(self.hidden_dim),
             )
-
-        self.skip_knn = False
 
     def forward(self, input_p, input_x):
         '''
@@ -334,15 +371,18 @@ class PTBlock(nn.Module):
         if not self.use_vector_attn:
             h = self.nhead                  # only used in non-vextor attn
 
-        res = input_x
-
-        if self.skip_knn:
-            import ipdb; ipdb.set_trace()
-            x = self.linear_top(input_x)
-            y = self.linear_down(x)
-            return y+res, None
-
         input_p = input_p.permute([0,2,1])
+
+        self.fps_rate = 4
+
+        if self.fps_rate is not None:
+            npoint = npoint // self.fps_rate
+            fps_idx = farthest_point_sample_cuda(input_p, npoint)
+            torch.cuda.empty_cache()
+            input_p = index_points_cuda(input_p, fps_idx) # [B. M, 3]
+            input_x = index_points_cuda(input_x.transpose(1,2), fps_idx).transpose(1,2)  # [B, dim, M]
+
+        res = input_x # [B, dim, M]
 
         # The input npoint coule be less than the n_sample(k)
         # however, if keep init the knn(k=npoint), it will still give k output
@@ -358,27 +398,60 @@ class PTBlock(nn.Module):
         self.register_buffer('neighbor_map', idx)
 
         grouped_input_p = grouping_operation_cuda(input_p.transpose(1,2).contiguous(), idx) # [bs, xyz, npoint, k]
+        grouped_input_x = grouping_operation_cuda(input_x.contiguous(), idx) # [bs, hidden_dim, npoint, k]
 
         input_x = self.linear_top(input_x)
 
-        # grouped_input_x = index_points(input_x.permute([0,2,1]), idx.long()).permute([0,3,1,2])
-        # grouped_input_x = grouping_operation_cuda(input_x.contiguous(), idx)  # [bs, xyz, npoint, K]
+        if self.SKIP_ATTN:
+            # out_dim should be the same with in_dim, since here contains no TD
+            if self.POS_ENCODING:
+                relative_xyz = input_p.permute([0,2,1])[:,:,:,None] - grouped_input_p
+                pos_encoding = self.delta(relative_xyz)    # [bs, dims, npoint, k]
+                if self.CAT_POS:
+                    alpha = self.alpha(torch.cat([grouped_input_x, relative_xyz], dim=1))
+                else: # use sum 
+                    alpha = self.alpha(grouped_input_x + pos_encoding)
+            else:
+                alpha = self.alpha(grouped_input_x)
+                # alpha = grouping_operation_cuda(self.alpha(input_x).contiguous(), idx)
+
+            alpha = alpha.max(dim=-1)[0]
+            y = self.linear_down(alpha)
+            return y+res, None
+
 
         phi = self.phi(input_x)
         phi = phi[:,:,:,None].repeat(1,1,1,k)
         psi = grouping_operation_cuda(self.psi(input_x).contiguous(), idx)
         alpha = grouping_operation_cuda(self.alpha(input_x).contiguous(), idx) # [bs, xyz, npoint, k]
 
-        relative_xyz = input_p.permute([0,2,1])[:,:,:,None] - grouped_input_p
-        pos_encoding = self.delta(relative_xyz)    # [bs, dims, npoint, k]
+        if self.POS_ENCODING:
+            relative_xyz = input_p.permute([0,2,1])[:,:,:,None] - grouped_input_p
+            pos_encoding = self.delta(relative_xyz)    # [bs, dims, npoint, k]
 
         if self.use_vector_attn:
             # the attn_map: [vector_dim];
             # the alpha:    [out_dim]
-            attn_map = F.softmax(self.gamma(phi - psi + pos_encoding), dim=-1)
-            y = attn_map.repeat(1, self.out_dim // self.vector_dim,1,1)*(alpha + pos_encoding)
-            y = y.sum(dim=-1)
+            if self.POS_ENCODING:
+                # if V_POS and QK_POS is both false, then apply all pos_encoding 
+                assert (self.V_POS_ONLY and self.QK_POS_ONLY) is False  # only one of the V_ONLY and QK_ONLY should be applied
+                if self.V_POS_ONLY:
+                    attn_map = F.softmax(self.gamma(phi - psi), dim=-1)
+                else:
+                    attn_map = F.softmax(self.gamma(phi - psi + pos_encoding), dim=-1)
+                if self.QK_POS_ONLY:
+                    y = attn_map.repeat(1, self.out_dim // self.vector_dim,1,1)*(alpha)
+                else:
+                    y = attn_map.repeat(1, self.out_dim // self.vector_dim,1,1)*(alpha+pos_encoding)
+            else:
+                attn_map = F.softmax(self.gamma(phi - psi), dim=-1)
+                y = attn_map.repeat(1, self.out_dim // self.vector_dim,1,1)*(alpha)
+            if self.MAX_POOL:
+                y = y.max(dim=-1)[0]
+            else:
+                y = y.sum(dim=-1)
         else:
+            assert self.POS_ENCODING == True
             phi = phi.reshape(B, h, self.out_dim//h, npoint, k)
             psi = psi.reshape(B, h, self.out_dim//h, npoint, k)
             attn_map = F.softmax((phi*psi).reshape(B, self.out_dim, npoint, k) + pos_encoding, dim=-1)

@@ -66,7 +66,7 @@ def stem_knn(xyz, points, k):
     return grouped_xyz, grouped_points
 
 
-def sample_and_group_cuda(npoint, k, xyz, points, cat_xyz_feature=True):
+def sample_and_group_cuda(npoint, k, xyz, points, cat_xyz_feature=True, fps_only=False):
     """
     Input:
         npoint:
@@ -87,13 +87,17 @@ def sample_and_group_cuda(npoint, k, xyz, points, cat_xyz_feature=True):
         fps_idx = farthest_point_sample_cuda(xyz, npoint) # [B, npoint]
         torch.cuda.empty_cache()
         new_xyz = index_points_cuda(xyz, fps_idx) #[B, npoint, 3]
+        new_points = index_points_cuda(points.transpose(1,2), fps_idx)
     else:
         new_xyz = xyz
+
+    if fps_only:
+        return new_xyz.transpose(1,2), new_points.transpose(1,2)
 
     torch.cuda.empty_cache()
     _, idx = knn(xyz.contiguous(), new_xyz) # B, npoint, k
     idx = idx.int()
-    
+
     torch.cuda.empty_cache()
     grouped_xyz = grouping_operation_cuda(xyz.transpose(1,2).contiguous(), idx).permute(0,2,3,1) # [B, npoint, k, C_xyz]
     torch.cuda.empty_cache()
@@ -154,20 +158,38 @@ class TDLayer(nn.Module):
         self.out_dim = out_dim
         self.kernel_size = kernel_size
 
-        self.POINT_TR_LIKE = True
+        '''a few additional cfg for TDLayer'''
+        self.POINT_TR_LIKE = False
+        self.FPS_ONLY = True
+        self.cat_xyz_feature = True
 
         if self.POINT_TR_LIKE:
-            self.mlp_convs = nn.ModuleList()
-            self.mlp_bns = nn.ModuleList()
-
-            self.cat_xyz_feature = True
-            if self.cat_xyz_feature:
-                self.mlp_convs.append(nn.Conv2d(input_dim+3, input_dim, 1))
+            if self.FPS_ONLY:
+                if self.cat_xyz_feature:
+                    self.projection = nn.Sequential(
+                        nn.Conv2d(input_dim+3, out_dim, 1),
+                        nn.BatchNorm2d(out_dim),
+                        nn.Conv2d(out_dim, out_dim, 1),
+                        nn.BatchNorm2d(out_dim),
+                            )
+                else:
+                    self.projection = nn.Sequential(
+                        nn.Conv2d(input_dim, out_dim, 1),
+                        nn.BatchNorm2d(out_dim),
+                        nn.Conv2d(out_dim, out_dim, 1),
+                        nn.BatchNorm2d(out_dim),
+                            )
             else:
-                self.mlp_convs.append(nn.Conv2d(input_dim, input_dim, 1))
-            self.mlp_convs.append(nn.Conv2d(input_dim, out_dim, 1))
-            self.mlp_bns.append(nn.BatchNorm2d(input_dim))
-            self.mlp_bns.append(nn.BatchNorm2d(out_dim))
+                self.mlp_convs = nn.ModuleList()
+                self.mlp_bns = nn.ModuleList()
+
+                if self.cat_xyz_feature:
+                    self.mlp_convs.append(nn.Conv2d(input_dim+3, input_dim, 1))
+                else:
+                    self.mlp_convs.append(nn.Conv2d(input_dim, input_dim, 1))
+                self.mlp_convs.append(nn.Conv2d(input_dim, out_dim, 1))
+                self.mlp_bns.append(nn.BatchNorm2d(input_dim))
+                self.mlp_bns.append(nn.BatchNorm2d(out_dim))
         else:
             self.conv = ME.MinkowskiConvolution(
                 input_dim,
@@ -207,32 +229,49 @@ class TDLayer(nn.Module):
             # x_c = x_c.transpose(1,2).float()
             x_f = x_f.transpose(1,2)
 
-            new_xyz, grouped_xyz_norm, new_points, new_indices  = sample_and_group_cuda(npoint, k, x_c.float(), x_f, cat_xyz_feature=self.cat_xyz_feature)
+            if self.FPS_ONLY:
+                # just using the FPS's result for subsample, without projection
+                new_xyz, new_points = sample_and_group_cuda(npoint, k, x_c.float(), x_f, cat_xyz_feature=self.cat_xyz_feature, fps_only=True)
+                if self.cat_xyz_feature:
+                    additional_xyz = new_xyz / new_xyz.mean()
+                    new_points_pooled = torch.cat([new_xyz/new_xyz.mean(),new_points], dim=1) # norm the xyz to some extent
+                else:
+                    new_points_pooled = new_points
+                new_points_pooled = self.projection(new_points_pooled.unsqueeze(-1)).squeeze(-1) # [N,dim,nvoxel,1]
 
-            # --- make the new idx, and ck if all new coord in old_coord ---
-            # to_sum = (torch.arange(B).reshape(-1,1)*N).cuda() # the batch-dim
-            # new_idx = torch.sort(new_indices[:,:,0],dim=-1)[0]
-            # new_idx = new_idx + to_sum
-            # new_idx = new_idx.view(-1)  # should be roughly half the size of the 'idx'
-            # # there should not be a outlier point
-            # ck_in = [not i in idx for i in new_idx] # didnt find a torch func to do that
-            # assert sum(ck_in) == 0
+                B, new_dim, new_N = list(new_points_pooled.shape)
 
-            for i, conv in enumerate(self.mlp_convs):
-                bn = self.mlp_bns[i]
-                new_points =  F.relu(bn(conv(new_points)))
-
-            new_points_pooled = torch.max(new_points, 3)[0]
-            B, new_dim, new_N = new_points_pooled.shape
-            new_idx = torch.arange(B*new_N).cuda()  # the keep all idxs
-            new_points_pooled = new_points_pooled.transpose(1,2).reshape(B*new_N, new_dim)
-            new_points_pooled = torch.gather(new_points_pooled, dim=0, index=new_idx.reshape(-1,1).repeat(1,new_dim))
-            new_xyz = torch.gather(new_xyz.transpose(1,2).reshape(B*new_N, 3), dim=0, index=new_idx.reshape(-1,1).repeat(1,3))
-            batch_ids = torch.arange(B).unsqueeze(-1).repeat(1,new_N).reshape(-1,1).cuda()
-            try:
+                new_idx = torch.arange(B*new_N).cuda()
+                new_xyz = torch.gather(new_xyz.transpose(1,2).reshape(B*new_N, 3), dim=0, index=new_idx.reshape(-1,1).repeat(1,3))
+                batch_ids = torch.arange(B).unsqueeze(-1).repeat(1,new_N).reshape(-1,1).cuda()
                 new_xyz = torch.cat([batch_ids, new_xyz], dim=1)
-            except:
-                import ipdb; ipdb.set_trace()
+                new_points_pooled = torch.gather(new_points_pooled.transpose(1,2).reshape(B*new_N, new_dim), dim=0, index=new_idx.reshape(-1,1).repeat(1,new_dim))
+
+            else:
+                new_xyz, grouped_xyz_norm, new_points, new_indices  = sample_and_group_cuda(npoint, k, x_c.float(), x_f, cat_xyz_feature=self.cat_xyz_feature)
+
+                # --- make the new idx, and ck if all new coord in old_coord ---
+                # to_sum = (torch.arange(B).reshape(-1,1)*N).cuda() # the batch-dim
+                # new_idx = torch.sort(new_indices[:,:,0],dim=-1)[0]
+                # new_idx = new_idx + to_sum
+                # new_idx = new_idx.view(-1)  # should be roughly half the size of the 'idx'
+                # # there should not be a outlier point
+                # ck_in = [not i in idx for i in new_idx] # didnt find a torch func to do that
+                # assert sum(ck_in) == 0
+
+                for i, conv in enumerate(self.mlp_convs):
+                    bn = self.mlp_bns[i]
+                    new_points =  F.relu(bn(conv(new_points)))
+
+                new_points_pooled = torch.max(new_points, 3)[0]
+
+                B, new_dim, new_N = new_points_pooled.shape
+                new_idx = torch.arange(B*new_N).cuda()  # the keep all idxs
+                new_points_pooled = new_points_pooled.transpose(1,2).reshape(B*new_N, new_dim)
+                new_points_pooled = torch.gather(new_points_pooled, dim=0, index=new_idx.reshape(-1,1).repeat(1,new_dim))
+                new_xyz = torch.gather(new_xyz.transpose(1,2).reshape(B*new_N, 3), dim=0, index=new_idx.reshape(-1,1).repeat(1,3))
+                batch_ids = torch.arange(B).unsqueeze(-1).repeat(1,new_N).reshape(-1,1).cuda()
+                new_xyz = torch.cat([batch_ids, new_xyz], dim=1)
 
             y = ME.SparseTensor(features=new_points_pooled,coordinates=new_xyz,coordinate_manager=x.coordinate_manager)
         else:
@@ -260,7 +299,7 @@ class TULayer(nn.Module):
         self.intermediate_dim = (input_a_dim // 2) + input_b_dim
         self.out_dim = out_dim
 
-        self.POINT_TR_LIKE = True
+        self.POINT_TR_LIKE = False
 
         # -------- Point TR like -----------
         if self.POINT_TR_LIKE:
@@ -284,7 +323,7 @@ class TULayer(nn.Module):
             self.out_conv = ME.MinkowskiConvolution(
                 in_channels=input_a_dim//2 + input_b_dim,
                 out_channels=out_dim,
-                kernel_size=1,
+                kernel_size=3,
                 stride=1,
                 dimension=3
             )
@@ -392,7 +431,7 @@ class TransposeLayerNorm(nn.Module):
 
 class PTBlock(nn.Module):
     # TODO: set proper r, too small will cause less points
-    def __init__(self, in_dim, hidden_dim, is_firstlayer=False, n_sample=16, r=10, skip_knn=False):
+    def __init__(self, in_dim, hidden_dim, is_firstlayer=False, n_sample=16, r=10, skip_knn=False, kernel_size=1):
         super().__init__()
         '''
         Point Transformer Layer
@@ -403,6 +442,7 @@ class PTBlock(nn.Module):
 
         self.r = r # neighborhood cube radius
         self.skip_knn = skip_knn
+        self.kernel_size = kernel_size
 
         self.in_dim = in_dim
         self.hidden_dim = hidden_dim
@@ -417,22 +457,22 @@ class PTBlock(nn.Module):
             self.nhead = 4
 
         self.linear_top = nn.Sequential(
-            ME.MinkowskiConvolution(in_dim, self.hidden_dim, kernel_size=1, dimension=3),
+            ME.MinkowskiConvolution(in_dim, self.hidden_dim, kernel_size=self.kernel_size, dimension=3),
             ME.MinkowskiBatchNorm(self.hidden_dim),
         )
         self.linear_down = nn.Sequential(
-            ME.MinkowskiConvolution(self.out_dim, self.in_dim, kernel_size=1, dimension=3),
+            ME.MinkowskiConvolution(self.out_dim, self.in_dim, kernel_size=self.kernel_size, dimension=3),
             ME.MinkowskiBatchNorm(self.in_dim),
         )
         # feature transformations
         self.phi = nn.Sequential(
-            ME.MinkowskiConvolution(self.hidden_dim, self.out_dim, kernel_size=1, dimension=3)
+            ME.MinkowskiConvolution(self.hidden_dim, self.out_dim, kernel_size=self.kernel_size, dimension=3)
         )
         self.psi = nn.Sequential(
-            ME.MinkowskiConvolution(self.hidden_dim, self.out_dim, kernel_size=1, dimension=3)
+            ME.MinkowskiConvolution(self.hidden_dim, self.out_dim, kernel_size=self.kernel_size, dimension=3)
         )
         self.alpha = nn.Sequential(
-            ME.MinkowskiConvolution(self.hidden_dim, self.out_dim, kernel_size=1, dimension=3)
+            ME.MinkowskiConvolution(self.hidden_dim, self.out_dim, kernel_size=self.kernel_size, dimension=3)
         )
 
         self.gamma = nn.Sequential(

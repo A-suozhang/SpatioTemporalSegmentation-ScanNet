@@ -137,4 +137,27 @@ if __name__ == '__main__':
         torch.backends.cudnn.deterministic = True
 
     setup_seed(2021)
+    DatasetClass = ScannetSparseVoxelizationDataset
+    '''
+    having some import issue
+    '''
+
+    from config import get_config
+    import sys
+    sys.path.append('../')
+    from dataset import initialize_data_loader
+    config = get_config()
+
+    train_data_loader = initialize_data_loader(
+            DatasetClass,
+            config,
+            phase='train',
+            threads=0,
+            augment_data=True,
+            elastic_distortion=config.train_elastic_distortion,
+            shuffle=True,
+            repeat=True,
+            batch_size=config.batch_size,
+            limit_numpoints=config.train_limit_numpoints)
+
 

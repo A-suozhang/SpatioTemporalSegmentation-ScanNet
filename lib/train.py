@@ -91,6 +91,12 @@ def train(model, data_loader, val_data_loader, config, transform_data_fn=None):
                 # Preprocess input
                 if config.normalize_color:
                     input[:, :3] = input[:, :3] / 255. - 0.5
+                    coords_norm = coords[:,1:] / coords[:,1:].max() - 0.5
+
+                XYZ_INPUT = config.xyz_input
+                # cat xyz into the rgb feature
+                if XYZ_INPUT:
+                    input = torch.cat([coords_norm, input], dim=1)
 
                 sinput = SparseTensor(input, coords, device=device)
                 data_time += data_timer.toc(False)
@@ -146,7 +152,6 @@ def train(model, data_loader, val_data_loader, config, transform_data_fn=None):
             # Save current status, save before val to prevent occational mem overflow
             if curr_iter % config.save_freq == 0:
                 checkpoint(model, optimizer, epoch, curr_iter, config, best_val_miou, best_val_iter, save_inter=True)
-
 
             # Validation
             if curr_iter % config.val_freq == 0:
@@ -241,6 +246,7 @@ def train_point(model, data_loader, val_data_loader, config, transform_data_fn=N
                         sinput = points.transpose(1,2).cuda().float()
 
                         # DEBUG: use the discrete coord for point-based
+                        '''
 
                         feats = torch.unbind(points[:,:,:], dim=0)
                         voxel_size = config.voxel_size
@@ -256,6 +262,7 @@ def train_point(model, data_loader, val_data_loader, config, transform_data_fn=N
 
                         # sinput = torch.cat([coords[:,1:], feats],dim=1).reshape([config.batch_size, config.num_points, 6])
                         # sinput = sinput.transpose(1,2).cuda().float()
+                        '''
 
 
                         # For some networks, making the network invariant to even, odd coords is important
@@ -371,7 +378,8 @@ def train_point(model, data_loader, val_data_loader, config, transform_data_fn=N
             if curr_iter % config.save_freq == 0:
                 checkpoint(model, optimizer, epoch, curr_iter, config, best_val_miou, best_val_iter, save_inter=True)
 
-            # Validation
+            # Validation:
+            # for point-based should use alternate dataloader for eval
             # if curr_iter % config.val_freq == 0:
                 # val_miou = test_points(model, val_data_loader, writer, curr_iter, config, transform_data_fn)
                 # if val_miou > best_val_miou:

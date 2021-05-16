@@ -4,7 +4,7 @@ import torch.nn.functional as F
 from models.pct_utils import TDLayer, TULayer, PTBlock, stem_knn
 
 class PointTransformer(nn.Module):
-    def __init__(self,num_class,N,normal_channel=3):
+    def __init__(self,config,num_class,N,normal_channel=3):
         super(PointTransformer, self).__init__()
         # The normal channel for Modelnet is 3, for scannet is 6, for scanobjnn is 0
         in_channel = normal_channel+3 # normal ch + xyz

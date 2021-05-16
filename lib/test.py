@@ -91,7 +91,13 @@ def test(model, data_loader, config, transform_data_fn=None, has_gt=True):
       iter_timer.tic()
 
       if config.normalize_color:
-        input[:, :3] = input[:, :3] / 255. - 0.5
+          input[:, :3] = input[:, :3] / 255. - 0.5
+          coords_norm = coords[:,1:] / coords[:,1:].max() - 0.5
+
+      XYZ_INPUT = config.xyz_input
+      # cat xyz into the rgb feature
+      if XYZ_INPUT:
+          input = torch.cat([coords_norm, input], dim=1)
 
       sinput = ME.SparseTensor(input, coords, device=device)
 

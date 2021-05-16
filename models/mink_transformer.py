@@ -26,7 +26,7 @@ from models.pct_voxel_utils import TDLayer, TULayer, PTBlock
 
 class MinkowskiTransformerNet(ME.MinkowskiNetwork):
 
-    def __init__(self, in_channel, out_channel, num_class, final_dim=96, dimension=3):
+    def __init__(self, config, in_channel, out_channel, final_dim=96, dimension=3):
 
         ME.MinkowskiNetwork.__init__(self, dimension)  # The normal channel for Modelnet is 3, for scannet is 6, for scanobjnn is 0
         normal_channel = 3  # the RGB
@@ -101,7 +101,7 @@ class MinkowskiTransformerNet(ME.MinkowskiNetwork):
         # self.PTBlock8 = self._make_layer(block=BasicBlock, inplanes=self.dims[0], planes=self.dims[0], num_blocks=2)
 
 
-        TD_kernel_size = [4, 8, 12, 16]
+        TD_kernel_size = [4, 8, 12, 16] # only applied when using non-PointTRlike 
         # pixel size 2
         self.TDLayer1 = TDLayer(input_dim=self.dims[0], out_dim=self.dims[1], kernel_size=TD_kernel_size[0]) # strided conv
         # pixel size 4

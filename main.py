@@ -116,23 +116,17 @@ def main():
                     DatasetClass,
                     config,
                     phase=config.train_phase,
-                    # threads=config.threads,
-                    threads=0,
+                    threads=config.threads,
                     augment_data=True,
                     elastic_distortion=config.train_elastic_distortion,
-                    # elastic_distortion=False,
-                    # shuffle=True,
                     shuffle=True,
-                    # repeat=True,
                     repeat=True,
                     batch_size=config.batch_size,
-                    # batch_size=8,
                     limit_numpoints=config.train_limit_numpoints)
 
             val_data_loader = initialize_data_loader(
                     DatasetClass,
                     config,
-                    # threads=0,
                     threads=config.val_threads,
                     phase=config.val_phase,
                     augment_data=False,
@@ -165,8 +159,8 @@ def main():
 
             train_data_loader = torch.utils.data.DataLoader(
                 dataset=trainset,
-                # num_workers=config.threads,
-                num_workers=0,  # for loading big pth file, should use single-thread
+                num_workers=config.threads,
+                # num_workers=0,  # for loading big pth file, should use single-thread
                 batch_size=config.batch_size,
                 # collate_fn=collate_fn, # input points, should not have collate-fn 
                 worker_init_fn=_init_fn,
@@ -250,10 +244,14 @@ def main():
 
     NetClass = load_model(config.model)
     if config.pure_point:
-        model = NetClass(num_class=num_labels,N=config.num_points,normal_channel=num_in_channel)
+        model = NetClass(config, num_class=num_labels,N=config.num_points,normal_channel=num_in_channel)
     else:
         if config.model == 'MixedTransformer':
-            model = NetClass(num_class=num_labels,N=config.num_points,normal_channel=num_in_channel)
+            model = NetClass(config, num_class=num_labels,N=config.num_points,normal_channel=num_in_channel)
+        elif config.model == 'MinkowskiVoxelTransformer':
+            model = NetClass(config, num_in_channel, num_labels)
+        elif config.model == 'MinkowskiTransformerNet':
+            model = NetClass(config, num_in_channel, num_labels)
         else:
             model = NetClass(num_in_channel, num_labels, config)
     logging.info('===> Number of trainable parameters: {}: {}'.format(NetClass.__name__,count_parameters(model)))
