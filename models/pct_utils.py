@@ -6,6 +6,7 @@ from pointnet2_utils import furthest_point_sample as farthest_point_sample_cuda
 from pointnet2_utils import gather_operation as index_points_cuda_transpose
 from pointnet2_utils import grouping_operation as grouping_operation_cuda
 from pointnet2_utils import ball_query as query_ball_point_cuda
+from pointnet2_utils import QueryAndGroup
 
 import MinkowskiEngine as ME
 
@@ -163,7 +164,8 @@ class TDLayer(nn.Module):
             new_points =  F.relu(bn(conv(new_points)))
 
         new_points_pooled = torch.max(new_points, 3)[0] # local max pooling
-        return new_xyz, new_points_pooled, grouped_xyz_norm, new_points
+        # return new_xyz, new_points_pooled, grouped_xyz_norm, new_points
+        return new_xyz, new_points_pooled
 
 class TULayer(nn.Module):
     def __init__(self, npoint, input_dim, out_dim, k=3):
@@ -318,29 +320,51 @@ class PTBlock(nn.Module):
             # nn.BatchNorm1d(self.out_dim) 
         )
 
-        self.POS_ENCODING=True
-        self.CAT_POS=False
-        self.SKIP_ATTN = False
+        if self.fps_rate is not None:
+            # downsample_block cfg
+            self.POS_ENCODING=False
+            self.CAT_POS=False
+            self.SKIP_ATTN = True # skip-attn means linear + max(mini-pointnet)
 
-        self.QK_POS_ONLY = False
-        self.V_POS_ONLY = True
-        self.MAX_POOL = False
+            self.QK_POS_ONLY = False
+            self.V_POS_ONLY = False
+            self.MAX_POOL = False
+
+            self.SKIP_ALL = False # only fps
+            self.USE_KNN = False
+        else:
+            # normal block cfg
+            self.POS_ENCODING=True
+            self.CAT_POS=False
+            self.SKIP_ATTN = False
+
+            self.QK_POS_ONLY = False
+            self.V_POS_ONLY = False
+            self.MAX_POOL = False
+
+            self.SKIP_ALL = False
+            self.USE_KNN = False
+
+        if self.SKIP_ALL:
+            self.tmp_linear = nn.Sequential(
+                    nn.Conv1d(self.in_dim, self.out_dim,1),
+                    nn.BatchNorm1d(self.out_dim),
+                    nn.ReLU(),
+                    )
 
         if self.SKIP_ATTN:
             self.alpha = nn.Sequential(
-                    # nn.Conv2d(self.hidden_dim, self.out_dim, 1),
-                    # nn.Conv2d(self.out_dim, self.out_dim, 1),
-                    # nn.Conv2d(self.out_dim, self.out_dim, 1),
-                    # nn.Conv2d(self.out_dim, self.out_dim, 1),
-                    nn.Conv2d(self.hidden_dim+3, self.hidden_dim, 1) if self.CAT_POS else nn.Conv2d(self.hidden_dim, self.hidden_dim, 1),
+                    nn.Conv2d(self.in_dim+3, self.in_dim, 1) if self.CAT_POS else nn.Conv2d(self.in_dim, self.in_dim, 1),
+                    nn.BatchNorm2d(self.in_dim),
+                    nn.ReLU(),
+                    nn.Conv2d(self.in_dim, self.hidden_dim, 1),
                     nn.BatchNorm2d(self.hidden_dim),
-                    nn.Conv2d(self.hidden_dim, self.hidden_dim, 1),
-                    nn.BatchNorm2d(self.hidden_dim),
+                    nn.ReLU(),
                     )
         else:
             self.alpha = nn.Sequential(
                 nn.Conv1d(self.hidden_dim, self.hidden_dim, 1),
-                # nn.BatchNorm1d(self.out_dim) 
+                # nn.BatchNorm1d(self.hidden_dim)
             )
 
         self.gamma = nn.Sequential(
@@ -351,13 +375,25 @@ class PTBlock(nn.Module):
             nn.BatchNorm2d(self.vector_dim),
         )
 
-        self.delta = nn.Sequential(
-            nn.Conv2d(3, self.hidden_dim, 1),
-            nn.BatchNorm2d(self.hidden_dim),
-            nn.ReLU(),
-            nn.Conv2d(self.hidden_dim, self.hidden_dim, 1),
-            nn.BatchNorm2d(self.hidden_dim),
-            )
+        if self.SKIP_ATTN:
+            # skip-attn, pos_encoing should out in_dim
+            self.delta = nn.Sequential(
+                nn.Conv2d(3, self.in_dim, 1),
+                nn.BatchNorm2d(self.in_dim),
+                nn.ReLU(),
+                nn.Conv2d(self.in_dim, self.in_dim, 1),
+                nn.BatchNorm2d(self.in_dim),
+                # nn.ReLU(),
+                )
+        else:
+            self.delta = nn.Sequential(
+                nn.Conv2d(3, self.hidden_dim, 1),
+                nn.BatchNorm2d(self.hidden_dim),
+                nn.ReLU(),
+                nn.Conv2d(self.hidden_dim, self.hidden_dim, 1),
+                nn.BatchNorm2d(self.hidden_dim),
+                # nn.ReLU(),
+                )
 
     def forward(self, input_p, input_x):
         '''
@@ -370,10 +406,10 @@ class PTBlock(nn.Module):
         k = min(n_sample, npoint)      # denoting the num_point cur layer
         if not self.use_vector_attn:
             h = self.nhead                  # only used in non-vextor attn
+        # import ipdb; ipdb.set_trace()
 
-        input_p = input_p.permute([0,2,1])
-
-        self.fps_rate = 4
+        input_p = input_p.permute([0,2,1]) # [B, npoint, 3]
+        self.register_buffer('in_xyz_map', input_p)
 
         if self.fps_rate is not None:
             npoint = npoint // self.fps_rate
@@ -382,27 +418,54 @@ class PTBlock(nn.Module):
             input_p = index_points_cuda(input_p, fps_idx) # [B. M, 3]
             input_x = index_points_cuda(input_x.transpose(1,2), fps_idx).transpose(1,2)  # [B, dim, M]
 
+            if self.SKIP_ALL:
+                return input_p.transpose(1,2), self.tmp_linear(input_x)
+
         res = input_x # [B, dim, M]
 
         # The input npoint coule be less than the n_sample(k)
         # however, if keep init the knn(k=npoint), it will still give k output
         # so just skip the knn part
+        if self.USE_KNN:
+            self.knn = KNN(k=k, transpose_mode=True)
+            _, idx = self.knn(input_p.contiguous(), input_p)
+            idx = idx.int() # [bs, npoint, k]
+        else:
+            radius = 0.1
+            coord = input_p.contiguous()
+            idx = query_ball_point_cuda(radius, k, coord, coord) # [bs, npoint, k]
 
+        # TODO: define proper r for em
+        query_idx = query_ball_point_cuda(radius, k, coord, coord) # [bs, npoint, k]
         self.knn = KNN(k=k, transpose_mode=True)
-        # if npoint < self.n_sample:
-            # self.knn = KNN(k=npoint, transpose_mode=True)
-
-        _, idx = self.knn(input_p.contiguous(), input_p)
-        idx = idx.int()
-
-        self.register_buffer('neighbor_map', idx)
+        _, knn_idx = self.knn(input_p.contiguous(), input_p)
+        import ipdb; ipdb.set_trace()
 
         grouped_input_p = grouping_operation_cuda(input_p.transpose(1,2).contiguous(), idx) # [bs, xyz, npoint, k]
         grouped_input_x = grouping_operation_cuda(input_x.contiguous(), idx) # [bs, hidden_dim, npoint, k]
 
-        input_x = self.linear_top(input_x)
+            # query_and_group_cuda = QueryAndGroup(radius=10, nsample=k, use_xyz=False)
+            # coord = input_p.contiguous()
+            # grouped_input_p = query_and_group_cuda(
+                # xyz=coord,
+                # new_xyz=coord,
+                # features=coord.transpose(1,2).contiguous(),
+            # ) # idx: [bs, xyz, npoint, nsample]
+            # idx = idx.permute([0,2,3,1]) # idx: [bs, npoint, nsample, xyz]
+
+        self.register_buffer('neighbor_map', idx)
+
+        if self.fps_rate is not None:
+            if self.SKIP_ATTN:
+                pass # only apply linear-top for ds blocks
+            else:
+                input_x = self.linear_top(input_x)
+        else:
+            input_x = self.linear_top(input_x)
+
 
         if self.SKIP_ATTN:
+            # import ipdb; ipdb.set_trace()
             # out_dim should be the same with in_dim, since here contains no TD
             if self.POS_ENCODING:
                 relative_xyz = input_p.permute([0,2,1])[:,:,:,None] - grouped_input_p
@@ -415,10 +478,14 @@ class PTBlock(nn.Module):
                 alpha = self.alpha(grouped_input_x)
                 # alpha = grouping_operation_cuda(self.alpha(input_x).contiguous(), idx)
 
-            alpha = alpha.max(dim=-1)[0]
-            y = self.linear_down(alpha)
-            return y+res, None
+            y = alpha.max(dim=-1)[0]
 
+            # y = self.linear_down(y)
+
+            if self.fps_rate is not None:
+                return input_p.transpose(1,2), y
+            else:
+                return y+res, None
 
         phi = self.phi(input_x)
         phi = phi[:,:,:,None].repeat(1,1,1,k)
@@ -458,9 +525,13 @@ class PTBlock(nn.Module):
             y = attn_map*(alpha+pos_encoding)
             y = y.sum(dim=-1)
 
-        self.register_buffer('attn_map', attn_map)
+        self.register_buffer('attn_map', attn_map.mean(dim=1))
 
         y = self.linear_down(y)
+
+        if self.fps_rate is not None: # if downsamele, no shortcut
+            # return value is not the same, should return new_xyz, and y
+            return input_p.transpose(1,2),  y
 
         return y+res, None
 

@@ -92,7 +92,7 @@ def sample_and_group_cuda(npoint, k, xyz, points, cat_xyz_feature=True, fps_only
         new_xyz = xyz
 
     if fps_only:
-        return new_xyz.transpose(1,2), new_points.transpose(1,2)
+        return new_xyz.transpose(1,2), new_points.transpose(1,2), fps_idx
 
     torch.cuda.empty_cache()
     _, idx = knn(xyz.contiguous(), new_xyz) # B, npoint, k
@@ -159,9 +159,9 @@ class TDLayer(nn.Module):
         self.kernel_size = kernel_size
 
         '''a few additional cfg for TDLayer'''
-        self.POINT_TR_LIKE = False
+        self.POINT_TR_LIKE = True
         self.FPS_ONLY = True
-        self.cat_xyz_feature = True
+        self.cat_xyz_feature = False
 
         if self.POINT_TR_LIKE:
             if self.FPS_ONLY:
@@ -176,8 +176,9 @@ class TDLayer(nn.Module):
                     self.projection = nn.Sequential(
                         nn.Conv2d(input_dim, out_dim, 1),
                         nn.BatchNorm2d(out_dim),
-                        nn.Conv2d(out_dim, out_dim, 1),
-                        nn.BatchNorm2d(out_dim),
+                        nn.ReLU(),
+                        # nn.Conv2d(out_dim, out_dim, 1),
+                        # nn.BatchNorm2d(out_dim),
                             )
             else:
                 self.mlp_convs = nn.ModuleList()
@@ -231,7 +232,7 @@ class TDLayer(nn.Module):
 
             if self.FPS_ONLY:
                 # just using the FPS's result for subsample, without projection
-                new_xyz, new_points = sample_and_group_cuda(npoint, k, x_c.float(), x_f, cat_xyz_feature=self.cat_xyz_feature, fps_only=True)
+                new_xyz, new_points, fps_idx = sample_and_group_cuda(npoint, k, x_c.float(), x_f, cat_xyz_feature=self.cat_xyz_feature, fps_only=True)
                 if self.cat_xyz_feature:
                     additional_xyz = new_xyz / new_xyz.mean()
                     new_points_pooled = torch.cat([new_xyz/new_xyz.mean(),new_points], dim=1) # norm the xyz to some extent
@@ -241,9 +242,24 @@ class TDLayer(nn.Module):
 
                 B, new_dim, new_N = list(new_points_pooled.shape)
 
+                # TODO: CK missing mask here：may create some points which is not there(as 0,0,0)
+                # idx: [N-voxel] -> value in range(0, B*N)
+                # fps_idx: [B,N//2] -> check whether in idx(transform): -> fps_mask: [<B*N/2] value: [0, B,N//2]
+
+                batch_ids = torch.arange(B).unsqueeze(-1).repeat(1,new_N).reshape(-1,1).cuda()
+                fps_idx_full = batch_ids.view(-1)*N + fps_idx.view(-1)
+                # DEBUG: pytorch has no isin() function, parallel compare is memory-hungry
+                # and the iter version is slow
+                fps_in_mask = np.in1d(fps_idx_full.cpu().numpy(), idx.cpu().numpy().astype(int))
+                # the +1 and -1 are for the 0-idx
+                new_fps_idx_full = (((fps_idx_full.cpu().numpy()+1)*fps_in_mask).nonzero()[0]-1)
+                if len(new_fps_idx_full) < len(fps_idx_full):
+                    print('detected masked point!')
+                    import ipdb; ipdb.set_trace()
+
+                # if no masked points are sampled, we could simply use a full-idx to gather new_feature
                 new_idx = torch.arange(B*new_N).cuda()
                 new_xyz = torch.gather(new_xyz.transpose(1,2).reshape(B*new_N, 3), dim=0, index=new_idx.reshape(-1,1).repeat(1,3))
-                batch_ids = torch.arange(B).unsqueeze(-1).repeat(1,new_N).reshape(-1,1).cuda()
                 new_xyz = torch.cat([batch_ids, new_xyz], dim=1)
                 new_points_pooled = torch.gather(new_points_pooled.transpose(1,2).reshape(B*new_N, new_dim), dim=0, index=new_idx.reshape(-1,1).repeat(1,new_dim))
 
@@ -267,6 +283,7 @@ class TDLayer(nn.Module):
 
                 B, new_dim, new_N = new_points_pooled.shape
                 new_idx = torch.arange(B*new_N).cuda()  # the keep all idxs
+                # TODO: 
                 new_points_pooled = new_points_pooled.transpose(1,2).reshape(B*new_N, new_dim)
                 new_points_pooled = torch.gather(new_points_pooled, dim=0, index=new_idx.reshape(-1,1).repeat(1,new_dim))
                 new_xyz = torch.gather(new_xyz.transpose(1,2).reshape(B*new_N, 3), dim=0, index=new_idx.reshape(-1,1).repeat(1,3))
@@ -299,7 +316,7 @@ class TULayer(nn.Module):
         self.intermediate_dim = (input_a_dim // 2) + input_b_dim
         self.out_dim = out_dim
 
-        self.POINT_TR_LIKE = False
+        self.POINT_TR_LIKE = True
 
         # -------- Point TR like -----------
         if self.POINT_TR_LIKE:
@@ -378,7 +395,7 @@ class TULayer(nn.Module):
             weight = dist_recip / norm
             weight = weight*mask  # mask the zeros part
 
-            interpolated_points = torch.sum( grouping_operation_cuda(x_af.transpose(1,2).contiguous(), idx.int())*weight.view(B, 1, N_b, 3) ,dim=-1)  # [B, dim, N_b]
+            interpolated_points = torch.sum(grouping_operation_cuda(x_af.transpose(1,2).contiguous(), idx.int())*weight.view(B, 1, N_b, 3) ,dim=-1)  # [B, dim, N_b]
             interpolated_points = interpolated_points.transpose(1,2) # [B, N_b, dim]
             out = interpolated_points + x_bf
             # DEBUG: only assign to the b-branch is ok?
@@ -450,6 +467,8 @@ class PTBlock(nn.Module):
         self.vector_dim = self.out_dim // 1
 
         self.n_sample = n_sample
+
+        self.USE_KNN = False
 
         # whether to use the vector att or the original attention
         self.use_vector_attn = True
@@ -525,7 +544,7 @@ class PTBlock(nn.Module):
         # ------------------------------------------------------------------------------
 
         else:
-            self.cube_query = cube_query(r=self.r, k=self.k)
+            self.cube_query = cube_query(r=self.r, k=self.k, knn=self.USE_KNN) 
 
             # neighbor: [B*npoint, k, bxyz]
             # mask: [B*npoint, k]
@@ -539,8 +558,8 @@ class PTBlock(nn.Module):
             if CHECK_FOR_DUP_NEIGHBOR:
                 dist_map = (neighbor - neighbor[:,0,:].unsqueeze(1))[:,1:,:].abs()
                 num_different = (dist_map.sum(-1)>0).sum(-1) # how many out of ks are the same, of shape [nvoxel]
-                outlier_point = (num_different < int(self.k*2/3)-1).sum()
-                if not (outlier_point < max(npoint//100, 10)):  # sometimes npoint//100 could be 3
+                outlier_point = (num_different < int(self.k*1/2)-1).sum()
+                if not (outlier_point < max(npoint//10, 10)):  # sometimes npoint//100 could be 3
                     logging.info('Detected Abnormal neighbors, num outlier {}, all points {}'.format(outlier_point, x.shape[0]))
 
             x = self.linear_top(x) # [B, in_dim, npoint], such as [16, 32, 4096]
@@ -728,9 +747,14 @@ class cube_query(object):
             r: cube query radius
             k: k neighbors
     """
-    def __init__(self, r, k):
+    def __init__(self, r, k, knn=False):
         self.r = r
         self.k = k
+        if knn:
+            self.use_knn = True
+            self.knn = KNN(k=k, transpose_mode=True)
+        else:
+            self.use_knn = False
 
     def get_neighbor(self, ref : ME.SparseTensor, query : ME.SparseTensor):
         B_nq, _ = query.C.shape
@@ -740,15 +764,35 @@ class cube_query(object):
         coord, mask, idx_ = separate_batch(coord) # (b, n, 3)
         b, n, _ = coord.shape
 
-        query_and_group_cuda = QueryAndGroup(radius=self.r, nsample=self.k, use_xyz=False)
-        coord = coord.float()
-        idxs = query_and_group_cuda(
-            xyz=coord,
-            new_xyz=coord,
-            features=coord.transpose(1,2).contiguous(),
-        ) # idx: [bs, xyz, npoint, nsample]
-        idxs = idxs.permute([0,2,3,1]) # idx: [bs, npoint, nsample, xyz]
-        result_padded = idxs
+        if self.use_knn:
+            _, idx = self.knn(coord.contiguous(), coord)
+            grouped_coord = grouping_operation_cuda(coord.float().transpose(1,2).contiguous(), idx.int())
+            result_padded = grouped_coord.permute([0,2,3,1])
+        else:
+            query_and_group_cuda = QueryAndGroup(radius=self.r, nsample=self.k, use_xyz=False)
+            coord = coord.float()
+
+            # CK the proper radius size
+            # radius = 6000 / n
+            # k = 8
+
+            # query_idx = query_ball_point_cuda(self.r, self.k, coord, coord) # [bs, npoint, k]
+            # self.knn = KNN(k=self.k, transpose_mode=True)
+            # _, knn_idx = self.knn(coord.contiguous(), coord)
+            # d = {}
+            # d['data'] = coord
+            # d['query'] = query_idx[0,100]
+            # d['knn'] = knn_idx[0,100]
+            # torch.save(d, './coord.pth')
+            # import ipdb; ipdb.set_trace()
+
+            idxs = query_and_group_cuda(
+                xyz=coord,
+                new_xyz=coord,
+                features=coord.transpose(1,2).contiguous(),
+            ) # idx: [bs, xyz, npoint, nsample]
+            idxs = idxs.permute([0,2,3,1]) # idx: [bs, npoint, nsample, xyz]
+            result_padded = idxs
 
         # unpad result (b, n, k, 3) -> (B_nq, k, 4) by applying mask
         result = torch.zeros([B_nq, self.k, 4], dtype=torch.int32, device=query.device)

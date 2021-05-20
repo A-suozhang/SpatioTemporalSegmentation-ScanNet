@@ -22,16 +22,20 @@ class PointTransformer(nn.Module):
 
         self.PTBlock0 = PTBlock(in_dim=self.in_dims[0], n_sample=self.neighbor_ks[0])
 
-        self.TDLayer1 = TDLayer(npoint=int(N/4),input_dim=self.in_dims[0], out_dim=self.out_dims[0], k=self.neighbor_ks[1])
+        # self.TDLayer1 = TDLayer(npoint=int(N/4),input_dim=self.in_dims[0], out_dim=self.out_dims[0], k=self.neighbor_ks[1])
+        self.TDLayer1 = PTBlock(in_dim=self.in_dims[0], n_sample=self.neighbor_ks[1], fps_rate = 2, expansion=2)
         self.PTBlock1 = PTBlock(in_dim=self.out_dims[0], n_sample=self.neighbor_ks[1])
 
-        self.TDLayer2 = TDLayer(npoint=int(N/16),input_dim=self.in_dims[1], out_dim=self.out_dims[1], k=self.neighbor_ks[2])
+        # self.TDLayer2 = TDLayer(npoint=int(N/16),input_dim=self.in_dims[1], out_dim=self.out_dims[1], k=self.neighbor_ks[2])
+        self.TDLayer2 = PTBlock(in_dim=self.in_dims[1], n_sample=self.neighbor_ks[2], fps_rate = 2, expansion=2)
         self.PTBlock2 = PTBlock(in_dim=self.out_dims[1], n_sample=self.neighbor_ks[2])
 
-        self.TDLayer3 = TDLayer(npoint=int(N/64),input_dim=self.in_dims[2], out_dim=self.out_dims[2], k=self.neighbor_ks[3])
+        # self.TDLayer3 = TDLayer(npoint=int(N/64),input_dim=self.in_dims[2], out_dim=self.out_dims[2], k=self.neighbor_ks[3])
+        self.TDLayer3 = PTBlock(in_dim=self.in_dims[2], n_sample=self.neighbor_ks[3], fps_rate = 2, expansion=2)
         self.PTBlock3 = PTBlock(in_dim=self.out_dims[2], n_sample=self.neighbor_ks[3])
 
-        self.TDLayer4 = TDLayer(npoint=int(N/256),input_dim=self.in_dims[3], out_dim=self.out_dims[3], k=self.neighbor_ks[4])
+        # self.TDLayer4 = TDLayer(npoint=int(N/256),input_dim=self.in_dims[3], out_dim=self.out_dims[3], k=self.neighbor_ks[4])
+        self.TDLayer4 = PTBlock(in_dim=self.in_dims[3], n_sample=self.neighbor_ks[4], fps_rate = 2, expansion=2)
         self.PTBlock4 = PTBlock(in_dim=self.out_dims[3], n_sample=self.neighbor_ks[4])
 
         self.middle_linear = nn.Conv1d(self.out_dims[3], self.out_dims[3],1)
@@ -61,14 +65,15 @@ class PointTransformer(nn.Module):
 
         self.save_flag = False
         self.save_dict = {}
-        for i in range(5):
-            self.save_dict['attn_{}'.format(i)] = []
 
-        self.conv1 = nn.Conv1d(self.in_dims[0], self.out_dims[0], 1)
-        self.conv2 = nn.Conv1d(self.in_dims[1], self.out_dims[1], 1)
-        self.conv3 = nn.Conv1d(self.in_dims[2], self.out_dims[2], 1)
-        self.conv4 = nn.Conv1d(self.in_dims[3], self.out_dims[3], 1)
-        self.conv5 = nn.Conv1d(self.out_dims[3], num_class, 1)
+        # for i in range(5):
+            # self.save_dict['attn_{}'.format(i)] = []
+
+        # self.conv1 = nn.Conv1d(self.in_dims[0], self.out_dims[0], 1)
+        # self.conv2 = nn.Conv1d(self.in_dims[1], self.out_dims[1], 1)
+        # self.conv3 = nn.Conv1d(self.in_dims[2], self.out_dims[2], 1)
+        # self.conv4 = nn.Conv1d(self.in_dims[3], self.out_dims[3], 1)
+        # self.conv5 = nn.Conv1d(self.out_dims[3], num_class, 1)
 
     def save_intermediate(self):
 
@@ -92,16 +97,16 @@ class PointTransformer(nn.Module):
 
         l0_points, attn_0 = self.PTBlock0(l0_xyz, input_points)
 
-        l1_xyz, l1_points, l1_xyz_local, l1_points_local = self.TDLayer1(l0_xyz, l0_points)
+        l1_xyz, l1_points = self.TDLayer1(l0_xyz, l0_points)
         l1_points, attn_1 = self.PTBlock1(l1_xyz, l1_points)
 
-        l2_xyz, l2_points, l2_xyz_local, l2_points_local = self.TDLayer2(l1_xyz, l1_points)
+        l2_xyz, l2_points = self.TDLayer2(l1_xyz, l1_points)
         l2_points, attn_2 = self.PTBlock2(l2_xyz, l2_points)
 
-        l3_xyz, l3_points, l3_xyz_local, l3_points_local = self.TDLayer3(l2_xyz, l2_points)
+        l3_xyz, l3_points = self.TDLayer3(l2_xyz, l2_points)
         l3_points, attn_3 = self.PTBlock3(l3_xyz, l3_points)
 
-        l4_xyz, l4_points, l4_xyz_local, l4_points_local = self.TDLayer4(l3_xyz, l3_points)
+        l4_xyz, l4_points = self.TDLayer4(l3_xyz, l3_points)
         l4_points, attn_4 = self.PTBlock4(l4_xyz, l4_points)
 
         l4_points = self.middle_linear(l4_points)

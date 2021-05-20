@@ -80,9 +80,14 @@ def checkpoint(model, optimizer, epoch, iteration, config, best_val=None, best_v
     # save intermediate
     if save_inter:
         inter_d = {}
-        for n,m in model.named_buffers():
-            if 'map' in n:
-                inter_d[n] = m
+        # due to some stupid bug, some xyz_map in the submodule are not in model.named_modules(), dirty fix here
+        for n_block,m_block in model.named_children():
+            for n,m in m_block.named_buffers():
+                if 'map' in n:
+                    inter_d[n_block + '.' + n] = m
+        # for n,m in model.named_buffers():
+            # if 'map' in n:
+                # inter_d[n] = m
         torch.save(inter_d, os.path.join(config.log_dir, 'map.pth'))
         logging.info('Map saved in {}'.format(config.log_dir))
 

@@ -66,17 +66,19 @@ class MinkowskiTransformerNet(ME.MinkowskiNetwork):
                 ME.MinkowskiReLU(),
             )
 
-        base_r = 10
+        base_r = 4
 
         self.PTBlock0 = PTBlock(in_dim=self.dims[0], hidden_dim = self.dims[0], n_sample=self.neighbor_ks[0], skip_knn=False, r=base_r)
-        self.PTBlock1 = PTBlock(in_dim=self.dims[1], hidden_dim = self.dims[1], n_sample=self.neighbor_ks[1], skip_knn=False, r=2*base_r)
+        self.PTBlock1 = PTBlock(in_dim=self.dims[1], hidden_dim = self.dims[1], n_sample=self.neighbor_ks[1], skip_knn=False, r=base_r)
         self.PTBlock2 = PTBlock(in_dim=self.dims[2],hidden_dim = self.dims[2], n_sample=self.neighbor_ks[2], skip_knn=False, r=2*base_r)
-        self.PTBlock3 = PTBlock(in_dim=self.dims[3], hidden_dim = self.dims[3], n_sample=self.neighbor_ks[3], skip_knn=False, r=int(4*base_r))
-        self.PTBlock4 = PTBlock(in_dim=self.dims[4], hidden_dim = self.dims[4], n_sample=self.neighbor_ks[3], skip_knn=False, r=int(16*base_r))
-        self.PTBlock_middle = PTBlock(in_dim=self.dims[4], hidden_dim = self.dims[4], n_sample=self.neighbor_ks[3], skip_knn=False, r=int(16*base_r))
-        self.PTBlock5 = PTBlock(in_dim=self.dims[3], hidden_dim = self.dims[3], n_sample=self.neighbor_ks[3], skip_knn=False, r=4*base_r) # out: 256
+        self.PTBlock3 = PTBlock(in_dim=self.dims[3], hidden_dim = self.dims[3], n_sample=self.neighbor_ks[3], skip_knn=False, r=int(2*base_r))
+
+        self.PTBlock4 = PTBlock(in_dim=self.dims[4], hidden_dim = self.dims[4], n_sample=self.neighbor_ks[3], skip_knn=False, r=int(4*base_r))
+        self.PTBlock_middle = PTBlock(in_dim=self.dims[4], hidden_dim = self.dims[4], n_sample=self.neighbor_ks[3], skip_knn=False, r=int(4*base_r))
+
+        self.PTBlock5 = PTBlock(in_dim=self.dims[3], hidden_dim = self.dims[3], n_sample=self.neighbor_ks[3], skip_knn=False, r=2*base_r) # out: 256
         self.PTBlock6 = PTBlock(in_dim=self.dims[2], hidden_dim=self.dims[2], n_sample=self.neighbor_ks[2], skip_knn=False, r=2*base_r) # out: 128
-        self.PTBlock7 = PTBlock(in_dim=self.dims[1], hidden_dim=self.dims[1], n_sample=self.neighbor_ks[1], skip_knn=False, r=2*base_r) # out: 64
+        self.PTBlock7 = PTBlock(in_dim=self.dims[1], hidden_dim=self.dims[1], n_sample=self.neighbor_ks[1], skip_knn=False, r=base_r) # out: 64
         self.PTBlock8 = PTBlock(in_dim=self.dims[0], hidden_dim=self.dims[0], n_sample=self.neighbor_ks[1], skip_knn=False, r=base_r) # out: 64
 
         # self.PTBlock0 = PTBlock(in_dim=self.dims[0], hidden_dim = self.dims[0], n_sample=self.neighbor_ks[0], skip_knn=True, r=base_r)
