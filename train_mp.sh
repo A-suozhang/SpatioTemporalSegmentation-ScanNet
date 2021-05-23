@@ -1,5 +1,5 @@
-export BATCH_SIZE=8
-#export BATCH_SIZE=4
+#export BATCH_SIZE=8
+export BATCH_SIZE=4
 export MODEL=MinkowskiVoxelTransformer
 #export MODEL=MinkowskiTransformerNet
 #export MODEL=Res16UNet34C
@@ -7,12 +7,14 @@ export MODEL=MinkowskiVoxelTransformer
 #export MODEL=PointTransformer
 #export DATASET=ScannetDataset
 export DATASET=ScannetSparseVoxelizationDataset
+#export MAX_ITER=6000
 export MAX_ITER=12000
 export POINTS=4096
 export LR=1e-1
 #export LR=2e-1
 export LOG=$1
+export MP=True
+
 ./run.sh $2 \
 		-default \
-		"--scannet_path /data/eva_share_users/zhaotianchen/scannet_processed/train"
-
+		"--scannet_path /data/eva_share_users/zhaotianchen/scannet_processed/train" 

@@ -23,6 +23,7 @@ import numpy as np
 
 import torch.multiprocessing as mp
 import torch.distributed as dist
+from torch.utils.data import DataLoader
 
 def validate(model, val_data_loader, writer, curr_iter, config, transform_data_fn=None):
     v_loss, v_score, v_mAP, v_mIoU = test(model, val_data_loader, config)
@@ -47,6 +48,20 @@ def train_worker(gpu, num_devices, NetClass, data_loader, val_data_loader, confi
         world_size=num_devices,
         rank=rank
     )
+
+    # replace with DistributedSampler
+    if config.multiprocess:
+        from lib.dataloader_dist import InfSampler
+        sampler = InfSampler(data_loader.dataset)
+        data_loader = DataLoader(
+            dataset=data_loader.dataset,
+            num_workers=data_loader.num_workers,
+            batch_size=data_loader.batch_size,
+            collate_fn=data_loader.collate_fn,
+            worker_init_fn=data_loader.worker_init_fn,
+            sampler=sampler
+        )
+
     # load model
     if config.pure_point:
         model = NetClass(num_class=config.num_labels, N=config.num_points, normal_channel=config.num_in_channel)
@@ -96,7 +111,6 @@ def train_worker(gpu, num_devices, NetClass, data_loader, val_data_loader, confi
     logging.info('===> Start training')
     print('===> Start training')
     best_val_miou, best_val_iter, curr_iter, epoch, is_training = 0, 0, 1, 1, True
-
     if config.resume:
         checkpoint_fn = config.resume + '/weights.pth'
         if osp.isfile(checkpoint_fn):

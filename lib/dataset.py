@@ -19,7 +19,6 @@ from torch.utils.data import Dataset, DataLoader
 
 from lib.pc_utils import read_plyfile
 import lib.transforms as t
-from lib.dataloader import InfSampler
 import MinkowskiEngine as ME
 
 
@@ -500,13 +499,21 @@ def initialize_data_loader(DatasetClass,
 
   if repeat:
     # Use the inf random sampler
+    # if config.multiprocess:
+    #   from lib.dataloader_dist import InfSampler
+    #   sampler = InfSampler(dataset)
+    # else:
+    #   from lib.dataloader import InfSampler
+    #   sampler = InfSampler(dataset, shuffle)
+    from lib.dataloader import InfSampler
+    sampler = InfSampler(dataset, shuffle)
     data_loader = DataLoader(
         dataset=dataset,
         num_workers=threads,
         batch_size=batch_size,
         collate_fn=collate_fn,
         worker_init_fn=_init_fn,
-        sampler=InfSampler(dataset, shuffle))
+        sampler=sampler)
   else:
     # Default shuffle=False
     data_loader = DataLoader(

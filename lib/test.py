@@ -74,6 +74,7 @@ def test(model, data_loader, config, transform_data_fn=None, has_gt=True):
 
   # Fix batch normalization running mean and std
   model.eval()
+  import ipdb; ipdb.set_trace()
 
   # Clear cache (when run in val mode, cleanup training cache)
   torch.cuda.empty_cache()

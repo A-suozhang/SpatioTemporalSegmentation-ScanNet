@@ -27,7 +27,8 @@ from config import get_config
 import shutil
 
 from lib.test import test, test_points
-from lib.multitrain import train, train_point
+from lib.multitrain import train as train_mp
+from lib.train import train, train_point
 from lib.utils import load_state_with_same_shape, get_torch_device, count_parameters
 from lib.dataset import initialize_data_loader, _init_fn
 from lib.datasets import load_dataset
@@ -104,8 +105,8 @@ def main():
                     DatasetClass,
                     config,
                     phase=config.train_phase,
-                    # threads=config.threads,
-                    threads=0,
+                    threads=config.threads,
+                    # threads=0,
                     augment_data=True,
                     elastic_distortion=config.train_elastic_distortion,
                     # elastic_distortion=False,
@@ -138,18 +139,18 @@ def main():
             # collate_fn = t.cfl_collate_fn_factory(False) # no limit num-points
 
             trainset = DatasetClass(root='/data/eva_share_users/zhaotianchen/scannet/raw/scannet_pickles',
-                                      npoints=config.num_points,
-                                      split='train',
-                                      with_norm=False,
-                                      )
+                                    npoints=config.num_points,
+                                    split='train',
+                                    with_norm=False,
+                                    )
 
             valset = val_DatasetClass(root='/data/eva_share_users/zhaotianchen/scannet/raw/scannet_pickles',
-                                      scene_list_dir='/data/eva_share_users/zhaotianchen/scannet/raw/metadata',
-                                      split='eval',
-                                      block_points=config.num_points,
-                                      with_norm=False,
-                                      delta=1.0,
-                                      )
+                                    scene_list_dir='/data/eva_share_users/zhaotianchen/scannet/raw/metadata',
+                                    split='eval',
+                                    block_points=config.num_points,
+                                    with_norm=False,
+                                    delta=1.0,
+                                    )
 
 
             train_data_loader = torch.utils.data.DataLoader(
@@ -159,7 +160,7 @@ def main():
                 batch_size=config.batch_size,
                 # collate_fn=collate_fn, # input points, should not have collate-fn 
                 worker_init_fn=_init_fn,
-                sampler=InfSampler(trainset, True)) # shuffle=True
+                sampler=InfSampler(trainset, True) ) # shuffle=True
 
             val_data_loader = torch.utils.data.DataLoader(
                 dataset=valset,
@@ -169,7 +170,7 @@ def main():
                 # collate_fn=collate_fn, # input points, should not have collate-fn 
                 worker_init_fn=_init_fn,
             )
-
+            
         if train_data_loader.dataset.NUM_IN_CHANNEL is not None:
             num_in_channel = train_data_loader.dataset.NUM_IN_CHANNEL
         else:
@@ -182,7 +183,7 @@ def main():
             # data = it.__next__()
             # print(data)
 
-    else:
+    else: # validation
 
         val_DatasetClass = load_dataset('ScannetDatasetWholeScene_evaluation')
 
@@ -211,12 +212,12 @@ def main():
 
             point_scannet = True
             valset = val_DatasetClass(root='/data/eva_share_users/zhaotianchen/scannet/raw/scannet_pickles',
-                                      scene_list_dir='/data/eva_share_users/zhaotianchen/scannet/raw/metadata',
-                                      split='eval',
-                                      block_points=config.num_points,
-                                      delta=1.0,
-                                      with_norm=False,
-                                      )
+                                    scene_list_dir='/data/eva_share_users/zhaotianchen/scannet/raw/metadata',
+                                    split='eval',
+                                    block_points=config.num_points,
+                                    delta=1.0,
+                                    with_norm=False,
+                                    )
             val_data_loader = torch.utils.data.DataLoader(
                 dataset=valset,
                 # num_workers=config.threads,
@@ -271,11 +272,19 @@ def main():
                 model.load_state_dict(d, strict=False)
 
     if config.is_train:
-        if point_scannet:
-            train_point(model, train_data_loader, val_data_loader, config)
+        if config.multiprocess:
+            if point_scannet:
+                raise NotImplementedError
+                # train_point(model, train_data_loader, val_data_loader, config)
+            else:
+                train_mp(NetClass, train_data_loader, val_data_loader, config)
         else:
-            train(NetClass, train_data_loader, val_data_loader, config)
+            if point_scannet:
+                train_point(model, train_data_loader, val_data_loader, config)
+            else:
+                train(model, train_data_loader, val_data_loader, config)
     else:
+        assert config.multiprocess == False
         if point_scannet:
             test_points(model, val_data_loader, config)
         else:
