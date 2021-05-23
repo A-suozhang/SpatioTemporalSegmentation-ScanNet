@@ -140,7 +140,6 @@ class MinkowskiTransformerNet(ME.MinkowskiNetwork):
         self.fc = ME.MinkowskiLinear(self.final_dim, out_channel)
 
 
-        
     def forward(self, in_field: ME.TensorField):
 
         # x = in_field.sparse() # when using tensorfield into model, if use vxoek , no need

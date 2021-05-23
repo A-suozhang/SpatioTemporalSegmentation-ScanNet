@@ -266,7 +266,7 @@ def train_point(model, data_loader, val_data_loader, config, transform_data_fn=N
 
 
                         # For some networks, making the network invariant to even, odd coords is important
-                        # coords[:, 1:] += (torch.rand(3) * 100).type_as(coords)
+                        coords[:, 1:] += (torch.rand(3) * 100).type_as(coords)
 
                         # Preprocess input
                         # if config.normalize_color:
@@ -286,7 +286,7 @@ def train_point(model, data_loader, val_data_loader, config, transform_data_fn=N
                         coords, feats= ME.utils.sparse_collate(coords, feats)
 
                         # For some networks, making the network invariant to even, odd coords is important
-                        # coords[:, 1:] += (torch.rand(3) * 100).type_as(coords)
+                        coords[:, 1:] += (torch.rand(3) * 100).type_as(coords)
 
                         # Preprocess input
                         # if config.normalize_color:
@@ -330,6 +330,8 @@ def train_point(model, data_loader, val_data_loader, config, transform_data_fn=N
                 loss /= config.iter_size
                 batch_loss += loss.item()
                 loss.backward()
+                # print(model.input_mlp[0].weight.max())
+                # print(model.input_mlp[0].weight.grad.max())
 
             # Update number of steps
             optimizer.step()

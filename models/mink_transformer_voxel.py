@@ -59,7 +59,7 @@ class MinkowskiVoxelTransformer(ME.MinkowskiNetwork):
 
         self.CONV_TYPE = ConvType.SPATIAL_HYPERCUBE
 
-        self.dims = np.array([32, 64, 128, 256]) // 2
+        self.dims = np.array([32, 64, 128, 256])
         self.neighbor_ks = np.array([32, 32, 32, 32, 32]) // 2
 
         self.final_dim = final_dim
@@ -79,17 +79,9 @@ class MinkowskiVoxelTransformer(ME.MinkowskiNetwork):
         )
 
         # when using split-scnee, no stride here
-        split_scene = False
         # does the spatial downsampling
         # pixel size 2
-        if split_scene:
-            self.stem2 = nn.Sequential(
-                ME.MinkowskiConvolution(stem_dim, stem_dim, kernel_size=config.ks, dimension=3, stride=1),
-                ME.MinkowskiBatchNorm(stem_dim),
-                ME.MinkowskiReLU(),
-            )
-        else:
-            self.stem2 = nn.Sequential(
+        self.stem2 = nn.Sequential(
                 ME.MinkowskiConvolution(stem_dim, stem_dim, kernel_size=config.ks, dimension=3, stride=2),
                 ME.MinkowskiBatchNorm(stem_dim),
                 ME.MinkowskiReLU(),
@@ -101,10 +93,12 @@ class MinkowskiVoxelTransformer(ME.MinkowskiNetwork):
         self.PTBlock1 = PTBlock(in_dim=self.dims[0], hidden_dim = self.dims[0], n_sample=self.neighbor_ks[0], skip_knn=False, r=base_r, kernel_size=config.ks)
         self.PTBlock2 = PTBlock(in_dim=self.dims[1], hidden_dim = self.dims[1], n_sample=self.neighbor_ks[1], skip_knn=False, r=2*base_r, kernel_size=config.ks)
         self.PTBlock3 = PTBlock(in_dim=self.dims[2],hidden_dim = self.dims[2], n_sample=self.neighbor_ks[2], skip_knn=False, r=2*base_r, kernel_size=config.ks)
+
         self.PTBlock4 = PTBlock(in_dim=self.dims[3], hidden_dim = self.dims[3], n_sample=self.neighbor_ks[3], skip_knn=False, r=4*base_r, kernel_size=config.ks)
-        self.PTBlock5 = PTBlock(in_dim=self.dims[3], hidden_dim = self.dims[3], n_sample=self.neighbor_ks[3], skip_knn=False, r=2*base_r, kernel_size=config.ks) # out: 256
-        self.PTBlock6 = PTBlock(in_dim=self.dims[2], hidden_dim=self.dims[2], n_sample=self.neighbor_ks[2], skip_knn=False, r=2*base_r, kernel_size=config.ks) # out: 128
-        self.PTBlock7 = PTBlock(in_dim=self.dims[1], hidden_dim=self.dims[1], n_sample=self.neighbor_ks[1], skip_knn=False, r=base_r, kernel_size=config.ks) # out: 64
+
+        self.PTBlock5 = PTBlock(in_dim=self.dims[2], hidden_dim = self.dims[2], n_sample=self.neighbor_ks[3], skip_knn=False, r=2*base_r, kernel_size=config.ks) # out: 256
+        self.PTBlock6 = PTBlock(in_dim=self.dims[1], hidden_dim=self.dims[1], n_sample=self.neighbor_ks[2], skip_knn=False, r=2*base_r, kernel_size=config.ks) # out: 128
+        self.PTBlock7 = PTBlock(in_dim=self.dims[0], hidden_dim=self.dims[0], n_sample=self.neighbor_ks[1], skip_knn=False, r=base_r, kernel_size=config.ks) # out: 64
 
         # self.PTBlock1 = PTBlock(in_dim=self.dims[0], hidden_dim = self.dims[0], n_sample=self.neighbor_ks[0], skip_knn=True)
         # self.PTBlock2 = PTBlock(in_dim=self.dims[1], hidden_dim = self.dims[1], n_sample=self.neighbor_ks[1], skip_knn=True)
@@ -134,27 +128,22 @@ class MinkowskiVoxelTransformer(ME.MinkowskiNetwork):
         # pixel size 16: PTBlock4
 
         # pixel size 8
-        self.TULayer5 = TULayer(input_a_dim=self.dims[3], input_b_dim = self.dims[2], out_dim=self.dims[3]) # out: 256//2 + 128 = 256
+        self.TULayer5 = TULayer(input_a_dim=self.dims[3], input_b_dim = self.dims[2], out_dim=self.dims[2]) # out: 256//2 + 128 = 256
 
         # pixel size 4
-        self.TULayer6 = TULayer(input_a_dim=self.dims[3], input_b_dim = self.dims[1], out_dim=self.dims[2]) # out: 256//2 + 64 = 192
+        self.TULayer6 = TULayer(input_a_dim=self.dims[2], input_b_dim = self.dims[1], out_dim=self.dims[1]) # out: 256//2 + 64 = 192
 
         # pixel size 2
-        self.TULayer7 = TULayer(input_a_dim=self.dims[2], input_b_dim = self.dims[0], out_dim=self.dims[1]) # 128 // 2 + 32 = 96
+        self.TULayer7 = TULayer(input_a_dim=self.dims[1], input_b_dim = self.dims[0], out_dim=self.dims[0]) # 128 // 2 + 32 = 96
 
         # pixel size 1
         # self.TULayer8 = TULayer(input_a_dim=self.dims[1], input_b_dim = self.dims[0], out_dim=self.dims[0]) # 64 // 2 + 32
         # self.PTBlock8 = PTBlock(in_dim=self.dims[0], hidden_dim=self.dims[0], n_sample=self.neighbor_ks[1])  # 32
 
         # self.global_avg_pool = ME.MinkowskiGlobalAvgPooling()
-        if split_scene:
-            self.final_conv = nn.Sequential(
-                ME.MinkowskiConvolution(self.dims[1], self.final_dim, kernel_size=final_ks, stride=1, dimension=3)
-            )
-        else:
-            self.final_conv = nn.Sequential(
-                ME.MinkowskiConvolutionTranspose(self.dims[1], self.final_dim, kernel_size=2, stride=2, dimension=3)
-            )
+        self.final_conv = nn.Sequential(
+            ME.MinkowskiConvolutionTranspose(self.dims[0], self.final_dim, kernel_size=2, stride=2, dimension=3)
+        )
         self.fc = ME.MinkowskiLinear(self.final_dim+self.dims[0], out_channel)
 
     def forward(self, in_field: ME.TensorField):

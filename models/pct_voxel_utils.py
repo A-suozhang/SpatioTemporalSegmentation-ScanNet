@@ -16,6 +16,10 @@ from pointnet2_utils import gather_operation as index_points_cuda_transpose
 from pointnet2_utils import grouping_operation as grouping_operation_cuda
 from pointnet2_utils import ball_query as query_ball_point_cuda
 from pointnet2_utils import QueryAndGroup
+from pointnet2_utils import three_nn
+from pointnet2_utils import three_interpolate
+
+
 
 from knn_cuda import KNN
 import MinkowskiEngine as ME
@@ -56,7 +60,7 @@ def index_points_cuda(points, idx):
 def stem_knn(xyz, points, k):
     knn = KNN(k=k, transpose_mode=True)
     xyz = xyz.permute([0,2,1])
-    _, idx = knn(xyz.contiguous(), xyz) # xyz: [bs, npoints, coord] idx: [bs, npoint, k]
+    _, idx = knn(xyz.coniguous(), xyz) # xyz: [bs, npoints, coord] idx: [bs, npoint, k]
     idx = idx.int()
     
     # take in [B, 3, N]
@@ -159,7 +163,7 @@ class TDLayer(nn.Module):
         self.kernel_size = kernel_size
 
         '''a few additional cfg for TDLayer'''
-        self.POINT_TR_LIKE = True
+        self.POINT_TR_LIKE = False
         self.FPS_ONLY = True
         self.cat_xyz_feature = False
 
@@ -191,19 +195,25 @@ class TDLayer(nn.Module):
                 self.mlp_convs.append(nn.Conv2d(input_dim, out_dim, 1))
                 self.mlp_bns.append(nn.BatchNorm2d(input_dim))
                 self.mlp_bns.append(nn.BatchNorm2d(out_dim))
+
+            self.conv = nn.Sequential(
+                    ME.MinkowskiConvolution(input_dim, out_dim, kernel_size=1, bias=True, dimension=3),
+                    ME.MinkowskiBatchNorm(out_dim),
+                    ME.MinkowskiReLU(),
+                    )
+            # DEBUG ONLY
+            self.strided_conv = nn.Sequential(
+                ME.MinkowskiConvolution(input_dim,out_dim,kernel_size=1,stride=2,bias=True,dimension=3),
+                ME.MinkowskiBatchNorm(out_dim),
+                ME.MinkowskiReLU()
+            )
+
         else:
-            self.conv = ME.MinkowskiConvolution(
-                input_dim,
-                out_dim,
-                kernel_size=self.kernel_size,
-                stride=2,
-                bias=False,
-                dimension=3
+            self.conv = nn.Sequential(
+                ME.MinkowskiConvolution(input_dim,out_dim,kernel_size=1,stride=2,bias=True,dimension=3),
+                ME.MinkowskiBatchNorm(out_dim),
+                ME.MinkowskiReLU()
             )
-            self.bn = ME.MinkowskiBatchNorm(
-                out_dim
-            )
-            self.relu = ME.MinkowskiReLU()
 
     def forward(self, x : ME.SparseTensor):
         """
@@ -238,7 +248,9 @@ class TDLayer(nn.Module):
                     new_points_pooled = torch.cat([new_xyz/new_xyz.mean(),new_points], dim=1) # norm the xyz to some extent
                 else:
                     new_points_pooled = new_points
-                new_points_pooled = self.projection(new_points_pooled.unsqueeze(-1)).squeeze(-1) # [N,dim,nvoxel,1]
+
+                # DEBUG: debug here, skip the projection and project on the voxel
+                # new_points_pooled = self.projection(new_points_pooled.unsqueeze(-1)).squeeze(-1) # [N,dim,nvoxel,1]
 
                 B, new_dim, new_N = list(new_points_pooled.shape)
 
@@ -291,10 +303,19 @@ class TDLayer(nn.Module):
                 new_xyz = torch.cat([batch_ids, new_xyz], dim=1)
 
             y = ME.SparseTensor(features=new_points_pooled,coordinates=new_xyz,coordinate_manager=x.coordinate_manager)
+            y = self.conv(y)
+
+            # y_test = self.strided_conv(x)
+            # d = {}
+            # d['origin'] = x.C
+            # d['FPS'] = y.C
+            # d['stride'] = y_test.C
+            # torch.save(d, 'sample.pth')
+            # print(x.C.shape, y.C.shape, y_test.C.shape)
+            # import ipdb; ipdb.set_trace()
+
         else:
-            x = self.conv(x)
-            x = self.bn(x)
-            y = self.relu(x)
+            y = self.conv(x)
 
         return y
 
@@ -316,7 +337,7 @@ class TULayer(nn.Module):
         self.intermediate_dim = (input_a_dim // 2) + input_b_dim
         self.out_dim = out_dim
 
-        self.POINT_TR_LIKE = True
+        self.POINT_TR_LIKE = False
 
         # -------- Point TR like -----------
         if self.POINT_TR_LIKE:
@@ -384,9 +405,15 @@ class TULayer(nn.Module):
             x_bf.scatter_(dim=0, index=idx_b, src=self.linear_b(x_b.F))
             x_bf = x_bf.reshape([B, N_b, dim])
 
-            dists = square_distance(x_bc, x_ac)
-            dists, idx = dists.sort(dim=-1)
-            dists, idx = dists[:,:,:self.k], idx[:,:,:self.k]
+
+            dists, idx = three_nn(x_bc.float(), x_ac.float())
+
+            # dists_ = square_distance(x_bc, x_ac)
+            # dists_, idx_ = dists_.sort(dim=-1)
+            # dists, idx = dists_[:,:,:self.k], idx_[:,:,:self.k]
+
+            # del dists_, idx_
+            # torch.cuda.empty_cache()
 
             mask = (dists.sum(dim=-1)>0).unsqueeze(-1).repeat(1,1,3)
 
@@ -395,8 +422,9 @@ class TULayer(nn.Module):
             weight = dist_recip / norm
             weight = weight*mask  # mask the zeros part
 
-            interpolated_points = torch.sum(grouping_operation_cuda(x_af.transpose(1,2).contiguous(), idx.int())*weight.view(B, 1, N_b, 3) ,dim=-1)  # [B, dim, N_b]
-            interpolated_points = interpolated_points.transpose(1,2) # [B, N_b, dim]
+            interpolated_points = three_interpolate(x_af.transpose(1,2).contiguous(), idx, weight).transpose(1,2) # [B, N_b, dim]
+            # interpolated_points = torch.sum(grouping_operation_cuda(x_af.transpose(1,2).contiguous(), idx.int())*weight.view(B, 1, N_b, 3) ,dim=-1)  # [B, dim, N_b]
+            # interpolated_points = interpolated_points.transpose(1,2) # [B, N_b, dim]
             out = interpolated_points + x_bf
             # DEBUG: only assign to the b-branch is ok?
             out = torch.gather(out.reshape(B*N_b,dim), dim=0, index=idx_b) # should be the same size with x_a.F
@@ -468,7 +496,7 @@ class PTBlock(nn.Module):
 
         self.n_sample = n_sample
 
-        self.USE_KNN = False
+        self.USE_KNN = True
 
         # whether to use the vector att or the original attention
         self.use_vector_attn = True
@@ -560,7 +588,8 @@ class PTBlock(nn.Module):
                 num_different = (dist_map.sum(-1)>0).sum(-1) # how many out of ks are the same, of shape [nvoxel]
                 outlier_point = (num_different < int(self.k*1/2)-1).sum()
                 if not (outlier_point < max(npoint//10, 10)):  # sometimes npoint//100 could be 3
-                    logging.info('Detected Abnormal neighbors, num outlier {}, all points {}'.format(outlier_point, x.shape[0]))
+                    pass
+                    # logging.info('Detected Abnormal neighbors, num outlier {}, all points {}'.format(outlier_point, x.shape[0]))
 
             x = self.linear_top(x) # [B, in_dim, npoint], such as [16, 32, 4096]
 

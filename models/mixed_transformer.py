@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 import MinkowskiEngine as ME
-from models.pct_utils import TDLayer, TULayer, PTBlock, stem_knn
+from models.pct_utils import TDLayer, TULayer, PTBlock
 from models.pct_voxel_utils import separate_batch, voxel2points, points2voxel
 
 class MixedTransformer(nn.Module):

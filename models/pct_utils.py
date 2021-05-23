@@ -44,17 +44,17 @@ def index_points_cuda(points, idx):
     return new_points.transpose(1,2).contiguous()
 
 
-def stem_knn(xyz, points, k):
-    knn = KNN(k=k, transpose_mode=True)
-    xyz = xyz.permute([0,2,1])
-    _, idx = knn(xyz.contiguous(), xyz) # xyz: [bs, npoints, coord] idx: [bs, npoint, k]
-    idx = idx.int()
+# def stem_knn(xyz, points, k):
+    # knn = KNN(k=k, transpose_mode=True)
+    # xyz = xyz.permute([0,2,1])
+    # _, idx = knn(xyz.contiguous(), xyz) # xyz: [bs, npoints, coord] idx: [bs, npoint, k]
+    # idx = idx.int()
     
-    # take in [B, 3, N]
-    grouped_xyz = grouping_operation_cuda(xyz.transpose(1,2).contiguous(), idx) # [bs, xyz, n_point, k]
-    grouped_points = grouping_operation_cuda(points.contiguous(), idx) #B, C, npoint, k)
+    # # take in [B, 3, N]
+    # grouped_xyz = grouping_operation_cuda(xyz.transpose(1,2).contiguous(), idx) # [bs, xyz, n_point, k]
+    # grouped_points = grouping_operation_cuda(points.contiguous(), idx) #B, C, npoint, k)
 
-    return grouped_xyz, grouped_points
+    # return grouped_xyz, grouped_points
 
 
 def sample_and_group_cuda(npoint, k, xyz, points, cat_xyz_feature=True):
@@ -239,40 +239,52 @@ class TULayer(nn.Module):
 
         return xyz_2 , (interpolated_points + points_2)
 
-def index_points(points, idx):
-    """
-    Input:
-        points: input points data, [B, N, C]
-        idx: sample index data, [B, S, [K]]
-    Return:
-        new_points:, indexed points data, [B, S, [K], C]
-    """
-    raw_size = idx.size()
-    idx = idx.reshape(raw_size[0], -1)
-    res = torch.gather(points, 1, idx[..., None].expand(-1, -1, points.size(-1)))
-    return res.reshape(*raw_size, -1)
+# def index_points(points, idx):
+    # """
+    # Input:
+        # points: input points data, [B, N, C]
+        # idx: sample index data, [B, S, [K]]
+    # Return:
+        # new_points:, indexed points data, [B, S, [K], C]
+    # """
+    # raw_size = idx.size()
+    # idx = idx.reshape(raw_size[0], -1)
+    # res = torch.gather(points, 1, idx[..., None].expand(-1, -1, points.size(-1)))
+    # return res.reshape(*raw_size, -1)
 
-class TransposeLayerNorm(nn.Module):
+# class TransposeLayerNorm(nn.Module):
 
-    def __init__(self, dim):
-        super(TransposeLayerNorm, self).__init__()
-        self.dim = dim
-        self.norm = nn.LayerNorm(dim)
+    # def __init__(self, dim):
+        # super(TransposeLayerNorm, self).__init__()
+        # self.dim = dim
+        # self.norm = nn.LayerNorm(dim)
 
-    def forward(self, x):
-        if len(x.shape) == 3:
-            # [bs, in_dim, npoints]
-            pass
-        elif len(x.shape) == 4:
-            # [bs, in_dim, npoints, k]
-            pass
-        else:
-            raise NotImplementedError
+    # def forward(self, x):
+        # if len(x.shape) == 3:
+            # # [bs, in_dim, npoints]
+            # pass
+        # elif len(x.shape) == 4:
+            # # [bs, in_dim, npoints, k]
+            # pass
+        # else:
+            # raise NotImplementedError
 
-        return self.norm(x.transpose(1,-1)).transpose(1,-1)
+        # return self.norm(x.transpose(1,-1)).transpose(1,-1)
+
+class TRBlock(nn.Module):
+    def __init__(self, in_dim, expansion=1, n_sample=16, fps_rate=None, radius=None):
+        super().__init__()
+        self.block0 = PTBlock(in_dim, expansion=expansion, n_sample=n_sample, fps_rate=fps_rate, radius=radius)
+        # the normal block, no expansion and downsample
+        self.block1 = PTBlock(in_dim*expansion, expansion=1, n_sample=n_sample, fps_rate=None, radius=radius)
+
+    def forward(self, input_p, input_x):
+        input_p_reduced, input_x_reduced = self.block0(input_p, input_x)
+        output_p, output_x = self.block1(input_p_reduced, input_x_reduced)
+        return output_p, output_x
 
 class PTBlock(nn.Module):
-    def __init__(self, in_dim, expansion=1, n_sample=16, fps_rate=None):
+    def __init__(self, in_dim, expansion=1, n_sample=16, fps_rate=None, radius=None):
         super().__init__()
         '''
         --- Point Transformer Layer ---
@@ -288,7 +300,6 @@ class PTBlock(nn.Module):
         pos_encoding: hidden -> out
         linear_down: out_dim -> in_dim
         '''
-
         self.in_dim = in_dim
         self.expansion = expansion # expansion = out_dim // in_dim, for ds block, should have multuiple expansion
         self.hidden_dim = in_dim*self.expansion
@@ -322,7 +333,7 @@ class PTBlock(nn.Module):
 
         if self.fps_rate is not None:
             # downsample_block cfg
-            self.POS_ENCODING=False
+            self.POS_ENCODING=True
             self.CAT_POS=False
             self.SKIP_ATTN = True # skip-attn means linear + max(mini-pointnet)
 
@@ -334,9 +345,10 @@ class PTBlock(nn.Module):
             self.USE_KNN = False
         else:
             # normal block cfg
+            # DEBUG: if the normal block has skip-attn will result in nan
             self.POS_ENCODING=True
             self.CAT_POS=False
-            self.SKIP_ATTN = False
+            self.SKIP_ATTN = True
 
             self.QK_POS_ONLY = False
             self.V_POS_ONLY = False
@@ -344,6 +356,10 @@ class PTBlock(nn.Module):
 
             self.SKIP_ALL = False
             self.USE_KNN = False
+
+        if not self.USE_KNN:
+            assert radius is not None
+            self.radius = radius
 
         if self.SKIP_ALL:
             self.tmp_linear = nn.Sequential(
@@ -400,13 +416,11 @@ class PTBlock(nn.Module):
         input_p:  B, 3, npoint
         input_x: B, in_dim, npoint
         '''
-
         B, in_dim, npoint = list(input_x.size()) # npoint: the input point-num
         n_sample = self.n_sample       # the knn-sample num cur block
         k = min(n_sample, npoint)      # denoting the num_point cur layer
         if not self.use_vector_attn:
             h = self.nhead                  # only used in non-vextor attn
-        # import ipdb; ipdb.set_trace()
 
         input_p = input_p.permute([0,2,1]) # [B, npoint, 3]
         self.register_buffer('in_xyz_map', input_p)
@@ -415,45 +429,34 @@ class PTBlock(nn.Module):
             npoint = npoint // self.fps_rate
             fps_idx = farthest_point_sample_cuda(input_p, npoint)
             torch.cuda.empty_cache()
-            input_p = index_points_cuda(input_p, fps_idx) # [B. M, 3]
-            input_x = index_points_cuda(input_x.transpose(1,2), fps_idx).transpose(1,2)  # [B, dim, M]
-
+            input_p_fps = index_points_cuda(input_p, fps_idx) # [B. M, 3]
             if self.SKIP_ALL:
-                return input_p.transpose(1,2), self.tmp_linear(input_x)
+                input_p_reduced = input_p_fps.transpose(1,2)
+                input_x_reduced = index_points_cuda(self.tmp_linear(input_x).transpose(1,2), fps_idx).transpose(1,2)
+                return input_p_reduced, input_x_reduced
+        else:
+            input_p_fps = input_p
+            input_x_fps = input_x
 
         res = input_x # [B, dim, M]
 
-        # The input npoint coule be less than the n_sample(k)
-        # however, if keep init the knn(k=npoint), it will still give k output
-        # so just skip the knn part
         if self.USE_KNN:
             self.knn = KNN(k=k, transpose_mode=True)
-            _, idx = self.knn(input_p.contiguous(), input_p)
+            _, idx = self.knn(input_p.contiguous(), input_p_fps.contiguous())
             idx = idx.int() # [bs, npoint, k]
         else:
-            radius = 0.1
-            coord = input_p.contiguous()
-            idx = query_ball_point_cuda(radius, k, coord, coord) # [bs, npoint, k]
-
-        # TODO: define proper r for em
-        query_idx = query_ball_point_cuda(radius, k, coord, coord) # [bs, npoint, k]
-        self.knn = KNN(k=k, transpose_mode=True)
-        _, knn_idx = self.knn(input_p.contiguous(), input_p)
-        import ipdb; ipdb.set_trace()
+            idx = query_ball_point_cuda(self.radius, k, input_p.contiguous(), input_p_fps.contiguous()) # [bs, npoint, k]
 
         grouped_input_p = grouping_operation_cuda(input_p.transpose(1,2).contiguous(), idx) # [bs, xyz, npoint, k]
         grouped_input_x = grouping_operation_cuda(input_x.contiguous(), idx) # [bs, hidden_dim, npoint, k]
 
-            # query_and_group_cuda = QueryAndGroup(radius=10, nsample=k, use_xyz=False)
-            # coord = input_p.contiguous()
-            # grouped_input_p = query_and_group_cuda(
-                # xyz=coord,
-                # new_xyz=coord,
-                # features=coord.transpose(1,2).contiguous(),
-            # ) # idx: [bs, xyz, npoint, nsample]
-            # idx = idx.permute([0,2,3,1]) # idx: [bs, npoint, nsample, xyz]
-
         self.register_buffer('neighbor_map', idx)
+
+        # TODO: define proper r for em
+        # query_idx = query_ball_point_cuda(radius, k, coord, coord) # [bs, npoint, k]
+        # self.knn = KNN(k=k, transpose_mode=True)
+        # _, knn_idx = self.knn(input_p.contiguous(), input_p)
+        # import ipdb; ipdb.set_trace()
 
         if self.fps_rate is not None:
             if self.SKIP_ATTN:
@@ -461,14 +464,17 @@ class PTBlock(nn.Module):
             else:
                 input_x = self.linear_top(input_x)
         else:
-            input_x = self.linear_top(input_x)
-
+            if self.SKIP_ATTN:
+                pass # only apply linear-top for ds blocks
+            else:
+                input_x = self.linear_top(input_x)
+        # input_x = self.linear_top(input_x)
 
         if self.SKIP_ATTN:
             # import ipdb; ipdb.set_trace()
             # out_dim should be the same with in_dim, since here contains no TD
             if self.POS_ENCODING:
-                relative_xyz = input_p.permute([0,2,1])[:,:,:,None] - grouped_input_p
+                relative_xyz = input_p_fps.permute([0,2,1])[:,:,:,None] - grouped_input_p
                 pos_encoding = self.delta(relative_xyz)    # [bs, dims, npoint, k]
                 if self.CAT_POS:
                     alpha = self.alpha(torch.cat([grouped_input_x, relative_xyz], dim=1))
@@ -479,21 +485,34 @@ class PTBlock(nn.Module):
                 # alpha = grouping_operation_cuda(self.alpha(input_x).contiguous(), idx)
 
             y = alpha.max(dim=-1)[0]
-
-            # y = self.linear_down(y)
+            # y = alpha.sum(dim=-1)
+            y = self.linear_down(y)
 
             if self.fps_rate is not None:
-                return input_p.transpose(1,2), y
+                input_p_reduced = input_p_fps.transpose(1,2)
+                # WRONG!: noneed for applying fps_idx here
+                # input_x_reduced = index_points_cuda(y.transpose(1,2), fps_idx).transpose(1,2)  # [B, dim, M]
+                input_x_reduced = y
+                return input_p_reduced, input_x_reduced
             else:
-                return y+res, None
+                input_p_reduced = input_p_fps.transpose(1,2)
+                input_x_reduced = y + res
+                return input_p_reduced, input_x_reduced
 
-        phi = self.phi(input_x)
+        # when downsampling the TRBlock
+        # should use downsampled qkv here, so use input_x_fps
+        # as for normal block, input_x and input_x_fps are the same
+        if self.fps_rate is not None:
+            input_x_fps = index_points_cuda(input_x.transpose(1,2), fps_idx).transpose(1,2)  # it is only used for tr-like downsample block
+            phi = self.phi(input_x_fps)
+        else:
+            phi = self.phi(input_x)
         phi = phi[:,:,:,None].repeat(1,1,1,k)
         psi = grouping_operation_cuda(self.psi(input_x).contiguous(), idx)
         alpha = grouping_operation_cuda(self.alpha(input_x).contiguous(), idx) # [bs, xyz, npoint, k]
 
         if self.POS_ENCODING:
-            relative_xyz = input_p.permute([0,2,1])[:,:,:,None] - grouped_input_p
+            relative_xyz = input_p_fps.permute([0,2,1])[:,:,:,None] - grouped_input_p
             pos_encoding = self.delta(relative_xyz)    # [bs, dims, npoint, k]
 
         if self.use_vector_attn:
@@ -529,9 +548,13 @@ class PTBlock(nn.Module):
 
         y = self.linear_down(y)
 
-        if self.fps_rate is not None: # if downsamele, no shortcut
-            # return value is not the same, should return new_xyz, and y
-            return input_p.transpose(1,2),  y
-
-        return y+res, None
+        if self.fps_rate is not None:
+            input_p_reduced = input_p_fps.transpose(1,2)
+            # input_x_reduced = index_points_cuda(y.transpose(1,2), fps_idx).transpose(1,2)  # [B, dim, M]
+            input_x_reduced = y
+            return input_p_reduced, input_x_reduced
+        else:
+            input_p_reduced = input_p_fps.transpose(1,2)
+            input_x_reduced = y + res
+            return input_p_reduced, input_x_reduced
 
