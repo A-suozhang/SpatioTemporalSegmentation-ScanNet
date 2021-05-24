@@ -117,7 +117,7 @@ def test(model, data_loader, config, transform_data_fn=None, has_gt=True):
         cross_ent = criterion(output, target.long())
         losses.update(float(cross_ent), num_sample)
         scores.update(precision_at_one(pred, target), num_sample)
-        hist += fast_hist(pred.cpu().numpy().flatten(), target_np.flatten(), num_labels)
+        hist += fast_hist(pred.cpu().numpy().flatten(), target_np.flatten(), num_labels) # within fast hist, mark label should >=0 & < num_label to filter out 255 / -1
         ious = per_class_iu(hist) * 100
 
         prob = torch.nn.functional.softmax(output, dim=1)

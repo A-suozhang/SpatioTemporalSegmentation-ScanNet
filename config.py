@@ -77,6 +77,7 @@ dir_arg.add_argument('--data_dir', type=str, default='data')
 # Data
 data_arg = add_argument_group('Data')
 data_arg.add_argument('--dataset', type=str, default='ScannetSparseVoxelizationDataset')
+data_arg.add_argument('--load_whole', type=bool, default=True) # only used when scannetSparseVoxelizationDataset
 data_arg.add_argument('--point_lim', type=int, default=-1)
 data_arg.add_argument('--pre_point_lim', type=int, default=-1)
 data_arg.add_argument('--batch_size', type=int, default=16)
@@ -84,9 +85,9 @@ data_arg.add_argument('--val_batch_size', type=int, default=1)
 data_arg.add_argument('--test_batch_size', type=int, default=1)
 data_arg.add_argument('--cache_data', type=str2bool, default=False)
 data_arg.add_argument(
-    '--threads', type=int, default=2, help='num threads for train/test dataloader')
+    '--threads', type=int, default=0, help='num threads for train/test dataloader')
 data_arg.add_argument('--val_threads', type=int, default=0, help='num threads for val dataloader')
-data_arg.add_argument('--ignore_label', type=int, default=255)
+data_arg.add_argument('--ignore_label', type=int, default=-1)
 data_arg.add_argument('--train_elastic_distortion', type=str2bool, default=True)
 data_arg.add_argument('--test_elastic_distortion', type=str2bool, default=False)
 data_arg.add_argument('--return_transformation', type=str2bool, default=False)
@@ -110,10 +111,12 @@ data_arg.add_argument(
 # Training / test parameters
 train_arg = add_argument_group('Training')
 train_arg.add_argument('--is_train', type=str2bool, default=True)
+# train_arg.add_argument('--stat_freq', type=int, default=50, help='print frequency')
 train_arg.add_argument('--stat_freq', type=int, default=50, help='print frequency')
 train_arg.add_argument('--test_stat_freq', type=int, default=100, help='print frequency')
 train_arg.add_argument('--save_freq', type=int, default=2000, help='save frequency')
 train_arg.add_argument('--val_freq', type=int, default=1000, help='validation frequency')
+# train_arg.add_argument('--val_freq', type=int, default=100, help='validation frequency')
 train_arg.add_argument('--train_phase', type=str, default='train', help='Dataset for training')
 train_arg.add_argument('--val_phase', type=str, default='val', help='Dataset for validation')
 train_arg.add_argument(

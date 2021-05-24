@@ -72,6 +72,11 @@ def train(model, data_loader, val_data_loader, config, transform_data_fn=None):
 
     data_iter = data_loader.__iter__()
     while is_training:
+
+        num_class = 20
+        total_correct_class = torch.zeros(num_class, device=device)
+        total_iou_deno_class = torch.zeros(num_class, device=device)
+
         for iteration in range(len(data_loader) // config.iter_size):
             optimizer.zero_grad()
             data_time, batch_loss = 0, 0
@@ -93,12 +98,18 @@ def train(model, data_loader, val_data_loader, config, transform_data_fn=None):
                     input[:, :3] = input[:, :3] / 255. - 0.5
                     coords_norm = coords[:,1:] / coords[:,1:].max() - 0.5
 
-                XYZ_INPUT = config.xyz_input
                 # cat xyz into the rgb feature
-                if XYZ_INPUT:
+                if config.xyz_input:
                     input = torch.cat([coords_norm, input], dim=1)
 
                 sinput = SparseTensor(input, coords, device=device)
+
+                # d = {}
+                # d['coord'] = sinput.C
+                # d['feat'] = sinput.F
+                # torch.save(d, 'voxel.pth')
+                # import ipdb; ipdb.set_trace()
+
                 data_time += data_timer.toc(False)
                 # model.initialize_coords(*init_args)
                 soutput = model(sinput)
@@ -123,9 +134,14 @@ def train(model, data_loader, val_data_loader, config, transform_data_fn=None):
             iter_time_avg.update(iter_timer.toc(False))
 
             pred = get_prediction(data_loader.dataset, soutput.F, target)
-            score = precision_at_one(pred, target)
+            score = precision_at_one(pred, target, ignore_label=-1)
             losses.update(batch_loss, target.size(0))
             scores.update(score, target.size(0))
+
+            # calc the train-iou
+            for l in range(num_class):
+                total_correct_class[l] += ((pred == l) & (target == l)).sum()
+                total_iou_deno_class[l] += (((pred == l) & (target!=-1)) | (target == l) ).sum()
 
             if curr_iter >= config.max_iter:
                 is_training = False
@@ -169,6 +185,9 @@ def train(model, data_loader, val_data_loader, config, transform_data_fn=None):
             # End of iteration
             curr_iter += 1
 
+        IoU = (total_correct_class) / (total_iou_deno_class+1e-6)
+        logging.info('train point avg class IoU: %f' % ((IoU).mean()*100.))
+
         epoch += 1
 
     # Explicit memory cleanup
@@ -177,7 +196,7 @@ def train(model, data_loader, val_data_loader, config, transform_data_fn=None):
 
     # Save the final model
     checkpoint(model, optimizer, epoch, curr_iter, config, best_val_miou, best_val_iter)
-    v_loss, v_score, v_mAP, val_mIoU = test(model, val_data_loader, config)
+    v_loss, v_score, v_mAP, val_miou = test(model, val_data_loader, config)
     if val_miou > best_val_miou:
         best_val_miou = val_miou
         best_val_iter = curr_iter
@@ -398,7 +417,7 @@ def train_point(model, data_loader, val_data_loader, config, transform_data_fn=N
             curr_iter += 1
 
         IoU = (total_correct_class) / (total_iou_deno_class+1e-6)
-        logging.info('eval point avg class IoU: %f' % ((IoU).mean()*100.))
+        logging.info('train point avg class IoU: %f' % ((IoU).mean()*100.))
 
         epoch += 1
 

@@ -73,6 +73,7 @@ def main():
                 if ".py" in filename:
                         shutil.copy(os.path.join("./models", filename), os.path.join(config.log_dir,'models'))
         shutil.copy('./main.py', config.log_dir)
+        shutil.copy('./config.py', config.log_dir)
         shutil.copy('./lib/train.py', config.log_dir)
         shutil.copy('./lib/test.py', config.log_dir)
 
@@ -141,22 +142,12 @@ def main():
             point_scannet = True
 
             # collate_fn = t.cfl_collate_fn_factory(False) # no limit num-points
-
             trainset = DatasetClass(root='/data/eva_share_users/zhaotianchen/scannet/raw/scannet_pickles',
                                       npoints=config.num_points,
-                                      split='train',
+                                      split='debug',
+                                      # split='train',
                                       with_norm=False,
                                       )
-
-            valset = val_DatasetClass(root='/data/eva_share_users/zhaotianchen/scannet/raw/scannet_pickles',
-                                      scene_list_dir='/data/eva_share_users/zhaotianchen/scannet/raw/metadata',
-                                      split='eval',
-                                      block_points=config.num_points,
-                                      with_norm=False,
-                                      delta=1.0,
-                                      )
-
-
             train_data_loader = torch.utils.data.DataLoader(
                 dataset=trainset,
                 num_workers=config.threads,
@@ -166,6 +157,14 @@ def main():
                 worker_init_fn=_init_fn,
                 sampler=InfSampler(trainset, True)) # shuffle=True
 
+            valset = val_DatasetClass(root='/data/eva_share_users/zhaotianchen/scannet/raw/scannet_pickles',
+                                      scene_list_dir='/data/eva_share_users/zhaotianchen/scannet/raw/metadata',
+                                      split='debug',
+                                      # split='eval',
+                                      block_points=config.num_points,
+                                      with_norm=False,
+                                      delta=1.0,
+                                      )
             val_data_loader = torch.utils.data.DataLoader(
                 dataset=valset,
                 # num_workers=config.threads,
@@ -192,6 +191,7 @@ def main():
         val_DatasetClass = load_dataset('ScannetDatasetWholeScene_evaluation')
 
         if config.dataset == 'ScannetSparseVoxelizationDataset':
+            point_scannet = False
             val_data_loader = initialize_data_loader(
                     DatasetClass,
                     config,
@@ -204,12 +204,12 @@ def main():
                     batch_size=config.val_batch_size,
                     limit_numpoints=False)
 
-            if test_data_loader.dataset.NUM_IN_CHANNEL is not None:
-                num_in_channel = test_data_loader.dataset.NUM_IN_CHANNEL
+            if val_data_loader.dataset.NUM_IN_CHANNEL is not None:
+                num_in_channel = val_data_loader.dataset.NUM_IN_CHANNEL
             else:
                 num_in_channel = 3
 
-            num_labels = test_data_loader.dataset.NUM_LABELS
+            num_labels = val_data_loader.dataset.NUM_LABELS
 
         elif config.dataset == 'ScannetDataset':
             '''when using scannet-point, use val instead of test'''
@@ -239,8 +239,6 @@ def main():
     # if config.model == 'PointTransformer' or config.model == 'MixedTransformer':
     if config.model == 'PointTransformer':
         config.pure_point = True
-    elif 'Res' in config.model:
-        num_in_channel = num_in_channel + 3 # DEBUG: dirty fix for feeding xyz+rgb for resnet
 
     NetClass = load_model(config.model)
     if config.pure_point:
@@ -252,6 +250,8 @@ def main():
             model = NetClass(config, num_in_channel, num_labels)
         elif config.model == 'MinkowskiTransformerNet':
             model = NetClass(config, num_in_channel, num_labels)
+        elif "Res" in config.model:
+            model = NetClass(num_in_channel, num_labels, config)
         else:
             model = NetClass(num_in_channel, num_labels, config)
     logging.info('===> Number of trainable parameters: {}: {}'.format(NetClass.__name__,count_parameters(model)))

@@ -128,7 +128,7 @@ def feat_augmentation(data, normalized, config):
         data[:, 3:6] += torch.randn((data.size(0), 3), dtype=data.dtype).type_as(data)
 
 
-def precision_at_one(pred, target, ignore_label=255):
+def precision_at_one(pred, target, ignore_label=-1):
     """Computes the precision@k for the specified values of k"""
     # batch_size = target.size(0) * target.size(1) * target.size(2)
     pred = pred.view(1, -1)
@@ -275,7 +275,7 @@ def debug_on():
     return decorator
 
 
-def permute_label(model, soutput, target, num_labels, ignore_label=255):
+def permute_label(model, soutput, target, num_labels, ignore_label=-1):
     if model.NETWORK_TYPE.name == 'CLASSIFICATION':
         perm = model.get_coords(0)[:, -1]
         return target[perm.long()]

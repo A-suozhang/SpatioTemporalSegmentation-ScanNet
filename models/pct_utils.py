@@ -509,6 +509,7 @@ class PTBlock(nn.Module):
             phi = self.phi(input_x)
         phi = phi[:,:,:,None].repeat(1,1,1,k)
         psi = grouping_operation_cuda(self.psi(input_x).contiguous(), idx)
+        self.skip_knn = True
         alpha = grouping_operation_cuda(self.alpha(input_x).contiguous(), idx) # [bs, xyz, npoint, k]
 
         if self.POS_ENCODING:

@@ -19,8 +19,6 @@ from pointnet2_utils import QueryAndGroup
 from pointnet2_utils import three_nn
 from pointnet2_utils import three_interpolate
 
-
-
 from knn_cuda import KNN
 import MinkowskiEngine as ME
 import MinkowskiEngine.MinkowskiOps as me
@@ -88,6 +86,7 @@ def sample_and_group_cuda(npoint, k, xyz, points, cat_xyz_feature=True, fps_only
     B, N, C_xyz = xyz.shape
 
     if npoint < N:
+        # fps_idx = torch.arange(npoint).repeat(xyz.shape[0], 1).int().cuda() # DEBUG ONLY
         fps_idx = farthest_point_sample_cuda(xyz, npoint) # [B, npoint]
         torch.cuda.empty_cache()
         new_xyz = index_points_cuda(xyz, fps_idx) #[B, npoint, 3]
@@ -202,11 +201,11 @@ class TDLayer(nn.Module):
                     ME.MinkowskiReLU(),
                     )
             # DEBUG ONLY
-            self.strided_conv = nn.Sequential(
-                ME.MinkowskiConvolution(input_dim,out_dim,kernel_size=1,stride=2,bias=True,dimension=3),
-                ME.MinkowskiBatchNorm(out_dim),
-                ME.MinkowskiReLU()
-            )
+            # self.strided_conv = nn.Sequential(
+                # ME.MinkowskiConvolution(input_dim,out_dim,kernel_size=1,stride=2,bias=True,dimension=3),
+                # ME.MinkowskiBatchNorm(out_dim),
+                # ME.MinkowskiReLU()
+            # )
 
         else:
             self.conv = nn.Sequential(
@@ -235,7 +234,7 @@ class TDLayer(nn.Module):
             x_f = x_f.reshape([B,N,dim])
 
             k = 16
-            ds_ratio = 2
+            ds_ratio = 4
             npoint = N//ds_ratio
             # x_c = x_c.transpose(1,2).float()
             x_f = x_f.transpose(1,2)
@@ -259,15 +258,15 @@ class TDLayer(nn.Module):
                 # fps_idx: [B,N//2] -> check whether in idx(transform): -> fps_mask: [<B*N/2] value: [0, B,N//2]
 
                 batch_ids = torch.arange(B).unsqueeze(-1).repeat(1,new_N).reshape(-1,1).cuda()
-                fps_idx_full = batch_ids.view(-1)*N + fps_idx.view(-1)
-                # DEBUG: pytorch has no isin() function, parallel compare is memory-hungry
-                # and the iter version is slow
-                fps_in_mask = np.in1d(fps_idx_full.cpu().numpy(), idx.cpu().numpy().astype(int))
-                # the +1 and -1 are for the 0-idx
-                new_fps_idx_full = (((fps_idx_full.cpu().numpy()+1)*fps_in_mask).nonzero()[0]-1)
-                if len(new_fps_idx_full) < len(fps_idx_full):
-                    print('detected masked point!')
-                    import ipdb; ipdb.set_trace()
+                # fps_idx_full = batch_ids.view(-1)*N + fps_idx.view(-1)
+                # # DEBUG: pytorch has no isin() function, parallel compare is memory-hungry
+                # # and the iter version is slow
+                # fps_in_mask = np.in1d(fps_idx_full.cpu().numpy(), idx.cpu().numpy().astype(int))
+                # # the +1 and -1 are for the 0-idx
+                # new_fps_idx_full = (((fps_idx_full.cpu().numpy()+1)*fps_in_mask).nonzero()[0]-1)
+                # if len(new_fps_idx_full) < len(fps_idx_full):
+                    # print('detected masked point!')
+                    # import ipdb; ipdb.set_trace()
 
                 # if no masked points are sampled, we could simply use a full-idx to gather new_feature
                 new_idx = torch.arange(B*new_N).cuda()
@@ -303,7 +302,9 @@ class TDLayer(nn.Module):
                 new_xyz = torch.cat([batch_ids, new_xyz], dim=1)
 
             y = ME.SparseTensor(features=new_points_pooled,coordinates=new_xyz,coordinate_manager=x.coordinate_manager)
-            y = self.conv(y)
+
+            if self.FPS_ONLY:
+                y = self.conv(y)
 
             # y_test = self.strided_conv(x)
             # d = {}
@@ -381,13 +382,17 @@ class TULayer(nn.Module):
 
             interpolate xyz_2's coordinates feature with knn neighbor's features weighted by inverse distance
 
+            TODO: For POINT_TR_LIKE, add support for no x_b is fed, simply upsample the x_a
+
         Return:
             new_xyz: sampled points position data, [B, C, S]
             new_points_concat: sample points feature data, [B, D', S]
         """
 
         if self.POINT_TR_LIKE:
+
             dim = x_b.F.shape[1]
+            assert dim == self.out_dim
 
             x_ac, mask_a, idx_a = separate_batch(x_a.C)
             B = x_ac.shape[0]
@@ -404,7 +409,6 @@ class TULayer(nn.Module):
             idx_b = idx_b.reshape(-1,1).repeat(1,dim)
             x_bf.scatter_(dim=0, index=idx_b, src=self.linear_b(x_b.F))
             x_bf = x_bf.reshape([B, N_b, dim])
-
 
             dists, idx = three_nn(x_bc.float(), x_ac.float())
 
@@ -518,9 +522,29 @@ class PTBlock(nn.Module):
         self.psi = nn.Sequential(
             ME.MinkowskiConvolution(self.hidden_dim, self.out_dim, kernel_size=self.kernel_size, dimension=3)
         )
-        self.alpha = nn.Sequential(
-            ME.MinkowskiConvolution(self.hidden_dim, self.out_dim, kernel_size=self.kernel_size, dimension=3)
-        )
+        self.SKIP_ATTN=False
+        if self.SKIP_ATTN:
+            self.alpha = nn.Sequential(
+                    nn.Conv1d(self.in_dim, self.in_dim, 1),
+                    nn.BatchNorm1d(self.in_dim),
+                    nn.ReLU(),
+                    nn.Conv1d(self.in_dim, self.hidden_dim, 1),
+                    nn.BatchNorm1d(self.hidden_dim),
+                    nn.ReLU(),
+                    )
+
+            # self.alpha = nn.Sequential(
+                # ME.MinkowskiConvolution(self.hidden_dim, self.out_dim, kernel_size=self.kernel_size, dimension=3),
+                # ME.MinkowskiBatchNorm(self.out_dim),
+                # ME.MinkowskiReLU(),
+                # ME.MinkowskiConvolution(self.out_dim, self.out_dim, kernel_size=self.kernel_size, dimension=3),
+                # ME.MinkowskiBatchNorm(self.out_dim),
+                # ME.MinkowskiReLU(),
+                # )
+        else:
+            self.alpha = nn.Sequential(
+                ME.MinkowskiConvolution(self.hidden_dim, self.out_dim, kernel_size=self.kernel_size, dimension=3)
+            )
 
         self.gamma = nn.Sequential(
             nn.Conv1d(self.out_dim, self.hidden_dim, 1),
@@ -553,7 +577,6 @@ class PTBlock(nn.Module):
 
         if self.skip_knn:
             # --- for debugging only ---
-            import ipdb; ipdb.set_trace()
             x = self.linear_top(x)
             y = self.linear_down(x)
             return y+res
@@ -572,23 +595,38 @@ class PTBlock(nn.Module):
         # ------------------------------------------------------------------------------
 
         else:
-            self.cube_query = cube_query(r=self.r, k=self.k, knn=self.USE_KNN) 
+            # self.USE_KNN = False
+            self.cube_query = cube_query(r=self.r, k=self.k, knn=self.USE_KNN)
 
             # neighbor: [B*npoint, k, bxyz]
             # mask: [B*npoint, k]
             # idx: [B_nq], used for scatter/gather
             neighbor, mask, idx_ = self.cube_query.get_neighbor(x, x)
+
+            # DEBUG ONLY
+            # self.query_knn = cube_query(r=1000, k=self.k, knn=True)
+            # neighbor_knn, mask, idx_ = self.query_knn.get_neighbor(x, x)
+            # d = {}
+            # batch_id = 0
+            # point_id = 1000
+            # batch_ends = torch.where(x.C[:,0] == batch_id)[0][-1]
+            # d['voxels'] = x.C[:batch_ends,1:]
+            # d['center'] = x.C[point_id,1:]
+            # d['nei-ball'] = neighbor[point_id,:,1:]
+            # d['nei-knn'] = neighbor_knn[point_id,:,1:]
+            # torch.save(d, 'voxel.pth')
+
             self.register_buffer('neighbor_map', neighbor)
             self.register_buffer('input_map', x.C)
 
             # check for duplicate neighbor(not enough voxels within radius that fits k)
-            CHECK_FOR_DUP_NEIGHBOR=True
-            if CHECK_FOR_DUP_NEIGHBOR:
-                dist_map = (neighbor - neighbor[:,0,:].unsqueeze(1))[:,1:,:].abs()
-                num_different = (dist_map.sum(-1)>0).sum(-1) # how many out of ks are the same, of shape [nvoxel]
-                outlier_point = (num_different < int(self.k*1/2)-1).sum()
-                if not (outlier_point < max(npoint//10, 10)):  # sometimes npoint//100 could be 3
-                    pass
+            # CHECK_FOR_DUP_NEIGHBOR=True
+            # if CHECK_FOR_DUP_NEIGHBOR:
+                # dist_map = (neighbor - neighbor[:,0,:].unsqueeze(1))[:,1:,:].abs()
+                # num_different = (dist_map.sum(-1)>0).sum(-1) # how many out of ks are the same, of shape [nvoxel]
+                # outlier_point = (num_different < int(self.k*1/2)-1).sum()
+                # if not (outlier_point < max(npoint//10, 10)):  # sometimes npoint//100 could be 3
+                    # pass
                     # logging.info('Detected Abnormal neighbors, num outlier {}, all points {}'.format(outlier_point, x.shape[0]))
 
             x = self.linear_top(x) # [B, in_dim, npoint], such as [16, 32, 4096]
@@ -602,10 +640,6 @@ class PTBlock(nn.Module):
             - nvoxel_batch: the maximum voxel number of a single SparseTensor in the current batch
             '''
 
-            phi = self.phi(x).F # (nvoxel, feat_dim)
-            phi = phi[:,None,:].repeat(1,self.k,1) # (nvoxel, k, feat_dim)
-            psi = get_neighbor_feature(neighbor, self.psi(x)) # (nvoxel, k, feat_dim)
-            alpha = get_neighbor_feature(neighbor, self.alpha(x)) # (nvoxel, k, feat_dim)
             '''Gene the pos_encoding'''
             try:
                 relative_xyz = neighbor - x.C[:,None,:].repeat(1,self.k,1) # (nvoxel, k, bxyz), we later pad it to [B, xyz, nvoxel_batch, k]
@@ -616,8 +650,22 @@ class PTBlock(nn.Module):
             if WITH_POSE_ENCODING:
                 relative_xyz[:,0,0] = x.C[:,0] # get back the correct batch index, because we messed batch index in the subtraction above
                 relative_xyz = pad_zero(relative_xyz, mask) # [B, xyz, nvoxel_batch, k]
-                pose_encoding = self.delta(relative_xyz.float()) # (B, feat_dim, nvoxel_batch, k)
-                pose_tensor = make_position_tensor(pose_encoding, mask, idx_, x.C.shape[0]) # (nvoxel, k, feat_dim)
+                pose_tensor = self.delta(relative_xyz.float()) # (B, feat_dim, nvoxel_batch, k)
+                pose_tensor = make_position_tensor(pose_tensor, mask, idx_, x.C.shape[0]) # (nvoxel, k, feat_dim)S
+
+            if self.SKIP_ATTN:
+                grouped_x = get_neighbor_feature(neighbor, x) # (nvoxel, k, feat_dim)
+                alpha = self.alpha((grouped_x + pose_tensor).transpose(1,2))
+                y = alpha.max(dim=-1)[0]
+                y = ME.SparseTensor(features = y, coordinate_map_key=x.coordinate_map_key, coordinate_manager=x.coordinate_manager)
+
+                y = self.linear_down(y)
+                return y+res
+
+            phi = self.phi(x).F # (nvoxel, feat_dim)
+            phi = phi[:,None,:].repeat(1,self.k,1) # (nvoxel, k, feat_dim)
+            psi = get_neighbor_feature(neighbor, self.psi(x)) # (nvoxel, k, feat_dim)
+            alpha = get_neighbor_feature(neighbor, self.alpha(x)) # (nvoxel, k, feat_dim)
 
             '''The Self-Attn Part'''
             if self.use_vector_attn:
@@ -630,11 +678,9 @@ class PTBlock(nn.Module):
                 y = y.sum(dim=-1) # feature aggregation, y becomes [B, out_dim, npoint]
                 '''
                 if WITH_POSE_ENCODING:
-                    gamma_input = phi - psi + pose_tensor # (nvoxel, k, feat_dim)
+                    attn_map = F.softmax(self.gamma((phi - psi + pose_tensor).transpose(1,2)), dim=-1)
                 else:
-                    gamma_input = phi - psi # (nvoxel, k, feat_dim)
-                gamma_input = gamma_input.permute(0, 2, 1) # (nvoxel, feat_dim, k)
-                attn_map = F.softmax(self.gamma(gamma_input), dim=-1) # (nvoxel, feat_dim, k)
+                    attn_map = F.softmax(self.gamma((phi - psi).transpose(1,2)), dim=-1)
                 if WITH_POSE_ENCODING:
                     self_feat = (alpha + pose_tensor).permute(0,2,1) # (nvoxel, k, feat_dim) -> (nvoxel, feat_dim, k)
                 else:

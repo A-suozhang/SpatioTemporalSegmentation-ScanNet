@@ -38,6 +38,10 @@ class Res16UNetBase(ResNetBase):
     if D == 4:
       self.OUT_PIXEL_DIST = space_n_time_m(self.OUT_PIXEL_DIST, 1)
 
+    if config.xyz_input is not None:
+        if config.xyz_input:
+            in_channels = in_channels + 3
+
     # Output of the first conv concated to conv6
     self.inplanes = self.INIT_DIM
     self.conv0p1s1 = conv(

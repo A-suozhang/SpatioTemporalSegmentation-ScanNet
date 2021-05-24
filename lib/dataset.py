@@ -22,6 +22,8 @@ import lib.transforms as t
 from lib.dataloader import InfSampler
 import MinkowskiEngine as ME
 
+import torch
+
 
 class DatasetPhase(Enum):
   Train = 0
@@ -117,6 +119,7 @@ class DictDataset(Dataset, ABC):
     self.loading_key_order = ['input', 'target']
 
   def load_ply(self, index, data_index=0):
+    # base class, not used
     filepath = self.data_root / self.data_paths[index][data_index]
     return self.read_ply(filepath)
 
@@ -145,7 +148,6 @@ class DictDataset(Dataset, ABC):
   def __len__(self):
     return len(self.data_paths)
 
-
 class VoxelizationDatasetBase(DictDataset, ABC):
   IS_TEMPORAL = False
   CLIP_SIZE = 1000
@@ -167,7 +169,7 @@ class VoxelizationDatasetBase(DictDataset, ABC):
                cache=False,
                data_root='/',
                explicit_rotation=-1,
-               ignore_mask=255,
+               ignore_mask=-1,
                return_transformation=False,
                **kwargs):
     """
@@ -190,8 +192,14 @@ class VoxelizationDatasetBase(DictDataset, ABC):
     raise NotImplementedError
 
   def load_ply(self, index):
-    filepath = self.data_root / self.data_paths[index]
-    return read_plyfile(filepath), None
+    if not self.load_whole:
+        filepath = self.data_root / self.data_paths[index]
+        return read_plyfile(filepath), None
+    # readply get 7 chs: xyz-rgb-label
+    else:
+        feats = self.data_dict['data'][index]
+        label = self.data_dict['label'][index]
+        return np.concatenate([feats, label.reshape(-1,1)], axis=-1), None
 
   def __len__(self):
     num_data = len(self.data_paths)
@@ -221,7 +229,8 @@ class SparseVoxelizationDataset(VoxelizationDatasetBase):
                target_transform=None,
                data_root='/',
                explicit_rotation=-1,
-               ignore_label=255,
+               # ignore_label=255,
+               ignore_label= -1,
                return_transformation=False,
                augment_data=False,
                elastic_distortion=False,
@@ -251,18 +260,37 @@ class SparseVoxelizationDataset(VoxelizationDatasetBase):
         rotation_axis=self.LOCFEAT_IDX,
         ignore_label=ignore_label)
 
-    # map labels not evaluated to ignore_label
-    label_map = {}
-    n_used = 0
-    for l in range(self.NUM_LABELS):
-      if l in self.IGNORE_LABELS:
-        label_map[l] = self.ignore_mask
-      else:
-        label_map[l] = n_used
-        n_used += 1
-    label_map[self.ignore_mask] = self.ignore_mask
-    self.label_map = label_map
-    self.NUM_LABELS -= len(self.IGNORE_LABELS)
+    # loading the whole dataset from the pth file but not all ply files
+    # if load-whole: the pre-defined pth already processed the label mapping, so should skip this part
+    if config.load_whole:
+        self.load_whole = True
+        datapath = "/data/eva_share_users/zhaotianchen/scannet/raw/scannet_pickles/"
+        split = 'train' if config.is_train else 'val'
+        # split = 'debug' # DEBUG_ONLY
+        datapath = datapath + 'new_{}.pth'.format(split)
+
+        self.data_dict = torch.load(datapath)
+    else:
+        self.load_whole = False
+
+    if not self.load_whole:
+
+        # map labels not evaluated to ignore_label
+        label_map = {}
+        n_used = 0
+        for l in range(self.NUM_LABELS):
+          if l in self.IGNORE_LABELS:
+            label_map[l] = self.ignore_mask
+          else:
+            label_map[l] = n_used
+            n_used += 1
+        label_map[self.ignore_mask] = self.ignore_mask
+        self.label_map = label_map
+        self.NUM_LABELS -= len(self.IGNORE_LABELS)
+    else:
+        # for load-whole, still need to change the num_labels to 20
+        self.NUM_LABELS -= len(self.IGNORE_LABELS)
+
 
   def get_output_id(self, iteration):
     return self.data_paths[iteration]
@@ -286,7 +314,10 @@ class SparseVoxelizationDataset(VoxelizationDatasetBase):
       index //= self.explicit_rotation
     else:
       rotation_angle = None
+
+    # pointcloud, center = self.load_ply(0) # DEBUG ONLY!
     pointcloud, center = self.load_ply(index)
+    pointcloud = pointcloud.astype('float32') # when load_whole, data from pth file stays float64
     if self.PREVOXELIZE_VOXEL_SIZE is not None:
       inds = ME.SparseVoxelize(pointcloud[:, :3] / self.PREVOXELIZE_VOXEL_SIZE, return_index=True)
       pointcloud = pointcloud[inds]
@@ -300,6 +331,13 @@ class SparseVoxelizationDataset(VoxelizationDatasetBase):
     # o3d.draw_geometries([pcd])
 
     coords, feats, labels = self.convert_mat2cfl(pointcloud)
+
+    # d = {}
+    # d['coords'] = coords
+    # d['feats'] = feats
+    # d['labels'] = labels
+    # torch.save(d,'pc.pth')
+
     outs = self.sparse_voxelizer.voxelize(
         coords,
         feats,
@@ -307,11 +345,18 @@ class SparseVoxelizationDataset(VoxelizationDatasetBase):
         center=center,
         rotation_angle=rotation_angle,
         return_transformation=self.return_transformation)
+
     if self.return_transformation:
       coords, feats, labels, transformation = outs
       transformation = np.expand_dims(transformation, 0)
     else:
       coords, feats, labels = outs
+
+    # d = {}
+    # d['coords'] = coords
+    # d['feats'] = feats
+    # d['labels'] = labels
+    # torch.save(d,'voxel.pth')
 
     # map labels not used for evaluation to ignore_label
     if self.input_transform is not None:
@@ -319,7 +364,10 @@ class SparseVoxelizationDataset(VoxelizationDatasetBase):
     if self.target_transform is not None:
       coords, feats, labels = self.target_transform(coords, feats, labels)
     if self.IGNORE_LABELS is not None:
-      labels = np.array([self.label_map[x] for x in labels], dtype=np.int)
+        if self.load_whole:
+            labels = labels - 1  # should align all labels to [-1, 20]
+        else:
+            labels = np.array([self.label_map[x] for x in labels], dtype=np.int)
 
     return_args = [coords, feats, labels]
     if self.return_transformation:
@@ -330,124 +378,124 @@ class SparseVoxelizationDataset(VoxelizationDatasetBase):
     self.sparse_voxelizer.cleanup()
 
 
-class SparseTemporalVoxelizationDataset(SparseVoxelizationDataset):
+# class SparseTemporalVoxelizationDataset(SparseVoxelizationDataset):
 
-  IS_TEMPORAL = True
+  # IS_TEMPORAL = True
 
-  def __init__(self,
-               data_paths,
-               input_transform=None,
-               target_transform=None,
-               data_root='/',
-               explicit_rotation=-1,
-               ignore_label=255,
-               temporal_dilation=1,
-               temporal_numseq=3,
-               return_transformation=False,
-               augment_data=False,
-               elastic_distortion=False,
-               config=None,
-               **kwargs):
-    SparseVoxelizationDataset.__init__(self, data_paths, input_transform, target_transform,
-                                       data_root, explicit_rotation, ignore_label,
-                                       return_transformation, augment_data, elastic_distortion, config, **kwargs)
-    self.temporal_dilation = temporal_dilation
-    self.temporal_numseq = temporal_numseq
-    temporal_window = temporal_dilation * (temporal_numseq - 1) + 1
-    self.numels = [len(p) - temporal_window + 1 for p in self.data_paths]
-    if any([numel <= 0 for numel in self.numels]):
-      raise ValueError('Your temporal window configuration is too wide for '
-                       'this dataset. Please change the configuration.')
+  # def __init__(self,
+               # data_paths,
+               # input_transform=None,
+               # target_transform=None,
+               # data_root='/',
+               # explicit_rotation=-1,
+               # ignore_label=255,
+               # temporal_dilation=1,
+               # temporal_numseq=3,
+               # return_transformation=False,
+               # augment_data=False,
+               # elastic_distortion=False,
+               # config=None,
+               # **kwargs):
+    # SparseVoxelizationDataset.__init__(self, data_paths, input_transform, target_transform,
+                                       # data_root, explicit_rotation, ignore_label,
+                                       # return_transformation, augment_data, elastic_distortion, config, **kwargs)
+    # self.temporal_dilation = temporal_dilation
+    # self.temporal_numseq = temporal_numseq
+    # temporal_window = temporal_dilation * (temporal_numseq - 1) + 1
+    # self.numels = [len(p) - temporal_window + 1 for p in self.data_paths]
+    # if any([numel <= 0 for numel in self.numels]):
+      # raise ValueError('Your temporal window configuration is too wide for '
+                       # 'this dataset. Please change the configuration.')
 
-  def load_world_pointcloud(self, filename):
-    raise NotImplementedError
+  # def load_world_pointcloud(self, filename):
+    # raise NotImplementedError
 
-  def convert_mat2cfl(self, mat):
-    # Generally, xyz,rgb,label
-    return mat[:, :3], mat[:, 3:-1], mat[:, -1]
+  # def convert_mat2cfl(self, mat):
+    # # Generally, xyz,rgb,label
+    # return mat[:, :3], mat[:, 3:-1], mat[:, -1]
 
-  def __getitem__(self, index):
-    for seq_idx, numel in enumerate(self.numels):
-      if index >= numel:
-        index -= numel
-      else:
-        break
-    numseq = self.temporal_numseq
-    if self.augment_data and self.config.temporal_rand_numseq:
-      numseq = random.randrange(1, self.temporal_numseq + 1)
-    dilations = [self.temporal_dilation for i in range(numseq - 1)]
-    if self.augment_data and self.config.temporal_rand_dilation:
-      dilations = [random.randrange(1, self.temporal_dilation + 1) for i in range(numseq - 1)]
-    files = [self.data_paths[seq_idx][index + sum(dilations[:i])] for i in range(numseq)]
+  # def __getitem__(self, index):
+    # for seq_idx, numel in enumerate(self.numels):
+      # if index >= numel:
+        # index -= numel
+      # else:
+        # break
+    # numseq = self.temporal_numseq
+    # if self.augment_data and self.config.temporal_rand_numseq:
+      # numseq = random.randrange(1, self.temporal_numseq + 1)
+    # dilations = [self.temporal_dilation for i in range(numseq - 1)]
+    # if self.augment_data and self.config.temporal_rand_dilation:
+      # dilations = [random.randrange(1, self.temporal_dilation + 1) for i in range(numseq - 1)]
+    # files = [self.data_paths[seq_idx][index + sum(dilations[:i])] for i in range(numseq)]
 
-    world_pointclouds = [self.load_world_pointcloud(f) for f in files]
-    ptcs, centers = zip(*world_pointclouds)
-    if self.PREVOXELIZE_VOXEL_SIZE is not None:
-      new_ptcs = []
-      for ptc in ptcs:
-        inds = ME.SparseVoxelize(ptc[:, :3] / self.PREVOXELIZE_VOXEL_SIZE, return_index=True)
-        new_ptcs.append(ptc[inds])
-      ptcs = new_ptcs
+    # world_pointclouds = [self.load_world_pointcloud(f) for f in files]
+    # ptcs, centers = zip(*world_pointclouds)
+    # if self.PREVOXELIZE_VOXEL_SIZE is not None:
+      # new_ptcs = []
+      # for ptc in ptcs:
+        # inds = ME.SparseVoxelize(ptc[:, :3] / self.PREVOXELIZE_VOXEL_SIZE, return_index=True)
+        # new_ptcs.append(ptc[inds])
+      # ptcs = new_ptcs
 
-    # import ipdb; ipdb.set_trace()
-    # import open3d as o3d
-    # from lib.open3d_utils import make_pointcloud
-    # pcds = [make_pointcloud(np.floor(ptc[:, :3] / self.PREVOXELIZE_VOXEL_SIZE), ptc[:, 3:6] / 256) for ptc in ptcs]
-    # o3d.draw_geometries(pcds)
+    # # import ipdb; ipdb.set_trace()
+    # # import open3d as o3d
+    # # from lib.open3d_utils import make_pointcloud
+    # # pcds = [make_pointcloud(np.floor(ptc[:, :3] / self.PREVOXELIZE_VOXEL_SIZE), ptc[:, 3:6] / 256) for ptc in ptcs]
+    # # o3d.draw_geometries(pcds)
 
-    if self.elastic_distortion:
-      ptcs = [self._augment_elastic_distortion(ptc) for ptc in ptcs]
+    # if self.elastic_distortion:
+      # ptcs = [self._augment_elastic_distortion(ptc) for ptc in ptcs]
 
-    # pcds = [make_pointcloud(np.floor(ptc[:, :3] / self.PREVOXELIZE_VOXEL_SIZE), ptc[:, 3:6] / 256) for ptc in ptcs]
-    # o3d.draw_geometries(pcds)
+    # # pcds = [make_pointcloud(np.floor(ptc[:, :3] / self.PREVOXELIZE_VOXEL_SIZE), ptc[:, 3:6] / 256) for ptc in ptcs]
+    # # o3d.draw_geometries(pcds)
 
-    ptcs = [self.convert_mat2cfl(ptc) for ptc in ptcs]
-    coords, feats, labels = zip(*ptcs)
+    # ptcs = [self.convert_mat2cfl(ptc) for ptc in ptcs]
+    # coords, feats, labels = zip(*ptcs)
 
-    outs = self.sparse_voxelizer.voxelize_temporal(
-        coords, feats, labels, centers=centers, return_transformation=self.return_transformation)
+    # outs = self.sparse_voxelizer.voxelize_temporal(
+        # coords, feats, labels, centers=centers, return_transformation=self.return_transformation)
 
-    if self.return_transformation:
-      coords_t, feats_t, labels_t, transformation_t = outs
-    else:
-      coords_t, feats_t, labels_t = outs
+    # if self.return_transformation:
+      # coords_t, feats_t, labels_t, transformation_t = outs
+    # else:
+      # coords_t, feats_t, labels_t = outs
 
-    joint_coords = np.vstack([
-        np.hstack((coords, np.ones((coords.shape[0], 1)) * i)) for i, coords in enumerate(coords_t)
-    ])
-    joint_feats = np.vstack(feats_t)
-    joint_labels = np.hstack(labels_t)
+    # joint_coords = np.vstack([
+        # np.hstack((coords, np.ones((coords.shape[0], 1)) * i)) for i, coords in enumerate(coords_t)
+    # ])
+    # joint_feats = np.vstack(feats_t)
+    # joint_labels = np.hstack(labels_t)
 
-    # map labels not used for evaluation to ignore_label
-    if self.input_transform is not None:
-      joint_coords, joint_feats, joint_labels = self.input_transform(joint_coords, joint_feats,
-                                                                     joint_labels)
-    if self.target_transform is not None:
-      joint_coords, joint_feats, joint_labels = self.target_transform(joint_coords, joint_feats,
-                                                                      joint_labels)
-    if self.IGNORE_LABELS is not None:
-      joint_labels = np.array([self.label_map[x] for x in joint_labels], dtype=np.int)
+    # # map labels not used for evaluation to ignore_label
+    # if self.input_transform is not None:
+      # joint_coords, joint_feats, joint_labels = self.input_transform(joint_coords, joint_feats,
+                                                                     # joint_labels)
+    # if self.target_transform is not None:
+      # joint_coords, joint_feats, joint_labels = self.target_transform(joint_coords, joint_feats,
+                                                                      # joint_labels)
+    # if self.IGNORE_LABELS is not None:
+      # joint_labels = np.array([self.label_map[x] for x in joint_labels], dtype=np.int)
 
-    return_args = [joint_coords, joint_feats, joint_labels]
-    if self.return_transformation:
-      pointclouds = np.vstack([
-          np.hstack((pointcloud[0][:, :6], np.ones((pointcloud[0].shape[0], 1)) * i))
-          for i, pointcloud in enumerate(world_pointclouds)
-      ])
-      transformations = np.vstack(
-          [np.hstack((transformation, [i])) for i, transformation in enumerate(transformation_t)])
+    # return_args = [joint_coords, joint_feats, joint_labels]
+    # if self.return_transformation:
+      # pointclouds = np.vstack([
+          # np.hstack((pointcloud[0][:, :6], np.ones((pointcloud[0].shape[0], 1)) * i))
+          # for i, pointcloud in enumerate(world_pointclouds)
+      # ])
+      # transformations = np.vstack(
+          # [np.hstack((transformation, [i])) for i, transformation in enumerate(transformation_t)])
 
-      return_args.extend([pointclouds.astype(np.float32), transformations.astype(np.float32)])
-    return tuple(return_args)
+      # return_args.extend([pointclouds.astype(np.float32), transformations.astype(np.float32)])
+    # return tuple(return_args)
 
-  def __len__(self):
-    num_data = sum(self.numels)
-    if self.explicit_rotation > 1:
-      return num_data * self.explicit_rotation
-    return num_data
+  # def __len__(self):
+    # num_data = sum(self.numels)
+    # if self.explicit_rotation > 1:
+      # return num_data * self.explicit_rotation
+    # return num_data
 
-  def cleanup(self):
-    self.sparse_voxelizer.cleanup()
+  # def cleanup(self):
+    # self.sparse_voxelizer.cleanup()
 
 
 def initialize_data_loader(DatasetClass,
@@ -506,6 +554,7 @@ def initialize_data_loader(DatasetClass,
         batch_size=batch_size,
         collate_fn=collate_fn,
         worker_init_fn=_init_fn,
+        pin_memory=True,
         sampler=InfSampler(dataset, shuffle))
   else:
     # Default shuffle=False
@@ -515,6 +564,7 @@ def initialize_data_loader(DatasetClass,
         batch_size=batch_size,
         collate_fn=collate_fn,
         worker_init_fn=_init_fn,
+        pin_memory=True,
         shuffle=shuffle)
 
   return data_loader

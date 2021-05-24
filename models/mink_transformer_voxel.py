@@ -60,7 +60,7 @@ class MinkowskiVoxelTransformer(ME.MinkowskiNetwork):
         self.CONV_TYPE = ConvType.SPATIAL_HYPERCUBE
 
         self.dims = np.array([32, 64, 128, 256])
-        self.neighbor_ks = np.array([32, 32, 32, 32, 32]) // 2
+        self.neighbor_ks = np.array([12, 12, 12, 12])
 
         self.final_dim = final_dim
 
@@ -71,6 +71,9 @@ class MinkowskiVoxelTransformer(ME.MinkowskiNetwork):
         else:
             in_channel = in_channel
 
+        # the 1st ds & last upsample use stridedConv/TransitionUp/Down
+        self.POINT_TR_LIKE = False
+
         # pixel size 1
         self.stem1 = nn.Sequential(
             ME.MinkowskiConvolution(in_channel, stem_dim, kernel_size=config.ks, dimension=3),
@@ -78,17 +81,18 @@ class MinkowskiVoxelTransformer(ME.MinkowskiNetwork):
             ME.MinkowskiReLU(),
         )
 
-        # when using split-scnee, no stride here
-        # does the spatial downsampling
-        # pixel size 2
-        self.stem2 = nn.Sequential(
-                ME.MinkowskiConvolution(stem_dim, stem_dim, kernel_size=config.ks, dimension=3, stride=2),
-                ME.MinkowskiBatchNorm(stem_dim),
-                ME.MinkowskiReLU(),
-            )
+        if self.POINT_TR_LIKE:
+            self.stem2 = TDLayer(input_dim=self.dims[0], out_dim=self.dims[0])
+        else:
+            # does the spatial downsampling
+            # pixel size 2
+            self.stem2 = nn.Sequential(
+                    ME.MinkowskiConvolution(stem_dim, stem_dim, kernel_size=config.ks, dimension=3, stride=2),
+                    ME.MinkowskiBatchNorm(stem_dim),
+                    ME.MinkowskiReLU(),
+                )
 
-
-        base_r = 20
+        base_r = 5
 
         self.PTBlock1 = PTBlock(in_dim=self.dims[0], hidden_dim = self.dims[0], n_sample=self.neighbor_ks[0], skip_knn=False, r=base_r, kernel_size=config.ks)
         self.PTBlock2 = PTBlock(in_dim=self.dims[1], hidden_dim = self.dims[1], n_sample=self.neighbor_ks[1], skip_knn=False, r=2*base_r, kernel_size=config.ks)
@@ -137,14 +141,18 @@ class MinkowskiVoxelTransformer(ME.MinkowskiNetwork):
         self.TULayer7 = TULayer(input_a_dim=self.dims[1], input_b_dim = self.dims[0], out_dim=self.dims[0]) # 128 // 2 + 32 = 96
 
         # pixel size 1
-        # self.TULayer8 = TULayer(input_a_dim=self.dims[1], input_b_dim = self.dims[0], out_dim=self.dims[0]) # 64 // 2 + 32
         # self.PTBlock8 = PTBlock(in_dim=self.dims[0], hidden_dim=self.dims[0], n_sample=self.neighbor_ks[1])  # 32
 
-        # self.global_avg_pool = ME.MinkowskiGlobalAvgPooling()
-        self.final_conv = nn.Sequential(
-            ME.MinkowskiConvolutionTranspose(self.dims[0], self.final_dim, kernel_size=2, stride=2, dimension=3)
-        )
-        self.fc = ME.MinkowskiLinear(self.final_dim+self.dims[0], out_channel)
+        if self.POINT_TR_LIKE:
+            self.TULayer8 = TULayer(input_a_dim=self.dims[0], input_b_dim = self.dims[0], out_dim=self.dims[0]) # 64 // 2 + 32
+            self.fc = ME.MinkowskiLinear(self.dims[0], out_channel)
+        else:
+            self.final_conv = nn.Sequential(
+                ME.MinkowskiConvolutionTranspose(self.dims[0], self.final_dim, kernel_size=2, stride=2, dimension=3),
+                ME.MinkowskiBatchNorm(self.final_dim),
+                ME.MinkowskiReLU(),
+            )
+            self.fc = ME.MinkowskiLinear(self.final_dim+self.dims[0], out_channel)
 
     def forward(self, in_field: ME.TensorField):
 
@@ -161,29 +169,37 @@ class MinkowskiVoxelTransformer(ME.MinkowskiNetwork):
         x3 = self.PTBlock3(x)
 
         x = self.TDLayer3(x3)
-        x4 = self.PTBlock4(x)
+        # x4 = self.PTBlock4(x)
 
-        x = self.TULayer5(x4, x3)
-        x5 = self.PTBlock5(x)
+        # x = self.TULayer5(x4, x3)
+        # x5 = self.PTBlock5(x)
 
-        x = self.TULayer6(x5, x2)
-        x6 = self.PTBlock6(x)
+        # x = self.TULayer6(x5, x2)
+        # x6 = self.PTBlock6(x)
 
-        x = self.TULayer7(x6, x1)
-        x7 = self.PTBlock7(x)
+        # x = self.TULayer7(x6, x1)
+        # x7 = self.PTBlock7(x)
 
-        # final big PTBlock
-        # x = self.TULayer8(x7, x0)
-        # x8, attn_8 = self.PTBlock8(x)
-        # x = self.fc(x8)
+        # x = self.final_conv(x7)
+        # x = self.fc(me.cat(x0,x))
 
-        x = self.final_conv(x7)
-        x = self.fc(me.cat(x0,x))
+        x = self.PTBlock4(x)
 
-        # end = time.time()
+        x = self.TULayer5(x, x3)
+        x = self.PTBlock5(x)
 
-        #print(f"forward time: {end-start} s")
-        # print('PT ratio:{}'.format((pt2 - pt1) / (pt2 - pt0)))
+        x = self.TULayer6(x, x2)
+        x = self.PTBlock6(x)
+
+        x = self.TULayer7(x, x1)
+        x = self.PTBlock7(x)
+
+        if self.POINT_TR_LIKE:
+            x = self.TULayer8(x, x0)
+            x = self.fc(x)
+        else:
+            x = self.final_conv(x)
+            x = self.fc(me.cat(x0,x))
 
         return x
 
