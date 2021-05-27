@@ -79,8 +79,6 @@ def test(model, data_loader, config, transform_data_fn=None, has_gt=True):
   # Clear cache (when run in val mode, cleanup training cache)
   torch.cuda.empty_cache()
 
-  import ipdb; ipdb.set_trace()
-
   with torch.no_grad():
     for iteration in range(max_iter):
       data_timer.tic()
@@ -89,6 +87,13 @@ def test(model, data_loader, config, transform_data_fn=None, has_gt=True):
       else:
         coords, input, target = data_iter.next()
       data_time = data_timer.toc(False)
+
+      # d = {}
+      # d['coords'] = coords
+      # d['voxel'] = input
+      # d['label'] = target
+      # torch.save(d, './test-whole.pth')
+      # import ipdb; ipdb.set_trace()
 
       # Preprocess input
       iter_timer.tic()

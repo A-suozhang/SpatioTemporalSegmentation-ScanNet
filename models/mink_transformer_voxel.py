@@ -60,8 +60,8 @@ class MinkowskiVoxelTransformer(ME.MinkowskiNetwork):
         self.CONV_TYPE = ConvType.SPATIAL_HYPERCUBE
 
         self.dims = np.array([32, 64, 128, 256])
-        self.neighbor_ks = np.array([8, 12, 12, 12])
-        # self.neighbor_ks = np.array([8, 8, 8, 8])
+        # self.neighbor_ks = np.array([8, 12, 12, 12])
+        self.neighbor_ks = np.array([8, 8, 8, 8])
 
         self.final_dim = final_dim
 

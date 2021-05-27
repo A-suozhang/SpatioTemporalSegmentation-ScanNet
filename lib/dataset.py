@@ -235,11 +235,13 @@ class SparseVoxelizationDataset(VoxelizationDatasetBase):
                augment_data=False,
                elastic_distortion=False,
                config=None,
+               phase=DatasetPhase.Train,
                **kwargs):
 
     self.augment_data = augment_data
     self.elastic_distortion = elastic_distortion
     self.config = config
+    self.phase = phase
     VoxelizationDatasetBase.__init__(
         self,
         data_paths,
@@ -266,9 +268,13 @@ class SparseVoxelizationDataset(VoxelizationDatasetBase):
         self.load_whole = True
         datapath = "/data/eva_share_users/zhaotianchen/scannet/raw/scannet_pickles/"
         split = 'train' if config.is_train else 'val'
-        # split = 'debug' # DEBUG_ONLY
+        if self.phase == DatasetPhase.Train:
+            split = 'train'
+        elif self.phase == DatasetPhase.Val:
+            split = 'val'
+        else:
+            raise NotImplementedError
         datapath = datapath + 'new_{}.pth'.format(split)
-
         self.data_dict = torch.load(datapath)
     else:
         self.load_whole = False

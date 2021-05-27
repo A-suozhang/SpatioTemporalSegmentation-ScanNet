@@ -5,10 +5,10 @@ export OMP_NUM_THREADS=1
 export BATCH_SIZE=8
 #export MODEL=MinkowskiTransformerNet
 #export MODEL=Res16UNet34C
-export MODEL=Res16UNet18A
+#export MODEL=Res16UNet18A
 #export MODEL=MixedTransformer
 #export MODEL=PointTransformer
-#export MODEL=MinkowskiVoxelTransformer
+export MODEL=MinkowskiVoxelTransformer
 
 #export DATASET=ScannetDataset
 export DATASET=ScannetSparseVoxelizationDataset

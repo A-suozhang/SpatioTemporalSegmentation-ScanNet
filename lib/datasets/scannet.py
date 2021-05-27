@@ -117,7 +117,8 @@ class ScannetSparseVoxelizationDataset(SparseVoxelizationDataset):
         return_transformation=config.return_transformation,
         augment_data=augment_data,
         elastic_distortion=elastic_distortion,
-        config=config)
+        config=config,
+        phase=phase)
 
   def get_output_id(self, iteration):
     return '_'.join(Path(self.data_paths[iteration]).stem.split('_')[:2])

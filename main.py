@@ -193,7 +193,6 @@ def main():
 
         if config.dataset == 'ScannetSparseVoxelizationDataset':
             point_scannet = False
-
             val_data_loader = initialize_data_loader(
                     DatasetClass,
                     config,

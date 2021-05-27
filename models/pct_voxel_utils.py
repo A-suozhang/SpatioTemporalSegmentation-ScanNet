@@ -522,7 +522,7 @@ class PTBlock(nn.Module):
         self.psi = nn.Sequential(
             ME.MinkowskiConvolution(self.hidden_dim, self.out_dim, kernel_size=self.kernel_size, dimension=3)
         )
-        self.SKIP_ATTN=False
+        self.SKIP_ATTN=True
         if self.SKIP_ATTN:
             KERNEL_SIZE = 3
             self.alpha = nn.Sequential(
