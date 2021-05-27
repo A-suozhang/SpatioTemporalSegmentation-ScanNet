@@ -524,11 +524,12 @@ class PTBlock(nn.Module):
         )
         self.SKIP_ATTN=False
         if self.SKIP_ATTN:
+            KERNEL_SIZE = 3
             self.alpha = nn.Sequential(
-                    nn.Conv1d(self.in_dim, self.in_dim, 1),
+                    nn.Conv1d(self.in_dim, self.in_dim, KERNEL_SIZE),
                     nn.BatchNorm1d(self.in_dim),
                     nn.ReLU(),
-                    nn.Conv1d(self.in_dim, self.hidden_dim, 1),
+                    nn.Conv1d(self.in_dim, self.hidden_dim, KERNEL_SIZE),
                     nn.BatchNorm1d(self.hidden_dim),
                     nn.ReLU(),
                     )
@@ -779,6 +780,11 @@ def separate_batch(coord: torch.Tensor):
 
     # get the splits of different i_batchA
     splits_at = torch.stack([torch.where(batch_ids == i)[0][-1] for i in torch.unique(batch_ids)]).int() # iter at i_batch_level
+    # the returned indices of torch.where is from [0 ~ N-1], but when we use the x[start:end] style indexing, should cover [1:N]
+    # example: x[0:1] & x[:1] are the same, contain 1 element, but x[:0] is []
+    # example: x[:N] would not raise error but x[N] would
+
+    # splits_at = splits_at+1
     splits_at_leftshift_one = splits_at.roll(shifts=1)   # left shift the splits_at
     splits_at_leftshift_one[0] = 0
 

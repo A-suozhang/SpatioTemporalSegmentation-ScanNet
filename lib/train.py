@@ -52,6 +52,10 @@ def train(model, data_loader, val_data_loader, config, transform_data_fn=None):
     best_val_miou, best_val_iter, curr_iter, epoch, is_training = 0, 0, 1, 1, True
 
     if config.resume:
+        # DEBUG_ONLY
+        v_loss, v_score, v_mAP, v_mIoU = test(model, val_data_loader, config)
+        import ipdb; ipdb.set_trace()
+
         checkpoint_fn = config.resume + '/weights.pth'
         if osp.isfile(checkpoint_fn):
             logging.info("=> loading checkpoint '{}'".format(checkpoint_fn))

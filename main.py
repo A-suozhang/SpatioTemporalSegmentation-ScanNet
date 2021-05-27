@@ -59,12 +59,13 @@ def main():
                 handlers=[ch, file_handler])
 
     if config.test_config:
-        val_bs = config.val_batch_size
+        # DEBUG: neglect the args for testing
+        # val_bs = config.val_batch_size
         json_config = json.load(open(config.test_config, 'r'))
         json_config['is_train'] = False
         json_config['weights'] = config.weights
         config = edict(json_config)
-        config.val_batch_size = val_bs
+        # config.val_batch_size = val_bs
     else:
         '''bakup files'''
         if not os.path.exists(os.path.join(config.log_dir,'models')):
@@ -192,10 +193,11 @@ def main():
 
         if config.dataset == 'ScannetSparseVoxelizationDataset':
             point_scannet = False
+
             val_data_loader = initialize_data_loader(
                     DatasetClass,
                     config,
-                    threads=config.threads,
+                    threads=config.val_threads,
                     phase=config.val_phase,
                     augment_data=False,
                     elastic_distortion=config.test_elastic_distortion,
@@ -281,13 +283,20 @@ def main():
                 model_dict.update(matched_weights)
                 model.load_state_dict(model_dict)
             else:
-                model.load_state_dict(d, strict=False)
+                model.load_state_dict(d, strict=True)
 
     if config.is_train:
         if point_scannet:
             train_point(model, train_data_loader, val_data_loader, config)
         else:
             train(model, train_data_loader, val_data_loader, config)
+    elif config.is_export:
+        if point_scannet:
+            raise NotImplementedError
+        else: # only support the whole-scene-style for now
+            test(model, val_data_loader, config)
+            test(model, val_data_loader, config)
+            import ipdb; ipdb.set_trace()
     else:
         if point_scannet:
             test_points(model, val_data_loader, config)

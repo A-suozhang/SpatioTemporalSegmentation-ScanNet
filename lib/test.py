@@ -66,6 +66,7 @@ def test(model, data_loader, config, transform_data_fn=None, has_gt=True):
   hist = np.zeros((num_labels, num_labels))
 
   logging.info('===> Start testing')
+  logging.info('===> DEBUGGING STRING 0042 ====')
 
   global_timer.tic()
   data_iter = data_loader.__iter__()
@@ -77,6 +78,8 @@ def test(model, data_loader, config, transform_data_fn=None, has_gt=True):
 
   # Clear cache (when run in val mode, cleanup training cache)
   torch.cuda.empty_cache()
+
+  import ipdb; ipdb.set_trace()
 
   with torch.no_grad():
     for iteration in range(max_iter):

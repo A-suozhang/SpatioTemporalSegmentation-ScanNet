@@ -81,7 +81,7 @@ data_arg.add_argument('--load_whole', type=bool, default=True) # only used when 
 data_arg.add_argument('--point_lim', type=int, default=-1)
 data_arg.add_argument('--pre_point_lim', type=int, default=-1)
 data_arg.add_argument('--batch_size', type=int, default=16)
-data_arg.add_argument('--val_batch_size', type=int, default=1)
+data_arg.add_argument('--val_batch_size', type=int, default=8)
 data_arg.add_argument('--test_batch_size', type=int, default=1)
 data_arg.add_argument('--cache_data', type=str2bool, default=False)
 data_arg.add_argument(
@@ -100,7 +100,6 @@ data_arg.add_argument('--voxel_size', type=float, default=0.05)
 data_arg.add_argument('--num_points', type=int, default=8192)
 data_arg.add_argument('--pure_point', type=bool, default=False)
 
-
 # Point Cloud Dataset
 data_arg.add_argument(
     '--scannet_path',
@@ -111,6 +110,7 @@ data_arg.add_argument(
 # Training / test parameters
 train_arg = add_argument_group('Training')
 train_arg.add_argument('--is_train', type=str2bool, default=True)
+train_arg.add_argument('--is_export', type=str2bool, default=False)
 # train_arg.add_argument('--stat_freq', type=int, default=50, help='print frequency')
 train_arg.add_argument('--stat_freq', type=int, default=50, help='print frequency')
 train_arg.add_argument('--test_stat_freq', type=int, default=100, help='print frequency')
@@ -129,6 +129,10 @@ train_arg.add_argument(
     type=str2bool,
     help='Use checkpoint optimizer states when resume training')
 train_arg.add_argument('--eval_upsample', type=str2bool, default=False)
+
+# some about use the aux-info
+train_arg.add_argument('--save_pred', type=str2bool, default=True)
+train_arg.add_argument('--use_aux', type=str2bool, default=False)
 
 # Data augmentation
 data_aug_arg = add_argument_group('DataAugmentation')

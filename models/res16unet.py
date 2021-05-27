@@ -286,7 +286,6 @@ class Res16UNet34(Res16UNetBase):
   BLOCK = BasicBlock
   LAYERS = (2, 3, 4, 6, 2, 2, 2, 2)
 
-
 class Res16UNet50(Res16UNetBase):
   BLOCK = Bottleneck
   LAYERS = (2, 3, 4, 6, 2, 2, 2, 2)
