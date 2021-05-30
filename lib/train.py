@@ -89,9 +89,9 @@ def train(model, data_loader, val_data_loader, config, transform_data_fn=None):
                 # Get training data
                 data_timer.tic()
                 if config.return_transformation:
-                    coords, input, target, pointcloud, transformation = data_iter.next()
+                    coords, input, target, _, _, pointcloud, transformation = data_iter.next()
                 else:
-                    coords, input, target = data_iter.next()
+                    coords, input, target, _, _ = data_iter.next()  # ignore unique_map and inverse_map
 
                 # For some networks, making the network invariant to even, odd coords is important
                 coords[:, 1:] += (torch.rand(3) * 100).type_as(coords)

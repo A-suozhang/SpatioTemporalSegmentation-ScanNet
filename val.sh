@@ -5,6 +5,7 @@ export BATCH_SIZE=8
 export MODEL=MinkowskiVoxelTransformer
 
 #export MODEL=PointTransformer
+export IS_EXPORT=True
 #export DATASET=ScannetDataset
 export DATASET=ScannetSparseVoxelizationDataset
 export MAX_ITER=5000

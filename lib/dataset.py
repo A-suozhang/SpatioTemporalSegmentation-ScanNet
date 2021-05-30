@@ -272,14 +272,14 @@ class SparseVoxelizationDataset(VoxelizationDatasetBase):
     else:
         raise NotImplementedError
 
-    if config.use_aux:
+    if hasattr(config, 'use_aux') and config.use_aux:
         assert config.load_whole # use load_whole along with the use_aux to avoid buggy
 
         aux_path = self.config.log_dir + 'preds_{}.pth'.format(self.split)
         assert os.path.exists(aux_path),  "No Aux file found, link the `preds_{}` file into the log_dir"
         self.aux_data = torch.load(aux_path)['pred']
 
-    if config.load_whole:
+    if hasattr(config, "load_whole") and config.load_whole:
         self.load_whole = True
         datapath = "/data/eva_share_users/zhaotianchen/scannet/raw/scannet_pickles/"
 
@@ -363,14 +363,18 @@ class SparseVoxelizationDataset(VoxelizationDatasetBase):
         return_transformation=self.return_transformation)
 
     if self.return_transformation:
-      coords, feats, labels, transformation = outs
+      coords, feats, labels, unique_map, inverse_map, transformation = outs
       transformation = np.expand_dims(transformation, 0)
     else:
-      coords, feats, labels = outs
-
+      coords, feats, labels, unique_map, inverse_map = outs
+    
     if self.config.use_aux:
         pass
         # import ipdb; ipdb.set_trace()
+    
+    if self.config.is_export:
+      self.input_transform = None
+      self.target_transform = None
 
     # d = {}
     # d['coords'] = coords
@@ -389,7 +393,7 @@ class SparseVoxelizationDataset(VoxelizationDatasetBase):
         else:
             labels = np.array([self.label_map[x] for x in labels], dtype=np.int)
 
-    return_args = [coords, feats, labels]
+    return_args = [coords, feats, labels, unique_map, inverse_map]
     if self.return_transformation:
       return_args.extend([pointcloud.astype(np.float32), transformation.astype(np.float32)])
     return tuple(return_args)

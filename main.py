@@ -317,7 +317,6 @@ def main():
                 model.load_state_dict(model_dict)
             else:
                 model.load_state_dict(d, strict=True)
-
     if config.is_train:
         if point_scannet:
             train_point(model, train_data_loader, val_data_loader, config)

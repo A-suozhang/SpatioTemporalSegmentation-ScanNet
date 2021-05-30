@@ -234,9 +234,8 @@ class cfl_collate_fn_factory:
     self.limit_numpoints = limit_numpoints
 
   def __call__(self, list_data):
-    coords, feats, labels = list(zip(*list_data))
+    coords, feats, labels, unique_map, inverse_map = list(zip(*list_data))
     coords_batch, feats_batch, labels_batch = [], [], []
-
     batch_id = 0
     batch_num_points = 0
     for batch_id, _ in enumerate(coords):
@@ -257,7 +256,7 @@ class cfl_collate_fn_factory:
 
     # Concatenate all lists
     coords_batch, feats_batch, labels_batch = ME.utils.sparse_collate(coords_batch, feats_batch, labels_batch)
-    return coords_batch, feats_batch, labels_batch
+    return coords_batch, feats_batch, labels_batch, unique_map, inverse_map
 
 
 class cflt_collate_fn_factory:

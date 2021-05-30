@@ -73,6 +73,7 @@ def test(model, data_loader, config, transform_data_fn=None, has_gt=True, save_p
     if config.save_pred:
         save_dict = {}
         save_dict['pred'] = []
+        save_dict['coord'] = []
 
     logging.info('===> Start testing')
 
@@ -91,9 +92,9 @@ def test(model, data_loader, config, transform_data_fn=None, has_gt=True, save_p
         for iteration in range(max_iter):
             data_timer.tic()
             if config.return_transformation:
-                coords, input, target, pointcloud, transformation = data_iter.next()
+                coords, input, target, unique_map_list, inverse_map_list, pointcloud, transformation = data_iter.next()
             else:
-                coords, input, target = data_iter.next()
+                coords, input, target, unique_map_list, inverse_map_list = data_iter.next()
             data_time = data_timer.toc(False)
 
             # Preprocess input
@@ -114,8 +115,8 @@ def test(model, data_loader, config, transform_data_fn=None, has_gt=True, save_p
             inputs = (sinput,)
             soutput = model(*inputs)
             output = soutput.F
-
             pred = get_prediction(dataset, output, target).int()
+            assert sum([int(t.shape[0]) for t in unique_map_list]) == len(pred), "number of points in unique_map doesn't match predition, do not enable preprocessing"
             iter_time = iter_timer.toc(False)
 
             if config.save_pred:
@@ -128,9 +129,14 @@ def test(model, data_loader, config, transform_data_fn=None, has_gt=True, save_p
                 # len_per_batch = splits_at - splits_at_leftshift_one
 
                 len_sum = 0
+                batch_id = 0
                 for start, end in zip(splits_at_leftshift_one, splits_at):
                     len_sum += len(pred[int(start):int(end)])
-                    save_dict['pred'].append(pred[int(start):int(end)])
+                    pred_this_batch = pred[int(start):int(end)]
+                    coord_this_batch = pred[int(start):int(end)]
+                    save_dict['pred'].append(pred_this_batch[inverse_map_list[batch_id]])
+                    save_dict['coord'].append(coord_this_batch[inverse_map_list[batch_id]])
+                    batch_id += 1
                 assert len_sum == len(pred)
 
             if has_gt:
@@ -174,7 +180,8 @@ def test(model, data_loader, config, transform_data_fn=None, has_gt=True, save_p
                 torch.cuda.empty_cache()
 
     if config.save_pred:
-        torch.save(save_dict, os.path.join(config.log_dir, 'preds_{}.pth'.format(split)))
+        torch.save(save_dict, os.path.join(config.log_dir, 'preds_{}_with_coord.pth'.format(split)))
+        print("===> saved prediction result")
 
     global_time = global_timer.toc(False)
 

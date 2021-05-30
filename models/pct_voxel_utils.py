@@ -506,7 +506,7 @@ class PTBlock(nn.Module):
         self.kernel_size = kernel_size
 
         # debug only: 
-        self.kernel_size = 1
+        # self.kernel_size = 1
 
         self.in_dim = in_dim
         self.hidden_dim = hidden_dim
@@ -570,10 +570,10 @@ class PTBlock(nn.Module):
             nn.BatchNorm1d(self.vector_dim),
         )
         self.delta = nn.Sequential(
-            nn.Conv2d(3, self.hidden_dim, 3, padding=1), # debug： whether using 3x3 or 1x1 linear embedding
+            nn.Conv2d(3, self.hidden_dim, 1), # debug： whether using 3x3 or 1x1 linear embedding
             nn.BatchNorm2d(self.hidden_dim),
             nn.ReLU(),
-            nn.Conv2d(self.hidden_dim, self.out_dim, 3, padding=1),
+            nn.Conv2d(self.hidden_dim, self.out_dim, 1),
             nn.BatchNorm2d(self.out_dim),
         )
 

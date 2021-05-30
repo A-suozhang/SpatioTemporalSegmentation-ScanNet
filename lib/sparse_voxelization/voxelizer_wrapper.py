@@ -135,15 +135,15 @@ class SparseVoxelizer:
 
     homo_coords = np.hstack((coords, np.ones((coords.shape[0], 1), dtype=coords.dtype)))
     coords_aug = np.floor(homo_coords @ rigid_transformation.T)[:, :3]
-
-    coords_aug, feats, labels = ME.utils.sparse_quantize(
-        coords_aug, feats, labels=labels.astype(np.int32), ignore_label=self.ignore_label)
+    coords_aug, feats, labels, unique_map, inverse_map = ME.utils.sparse_quantize(
+        coords_aug, feats, labels=labels.astype(np.int32), ignore_label=self.ignore_label,
+        return_index=True, return_inverse=True)
 
     # Normal rotation
     if feats.shape[1] > 6:
       feats[:, 3:6] = feats[:, 3:6] @ (M_r[:3, :3].T)
 
-    return_args = [coords_aug, feats, labels]
+    return_args = [coords_aug, feats, labels, unique_map, inverse_map]
     if return_transformation:
       return_args.append(rigid_transformation.flatten())
     return tuple(return_args)
