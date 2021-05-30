@@ -13,14 +13,14 @@ export MODEL=MinkowskiVoxelTransformer
 #export DATASET=ScannetDataset
 export DATASET=ScannetSparseVoxelizationDataset
 
-export MAX_ITER=13000
+export MAX_ITER=12000
 #export MAX_ITER=16000
 #export POINTS=4096
 #export LR=7.5e-2
 export LR=1e-1
 export LOG=$1
 
-export RESUME=True
+#export RESUME=True
 
 ./run.sh $2 \
 		-default \

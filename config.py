@@ -77,7 +77,7 @@ dir_arg.add_argument('--data_dir', type=str, default='data')
 # Data
 data_arg = add_argument_group('Data')
 data_arg.add_argument('--dataset', type=str, default='ScannetSparseVoxelizationDataset')
-data_arg.add_argument('--load_whole', type=bool, default=True) # only used when scannetSparseVoxelizationDataset
+data_arg.add_argument('--load_whole', type=bool, default=True) # only used when scannetSparseVoxelizationDatase`t
 data_arg.add_argument('--point_lim', type=int, default=-1)
 data_arg.add_argument('--pre_point_lim', type=int, default=-1)
 data_arg.add_argument('--batch_size', type=int, default=16)
@@ -131,7 +131,7 @@ train_arg.add_argument(
 train_arg.add_argument('--eval_upsample', type=str2bool, default=False)
 
 # some about use the aux-info
-train_arg.add_argument('--save_pred', type=str2bool, default=True)
+train_arg.add_argument('--save_pred', type=str2bool, default=False)
 train_arg.add_argument('--use_aux', type=str2bool, default=False)
 
 # Data augmentation

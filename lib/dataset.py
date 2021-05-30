@@ -3,6 +3,7 @@
 # Please cite "4D Spatio-Temporal ConvNets: Minkowski Convolutional Neural
 # Networks", CVPR'19 (https://arxiv.org/abs/1904.08755) if you use any part of
 # the code.
+import os
 import glob
 from abc import ABC
 from tqdm import tqdm
@@ -264,17 +265,25 @@ class SparseVoxelizationDataset(VoxelizationDatasetBase):
 
     # loading the whole dataset from the pth file but not all ply files
     # if load-whole: the pre-defined pth already processed the label mapping, so should skip this part
+    if self.phase == DatasetPhase.Train:
+        self.split = 'train'
+    elif self.phase == DatasetPhase.Val:
+        self.split = 'val'
+    else:
+        raise NotImplementedError
+
+    if config.use_aux:
+        assert config.load_whole # use load_whole along with the use_aux to avoid buggy
+
+        aux_path = self.config.log_dir + 'preds_{}.pth'.format(self.split)
+        assert os.path.exists(aux_path),  "No Aux file found, link the `preds_{}` file into the log_dir"
+        self.aux_data = torch.load(aux_path)['pred']
+
     if config.load_whole:
         self.load_whole = True
         datapath = "/data/eva_share_users/zhaotianchen/scannet/raw/scannet_pickles/"
-        split = 'train' if config.is_train else 'val'
-        if self.phase == DatasetPhase.Train:
-            split = 'train'
-        elif self.phase == DatasetPhase.Val:
-            split = 'val'
-        else:
-            raise NotImplementedError
-        datapath = datapath + 'new_{}.pth'.format(split)
+
+        datapath = datapath + 'new_{}.pth'.format(self.split)
         self.data_dict = torch.load(datapath)
     else:
         self.load_whole = False
@@ -307,6 +316,7 @@ class SparseVoxelizationDataset(VoxelizationDatasetBase):
 
   def _augment_elastic_distortion(self, pointcloud):
     if self.ELASTIC_DISTORT_PARAMS is not None:
+      random.seed(123)
       if random.random() < 0.95:
         for granularity, magnitude in self.ELASTIC_DISTORT_PARAMS:
           pointcloud = t.elastic_distortion(pointcloud, granularity, magnitude)
@@ -357,6 +367,10 @@ class SparseVoxelizationDataset(VoxelizationDatasetBase):
       transformation = np.expand_dims(transformation, 0)
     else:
       coords, feats, labels = outs
+
+    if self.config.use_aux:
+        pass
+        # import ipdb; ipdb.set_trace()
 
     # d = {}
     # d['coords'] = coords

@@ -59,13 +59,18 @@ def main():
                 handlers=[ch, file_handler])
 
     if config.test_config:
-        # DEBUG: neglect the args for testing
-        # val_bs = config.val_batch_size
+        # When using the test_config, reload and overwrite it, so should keep some configs 
+        val_bs = config.val_batch_size
+        is_export = config.is_export
+
         json_config = json.load(open(config.test_config, 'r'))
         json_config['is_train'] = False
         json_config['weights'] = config.weights
         config = edict(json_config)
-        # config.val_batch_size = val_bs
+
+        config.val_batch_size = val_bs
+        config.is_export = is_export
+        config.is_train = False
     else:
         '''bakup files'''
         if not os.path.exists(os.path.join(config.log_dir,'models')):
@@ -109,8 +114,8 @@ def main():
     DatasetClass = load_dataset(config.dataset)
     logging.info('===> Initializing dataloader')
 
+    setup_seed(2021)
     if config.is_train:
-        setup_seed(2021)
 
         if config.dataset == 'ScannetSparseVoxelizationDataset':
             point_scannet = False
@@ -122,7 +127,9 @@ def main():
                     augment_data=True,
                     elastic_distortion=config.train_elastic_distortion,
                     shuffle=True,
+                    # shuffle=False,   # DEBUG ONLY!!!
                     repeat=True,
+                    # repeat=False,
                     batch_size=config.batch_size,
                     limit_numpoints=config.train_limit_numpoints)
 
@@ -193,6 +200,33 @@ def main():
 
         if config.dataset == 'ScannetSparseVoxelizationDataset':
             point_scannet = False
+
+            if config.is_export: # when export, we need to export the train results too
+                train_data_loader = initialize_data_loader(
+                    DatasetClass,
+                    config,
+                    phase=config.train_phase,
+                    threads=config.threads,
+                    augment_data=True,
+                    elastic_distortion=config.train_elastic_distortion,  # DEBUG: not sure about this
+                    shuffle=False,
+                    repeat=False,
+                    batch_size=config.batch_size,
+                    limit_numpoints=config.train_limit_numpoints)
+
+                # the valid like, no aug data
+                # train_data_loader = initialize_data_loader(
+                    # DatasetClass,
+                    # config,
+                    # threads=config.val_threads,
+                    # phase=config.train_phase,
+                    # augment_data=False,
+                    # elastic_distortion=config.test_elastic_distortion,
+                    # shuffle=False,
+                    # repeat=False,
+                    # batch_size=config.val_batch_size,
+                    # limit_numpoints=False)
+
             val_data_loader = initialize_data_loader(
                     DatasetClass,
                     config,
@@ -293,9 +327,8 @@ def main():
         if point_scannet:
             raise NotImplementedError
         else: # only support the whole-scene-style for now
-            test(model, val_data_loader, config)
-            test(model, val_data_loader, config)
-            import ipdb; ipdb.set_trace()
+            test(model, train_data_loader, config, save_pred=True, split='train')
+            test(model, val_data_loader, config, save_pred=True, split='val')
     else:
         if point_scannet:
             test_points(model, val_data_loader, config)

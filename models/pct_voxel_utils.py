@@ -478,6 +478,18 @@ class TransposeLayerNorm(nn.Module):
 
         return self.norm(x.transpose(1,-1)).transpose(1,-1)
 
+class StackedPTBlock(nn.Module):
+    def __init__(self, in_dim, hidden_dim, is_firstlayer=False, n_sample=16, r=10, skip_knn=False, kernel_size=1):
+        super().__init__()
+
+        self.block1 = PTBlock(in_dim, hidden_dim, is_firstlayer, n_sample, r, skip_knn, kernel_size)
+        self.block2 = PTBlock(in_dim, hidden_dim, is_firstlayer, n_sample, r, skip_knn, kernel_size)
+
+    def forward(self, x : ME.SparseTensor):
+        x = self.block1(x)
+        x = self.block2(x)
+        return x
+
 class PTBlock(nn.Module):
     # TODO: set proper r, too small will cause less points
     def __init__(self, in_dim, hidden_dim, is_firstlayer=False, n_sample=16, r=10, skip_knn=False, kernel_size=1):
@@ -492,6 +504,9 @@ class PTBlock(nn.Module):
         self.r = r # neighborhood cube radius
         self.skip_knn = skip_knn
         self.kernel_size = kernel_size
+
+        # debug only: 
+        self.kernel_size = 1
 
         self.in_dim = in_dim
         self.hidden_dim = hidden_dim
@@ -522,7 +537,7 @@ class PTBlock(nn.Module):
         self.psi = nn.Sequential(
             ME.MinkowskiConvolution(self.hidden_dim, self.out_dim, kernel_size=self.kernel_size, dimension=3)
         )
-        self.SKIP_ATTN=True
+        self.SKIP_ATTN=False
         if self.SKIP_ATTN:
             KERNEL_SIZE = 3
             self.alpha = nn.Sequential(
@@ -555,10 +570,10 @@ class PTBlock(nn.Module):
             nn.BatchNorm1d(self.vector_dim),
         )
         self.delta = nn.Sequential(
-            nn.Conv2d(3, self.hidden_dim, 1),
+            nn.Conv2d(3, self.hidden_dim, 3, padding=1), # debug： whether using 3x3 or 1x1 linear embedding
             nn.BatchNorm2d(self.hidden_dim),
             nn.ReLU(),
-            nn.Conv2d(self.hidden_dim, self.out_dim, 1),
+            nn.Conv2d(self.hidden_dim, self.out_dim, 3, padding=1),
             nn.BatchNorm2d(self.out_dim),
         )
 
@@ -784,12 +799,12 @@ def separate_batch(coord: torch.Tensor):
     # example: x[0:1] & x[:1] are the same, contain 1 element, but x[:0] is []
     # example: x[:N] would not raise error but x[N] would
 
-    # splits_at = splits_at+1
+    splits_at = splits_at+1
     splits_at_leftshift_one = splits_at.roll(shifts=1)   # left shift the splits_at
     splits_at_leftshift_one[0] = 0
 
     len_per_batch = splits_at - splits_at_leftshift_one
-    len_per_batch[0] = len_per_batch[0]+1 # DBEUG: dirty fix since 0~1566 has 1567 values
+    # len_per_batch[0] = len_per_batch[0]+1 # DBEUG: dirty fix since 0~1566 has 1567 values
     N = len_per_batch.max().int()
 
     assert len_per_batch.sum() == N_voxel

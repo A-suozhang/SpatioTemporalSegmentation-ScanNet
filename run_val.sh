@@ -20,6 +20,7 @@ export SCHEDULER=${SCHEDULER:-SquaredLR}
 export MAX_ITER=${MAX_ITER:-60000}
 
 export OUTPATH=./outputs/$DATASET/$MODEL/$LOG/
+export IS_EXPORT=${IS_EXPORT:-False}
 #export VERSION=$(git rev-parse HEAD)
 
 # Save the experiment detail and dir to the common log file
@@ -64,4 +65,5 @@ time python -W ignore main.py \
 	--test_config ${OUTPATH}config.json \
 	--weights ${OUTPATH}weights.pth \
 	--val_batch_size $BATCH_SIZE \
+	--is_export $IS_EXPORT \
 	$3 
