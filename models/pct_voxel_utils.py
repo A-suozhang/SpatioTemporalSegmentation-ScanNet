@@ -168,6 +168,7 @@ class TDLayer(nn.Module):
 
         if self.POINT_TR_LIKE:
             if self.FPS_ONLY:
+                # DEBUG: use 3x3 downsample
                 if self.cat_xyz_feature:
                     self.projection = nn.Sequential(
                         nn.Conv2d(input_dim+3, out_dim, 1),
@@ -209,7 +210,7 @@ class TDLayer(nn.Module):
 
         else:
             self.conv = nn.Sequential(
-                ME.MinkowskiConvolution(input_dim,out_dim,kernel_size=1,stride=2,bias=True,dimension=3),
+                ME.MinkowskiConvolution(input_dim,out_dim,kernel_size=2,stride=2,bias=True,dimension=3),
                 ME.MinkowskiBatchNorm(out_dim),
                 ME.MinkowskiReLU()
             )
@@ -505,8 +506,8 @@ class PTBlock(nn.Module):
         self.skip_knn = skip_knn
         self.kernel_size = kernel_size
 
-        # debug only: 
-        # self.kernel_size = 1
+
+        # self.kernel_size = 1 # DEBUG ONLY
 
         self.in_dim = in_dim
         self.hidden_dim = hidden_dim
@@ -539,7 +540,7 @@ class PTBlock(nn.Module):
         )
         self.SKIP_ATTN=False
         if self.SKIP_ATTN:
-            KERNEL_SIZE = 3
+            KERNEL_SIZE = 1
             self.alpha = nn.Sequential(
                     nn.Conv1d(self.in_dim, self.in_dim, KERNEL_SIZE),
                     nn.BatchNorm1d(self.in_dim),
@@ -569,15 +570,24 @@ class PTBlock(nn.Module):
             nn.Conv1d(self.hidden_dim, self.vector_dim, 1),
             nn.BatchNorm1d(self.vector_dim),
         )
-        self.delta = nn.Sequential(
-            nn.Conv2d(3, self.hidden_dim, 1), # debug： whether using 3x3 or 1x1 linear embedding
-            nn.BatchNorm2d(self.hidden_dim),
-            nn.ReLU(),
-            nn.Conv2d(self.hidden_dim, self.out_dim, 1),
-            nn.BatchNorm2d(self.out_dim),
-        )
 
-    def forward(self, x : ME.SparseTensor):
+        self.delta = nn.Sequential(
+                    nn.Conv2d(3, self.hidden_dim, 1),
+                    nn.BatchNorm2d(self.hidden_dim),
+                    nn.ReLU(),
+                    nn.Conv2d(self.hidden_dim, self.out_dim, 1),
+                    nn.BatchNorm2d(self.out_dim),
+                )
+
+        # self.delta = nn.Sequential(
+            # nn.Conv2d(3, self.hidden_dim, 3, padding=1), # debug： whether using 3x3 or 1x1 linear embedding
+            # nn.BatchNorm2d(self.hidden_dim),
+            # nn.ReLU(),
+            # nn.Conv2d(self.hidden_dim, self.out_dim, 3, padding=1),
+            # nn.BatchNorm2d(self.out_dim),
+        # )
+
+    def forward(self, x : ME.SparseTensor, aux=None):
         '''
         input_p:  B, 3, npoint
         input_x: B, in_dim, npoint
@@ -662,6 +672,18 @@ class PTBlock(nn.Module):
             except RuntimeError:
                 import ipdb; ipdb.set_trace()
 
+            '''
+            mask the neighbor when not in the same instance-class
+            '''
+            if aux is not None:
+                neighbor_mask = aux.features_at_coordinates(neighbor.reshape(-1,4).float()).reshape(-1,self.k) # [N, k]
+                neighbor_mask = (neighbor_mask - neighbor_mask[:,0].unsqueeze(-1) != 0).int()
+                # logging.info('Cur Mask Ratio {}'.format(neighbor_mask.sum()/neighbor_mask.nelement()))
+
+                neighbor_mask = torch.ones_like(neighbor_mask) - neighbor_mask
+            else:
+                neighbor_mask = None
+
             WITH_POSE_ENCODING = True
             if WITH_POSE_ENCODING:
                 relative_xyz[:,0,0] = x.C[:,0] # get back the correct batch index, because we messed batch index in the subtraction above
@@ -671,7 +693,10 @@ class PTBlock(nn.Module):
 
             if self.SKIP_ATTN:
                 grouped_x = get_neighbor_feature(neighbor, x) # (nvoxel, k, feat_dim)
-                alpha = self.alpha((grouped_x + pose_tensor).transpose(1,2))
+                if WITH_POSE_ENCODING:
+                    alpha = self.alpha((grouped_x + pose_tensor).transpose(1,2))
+                else:
+                    alpha = self.alpha((grouped_x).transpose(1,2))
                 y = alpha.max(dim=-1)[0]
                 y = ME.SparseTensor(features = y, coordinate_map_key=x.coordinate_map_key, coordinate_manager=x.coordinate_manager)
 
@@ -701,6 +726,11 @@ class PTBlock(nn.Module):
                     self_feat = (alpha + pose_tensor).permute(0,2,1) # (nvoxel, k, feat_dim) -> (nvoxel, feat_dim, k)
                 else:
                     self_feat = (alpha).permute(0,2,1) # (nvoxel, k, feat_dim) -> (nvoxel, feat_dim, k)
+
+                # use aux info and mask the  attn_map
+                if neighbor_mask is not None:
+                    attn_map = attn_map*(neighbor_mask.unsqueeze(1))
+
                 y = attn_map.repeat(1, self.out_dim // self.vector_dim, 1, 1) * self_feat # (nvoxel, feat_dim, k)
                 y = y.sum(dim=-1).view(x.C.shape[0], -1) # feature aggregation, y becomes (nvoxel, feat_dim)
                 y = ME.SparseTensor(features = y, coordinate_map_key=x.coordinate_map_key, coordinate_manager=x.coordinate_manager)

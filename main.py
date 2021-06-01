@@ -71,12 +71,14 @@ def main():
         config.val_batch_size = val_bs
         config.is_export = is_export
         config.is_train = False
+        sys.path.append(config.log_dir)
+        # from local_models import load_model
     else:
         '''bakup files'''
         if not os.path.exists(os.path.join(config.log_dir,'models')):
-            os.mkdir(os.path.join(config.log_dir,'models'))
+            os.mkdir(os.th.join(config.log_dir,'models'))
         for filename in os.listdir('./models'):
-                if ".py" in filename:
+                if ".py" in filename and not 'init' in filename: # donnot cp the init file since it will raise import error
                         shutil.copy(os.path.join("./models", filename), os.path.join(config.log_dir,'models'))
         shutil.copy('./main.py', config.log_dir)
         shutil.copy('./config.py', config.log_dir)

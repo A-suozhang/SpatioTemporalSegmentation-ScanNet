@@ -21,6 +21,7 @@ export MAX_ITER=${MAX_ITER:-60000}
 
 export OUTPATH=./outputs/$DATASET/$MODEL/$LOG/
 export IS_EXPORT=${IS_EXPORT:-False}
+
 #export VERSION=$(git rev-parse HEAD)
 
 # Save the experiment detail and dir to the common log file

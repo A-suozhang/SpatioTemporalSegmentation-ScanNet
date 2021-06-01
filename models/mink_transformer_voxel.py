@@ -50,6 +50,56 @@ import sys
 from models.pct_voxel_utils import TDLayer, TULayer, PTBlock, StackedPTBlock
 
 
+
+def subsample_aux(x0, x1, aux, kernel_size=2):
+
+    aux = ME.SparseTensor(coordinates=aux.C, features=(aux.F+1))
+
+    n_ks = kernel_size**3
+
+    coords = x1.C
+    batch_id = coords[:,0]
+    batch_id = batch_id.unsqueeze(-1).repeat(1,n_ks).reshape(-1,1)
+
+    pooled_C = coords[:,1:]
+    kernel_C = pooled_C.unsqueeze(1).repeat(1,n_ks,1)
+
+    diffs = torch.tensor([
+            [0,0,0],
+            [0,0,1],
+            [0,1,0],
+            [0,1,1],
+            [1,0,0],
+            [1,0,1],
+            [1,1,0],
+            [1,1,1],
+        ], device='cuda')
+
+    kernel_C = kernel_C + diffs
+
+    query_C = torch.cat([batch_id, kernel_C.reshape(-1,3)], dim=1).float()
+    query_F = aux.features_at_coordinates(query_C).reshape(-1,8)  # [N, 8]
+
+    # find the most freq: find normal will always return 0
+    # out, _ = torch.mode(query_F)
+
+    freqs = torch.stack([(query_F == i).sum(dim=1) for i in range(1,21)])
+    out = freqs.max(dim=0)[1] # shape [N]
+
+    out = out - 1 # [-1~20]
+
+    # debug dict for plot
+    # d = {}
+    # d['origin_pc'] = x0.C
+    # d['origin_pred'] = aux.F
+    # d['new_pc'] = x1.C
+    # d['new_pred'] = out
+    # torch.save(d, './aux.pth')
+
+    out = ME.SparseTensor(coordinates=x1.C, features=out.float().reshape([-1,1]).cuda())
+
+    return out
+
 class MinkowskiVoxelTransformer(ME.MinkowskiNetwork):
 
     def __init__(self, config, in_channel, out_channel, final_dim=96, dimension=3):
@@ -61,8 +111,9 @@ class MinkowskiVoxelTransformer(ME.MinkowskiNetwork):
         self.CONV_TYPE = ConvType.SPATIAL_HYPERCUBE
 
         self.dims = np.array([32, 64, 128, 256])
-        # self.neighbor_ks = np.array([8, 12, 12, 12])
-        self.neighbor_ks = np.array([8, 8, 8, 8])
+        self.neighbor_ks = np.array([12, 12, 12, 12])
+        # self.neighbor_ks = np.array([16, 16, 16, 16])
+        # self.neighbor_ks = np.array([8, 8, 8, 8])
 
         self.final_dim = final_dim
 
@@ -155,45 +206,63 @@ class MinkowskiVoxelTransformer(ME.MinkowskiNetwork):
             )
             self.fc = ME.MinkowskiLinear(self.final_dim+self.dims[0], out_channel)
 
-    def forward(self, in_field: ME.TensorField):
+    def forward(self, in_field: ME.TensorField, aux=None):
 
         x = in_field
 
-        x0 = self.stem1(x)
-        x = self.stem2(x0)
-        x1 = self.PTBlock1(x)
+        if aux is not None:
+            aux = ME.SparseTensor(coordinates=x.C, features=aux.float().reshape([-1,1]).cuda())
 
-        x = self.TDLayer1(x1)
-        x2 = self.PTBlock2(x)
+            x0 = self.stem1(x)
+            x = self.stem2(x0)
 
-        x = self.TDLayer2(x2)
-        x3 = self.PTBlock3(x)
+            aux1 = subsample_aux(x0,x,aux)
+            x1 = self.PTBlock1(x, aux=aux1)
 
-        x = self.TDLayer3(x3)
-        # x4 = self.PTBlock4(x)
+            x = self.TDLayer1(x1)
+            aux2 = subsample_aux(x1,x,aux1)
+            x2 = self.PTBlock2(x, aux=aux2)
 
-        # x = self.TULayer5(x4, x3)
-        # x5 = self.PTBlock5(x)
+            x = self.TDLayer2(x2)
+            aux3 = subsample_aux(x2,x,aux2)
+            x3 = self.PTBlock3(x, aux=aux3)
 
-        # x = self.TULayer6(x5, x2)
-        # x6 = self.PTBlock6(x)
+            x = self.TDLayer3(x3)
+            aux4 = subsample_aux(x3,x,aux3)
+            x = self.PTBlock4(x, aux=aux4)
 
-        # x = self.TULayer7(x6, x1)
-        # x7 = self.PTBlock7(x)
+            x = self.TULayer5(x, x3)
+            x = self.PTBlock5(x, aux=aux3)
 
-        # x = self.final_conv(x7)
-        # x = self.fc(me.cat(x0,x))
+            x = self.TULayer6(x, x2)
+            x = self.PTBlock6(x, aux=aux2)
 
-        x = self.PTBlock4(x)
+            x = self.TULayer7(x, x1)
+            x = self.PTBlock7(x, aux=aux1)
 
-        x = self.TULayer5(x, x3)
-        x = self.PTBlock5(x)
+        else:
+            x0 = self.stem1(x)
+            x = self.stem2(x0)
 
-        x = self.TULayer6(x, x2)
-        x = self.PTBlock6(x)
+            x1 = self.PTBlock1(x)
 
-        x = self.TULayer7(x, x1)
-        x = self.PTBlock7(x)
+            x = self.TDLayer1(x1)
+            x2 = self.PTBlock2(x)
+
+            x = self.TDLayer2(x2)
+            x3 = self.PTBlock3(x)
+
+            x = self.TDLayer3(x3)
+            x = self.PTBlock4(x)
+
+            x = self.TULayer5(x, x3)
+            x = self.PTBlock5(x)
+
+            x = self.TULayer6(x, x2)
+            x = self.PTBlock6(x)
+
+            x = self.TULayer7(x, x1)
+            x = self.PTBlock7(x)
 
         if self.POINT_TR_LIKE:
             x = self.TULayer8(x, x0)

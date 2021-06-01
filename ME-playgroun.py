@@ -51,9 +51,9 @@ N_voxel = 3
 # coords = torch.rand([N_voxel])*10
 # coords = torch.cat([torch.zeros(N_voxel,1), coords], dim=1)
 
-coords = torch.tensor([[0, 1., 1., 1.],
-                       [0, 1., 1., 0.],
-                       [0, 0., 1., 1.]
+coords = torch.tensor([[0, 2., 4., 2.],
+                       [0, 1., 3., 1.],
+                       [0, 0., 3., 1.]
                        ])
 
 conv1 = ME.MinkowskiConvolution(1,1,kernel_size=1,dimension=3)
@@ -61,6 +61,9 @@ conv2 = nn.Conv2d(1,1,kernel_size=1,bias=False)
 
 
 conv_s2 = ME.MinkowskiConvolution(1,1,kernel_size=2,stride=2,dimension=3)
+pool_s2 = ME.MinkowskiMaxPooling(2,stride=2,dimension=3)
+
+
 
 for n, m in conv1.named_parameters():
     print(n,m)
@@ -71,7 +74,41 @@ x1 = ME.SparseTensor(coordinates=coords, features=feats.reshape([-1,1]))
 x2 = ME.SparseTensor(coordinates=coords, features=feats2.reshape([-1,1]))
 
 x1_s2 = conv_s2(x1)
+x1_p2 = pool_s2(x1)
+
+'''
+a little demo of getting the neighbor of each point manually after stride=2 conv
+'''
+
+batch_id = x1_p2.C[:,0] # [N,1]
+batch_id = batch_id.unsqueeze(-1).repeat(1,8).reshape(-1,1) # [N*8, 1]
+
+pooled_C = x1_p2.C[:,1:]
+kernel_C = pooled_C.unsqueeze(1).repeat(1,8,1) # [N, ks, 3]
+
+diffs = torch.tensor([
+        [0,0,0],
+        [0,0,1],
+        [0,1,0],
+        [0,1,1],
+        [1,0,0],
+        [1,0,1],
+        [1,1,0],
+        [1,1,1],
+    ])
+
+kernel_C = kernel_C + diffs
+
+query_C = torch.cat([batch_id, kernel_C.reshape(-1,3)], dim=1)
+query_F = x1.features_at_coordinates(query_C.float()).reshape(-1,8)  # [N, 8]
+
+# find the most freq
+out, _ = torch.mode(query_F)
+
 import ipdb; ipdb.set_trace()
+
+subsampled_x1 = x1.features_at_coordinates(x1_s2.C.float())
+
 
 # part_x1_feat = x1.features_at_coordinates(x1.C[:3,:].float())
 # part_x1_coord = x1.C[:3,:]

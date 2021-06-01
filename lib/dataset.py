@@ -277,7 +277,7 @@ class SparseVoxelizationDataset(VoxelizationDatasetBase):
 
         aux_path = self.config.log_dir + 'preds_{}.pth'.format(self.split)
         assert os.path.exists(aux_path),  "No Aux file found, link the `preds_{}` file into the log_dir"
-        self.aux_data = torch.load(aux_path)['pred']
+        self.aux_data = torch.load(aux_path, 'cpu')['pred']
 
     if hasattr(config, "load_whole") and config.load_whole:
         self.load_whole = True
@@ -353,7 +353,7 @@ class SparseVoxelizationDataset(VoxelizationDatasetBase):
     # d['feats'] = feats
     # d['labels'] = labels
     # torch.save(d,'pc.pth')
-
+    
     outs = self.sparse_voxelizer.voxelize(
         coords,
         feats,
@@ -367,11 +367,17 @@ class SparseVoxelizationDataset(VoxelizationDatasetBase):
       transformation = np.expand_dims(transformation, 0)
     else:
       coords, feats, labels, unique_map, inverse_map = outs
-    
+
     if self.config.use_aux:
-        pass
-        # import ipdb; ipdb.set_trace()
-    
+        aux = self.aux_data[index]
+        # check if saved is tensor
+        if isinstance(aux, torch.Tensor):
+            aux = aux[unique_map].numpy()
+        else:
+            aux = aux[unique_map]
+            pass
+        aux = aux + 1 # align with preds
+
     if self.config.is_export:
       self.input_transform = None
       self.target_transform = None
@@ -380,18 +386,31 @@ class SparseVoxelizationDataset(VoxelizationDatasetBase):
     # d['coords'] = coords
     # d['feats'] = feats
     # d['labels'] = labels
+    # d['aux'] = aux
     # torch.save(d,'voxel.pth')
+
+    if self.config.use_aux:
+        # cat the aux into labels
+        labels = np.stack([labels, aux], axis=1)
 
     # map labels not used for evaluation to ignore_label
     if self.input_transform is not None:
-      coords, feats, labels = self.input_transform(coords, feats, labels)
+        coords, feats, labels = self.input_transform(coords, feats, labels)
     if self.target_transform is not None:
-      coords, feats, labels = self.target_transform(coords, feats, labels)
+        coords, feats, labels = self.target_transform(coords, feats, labels)
     if self.IGNORE_LABELS is not None:
         if self.load_whole:
             labels = labels - 1  # should align all labels to [-1, 20]
         else:
             labels = np.array([self.label_map[x] for x in labels], dtype=np.int)
+    # for load-whole, the aux are in [0-19] 20 classes
+    # but labels have [-1, 19]
+    # d = {}
+    # d['coords'] = coords
+    # d['feats'] = feats
+    # d['labels'] = labels[:,0]
+    # d['aux'] = labels[:,1]
+    # torch.save(d,'pre.pth')
 
     return_args = [coords, feats, labels, unique_map, inverse_map]
     if self.return_transformation:
@@ -461,7 +480,6 @@ class SparseVoxelizationDataset(VoxelizationDatasetBase):
         # new_ptcs.append(ptc[inds])
       # ptcs = new_ptcs
 
-    # # import ipdb; ipdb.set_trace()
     # # import open3d as o3d
     # # from lib.open3d_utils import make_pointcloud
     # # pcds = [make_pointcloud(np.floor(ptc[:, :3] / self.PREVOXELIZE_VOXEL_SIZE), ptc[:, 3:6] / 256) for ptc in ptcs]

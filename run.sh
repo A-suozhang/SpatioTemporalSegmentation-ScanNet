@@ -22,6 +22,8 @@ export MAX_ITER=${MAX_ITER:-60000}
 export RESUME=${RESUME:-none}
 export POINTS=${POINTS:-8192}
 
+export USE_AUX=${USE_AUX:-false}
+
 export OUTPATH=./outputs/$DATASET/$MODEL/$LOG/
 #export VERSION=$(git rev-parse HEAD)
 
@@ -62,6 +64,7 @@ time python -W ignore main.py \
 	--max_iter $MAX_ITER \
 	--num_points $POINTS \
 	--resume $RESUME \
+	--use_aux $USE_AUX \
 	$3 
 
 #time python -W ignore main.py \

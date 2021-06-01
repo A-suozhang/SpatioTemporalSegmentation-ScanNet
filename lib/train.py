@@ -93,6 +93,13 @@ def train(model, data_loader, val_data_loader, config, transform_data_fn=None):
                 else:
                     coords, input, target, _, _ = data_iter.next()  # ignore unique_map and inverse_map
 
+                if config.use_aux:
+                    assert target.shape[1] == 2
+                    aux = target[:,1]
+                    target = target[:,0]
+                else:
+                    aux = None
+
                 # For some networks, making the network invariant to even, odd coords is important
                 coords[:, 1:] += (torch.rand(3) * 100).type_as(coords)
 
@@ -115,7 +122,10 @@ def train(model, data_loader, val_data_loader, config, transform_data_fn=None):
 
                 data_time += data_timer.toc(False)
                 # model.initialize_coords(*init_args)
-                soutput = model(sinput)
+                if aux is not None:
+                    soutput = model(sinput, aux)
+                else:
+                    soutput = model(sinput)
                 # The output of the network is not sorted
                 target = target.view(-1).long().to(device)
 

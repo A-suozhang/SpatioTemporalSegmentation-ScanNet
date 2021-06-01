@@ -3,12 +3,39 @@
 # Please cite "4D Spatio-Temporal ConvNets: Minkowski Convolutional Neural
 # Networks", CVPR'19 (https://arxiv.org/abs/1904.08755) if you use any part of
 # the code.
+import os
+import sys
+import pathlib
+# test_path = os.environ["TEST_PATH"]
+
+# if test_path is not None:
+
+    # parent = pathlib.Path(test_path).parent.absolute()
+    # child = pathlib.PurePath(test_path).name
+    # sys.path.append(str(parent))
+
+    # exec('from {}.models import resnet as resnet'.format(child))
+    # exec('from {}.models import res16unet as res16unet'.format(child))
+    # exec('from {}.models import mink_transformer as mink_transformer'.format(child))
+    # exec('from {}.models import mink_transformer_voxel as mink_transformer_voxel'.format(child))
+    # exec('from {}.models import point_transformer as point_transformer'.format(child))
+    # exec('from {}.models import mixed_transformer as mixed_transformer'.format(child))
+
+# else:
+    # import models.resnet as resnet
+    # import models.res16unet as res16unet
+    # import models.mink_transformer as mink_transformer
+    # import models.mink_transformer_voxel as mink_transformer_voxel
+    # import models.point_transformer as point_transformer
+    # import models.mixed_transformer as mixed_transformer
+
 import models.resnet as resnet
 import models.res16unet as res16unet
 import models.mink_transformer as mink_transformer
 import models.mink_transformer_voxel as mink_transformer_voxel
 import models.point_transformer as point_transformer
 import models.mixed_transformer as mixed_transformer
+
 
 MODELS = []
 

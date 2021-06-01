@@ -131,7 +131,7 @@ train_arg.add_argument(
 train_arg.add_argument('--eval_upsample', type=str2bool, default=False)
 
 # some about use the aux-info
-train_arg.add_argument('--save_pred', type=str2bool, default=False)
+# train_arg.add_argument('--save_pred', type=str2bool, default=False)
 train_arg.add_argument('--use_aux', type=str2bool, default=False)
 
 # Data augmentation

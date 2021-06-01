@@ -97,6 +97,13 @@ def test(model, data_loader, config, transform_data_fn=None, has_gt=True, save_p
                 coords, input, target, unique_map_list, inverse_map_list = data_iter.next()
             data_time = data_timer.toc(False)
 
+            if config.use_aux:
+                assert target.shape[1] == 2
+                aux = target[:,1]
+                target = target[:,0]
+            else:
+                aux = None
+
             # Preprocess input
             iter_timer.tic()
 
@@ -112,7 +119,10 @@ def test(model, data_loader, config, transform_data_fn=None, has_gt=True, save_p
             sinput = ME.SparseTensor(input, coords, device=device)
 
             # Feed forward
-            inputs = (sinput,)
+            if aux is not None:
+                inputs = (sinput,aux)
+            else:
+                inputs = (sinput,)
             soutput = model(*inputs)
             output = soutput.F
             pred = get_prediction(dataset, output, target).int()
@@ -135,7 +145,7 @@ def test(model, data_loader, config, transform_data_fn=None, has_gt=True, save_p
                     pred_this_batch = pred[int(start):int(end)]
                     coord_this_batch = pred[int(start):int(end)]
                     save_dict['pred'].append(pred_this_batch[inverse_map_list[batch_id]])
-                    save_dict['coord'].append(coord_this_batch[inverse_map_list[batch_id]])
+                    # save_dict['coord'].append(coord_this_batch[inverse_map_list[batch_id]])
                     batch_id += 1
                 assert len_sum == len(pred)
 
@@ -180,7 +190,8 @@ def test(model, data_loader, config, transform_data_fn=None, has_gt=True, save_p
                 torch.cuda.empty_cache()
 
     if config.save_pred:
-        torch.save(save_dict, os.path.join(config.log_dir, 'preds_{}_with_coord.pth'.format(split)))
+        # torch.save(save_dict, os.path.join(config.log_dir, 'preds_{}_with_coord.pth'.format(split)))
+        torch.save(save_dict, os.path.join(config.log_dir, 'preds_{}.pth'.format(split)))
         print("===> saved prediction result")
 
     global_time = global_timer.toc(False)
