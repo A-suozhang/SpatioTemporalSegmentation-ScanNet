@@ -20,9 +20,9 @@ export MAX_ITER=12000
 export LR=1e-1
 export LOG=$1
 
-export USE_AUX=False
-
+#export USE_AUX=True
 #export RESUME=True
+export DISTILL=True
 
 ./run.sh $2 \
 		-default \

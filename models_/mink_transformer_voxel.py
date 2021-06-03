@@ -206,9 +206,11 @@ class MinkowskiVoxelTransformer(ME.MinkowskiNetwork):
             )
             self.fc = ME.MinkowskiLinear(self.final_dim+self.dims[0], out_channel)
 
-    def forward(self, in_field: ME.TensorField, aux=None):
+    def forward(self, in_field: ME.TensorField, aux=None, save_anchor=False):
 
         x = in_field
+        if save_anchor:
+            self.anchors = []
 
         if aux is not None:
             aux = ME.SparseTensor(coordinates=x.C, features=aux.float().reshape([-1,1]).cuda())
@@ -245,15 +247,24 @@ class MinkowskiVoxelTransformer(ME.MinkowskiNetwork):
             x = self.stem2(x0)
 
             x1 = self.PTBlock1(x)
+            if save_anchor:
+                self.anchors.append(x1)
 
             x = self.TDLayer1(x1)
             x2 = self.PTBlock2(x)
+            if save_anchor:
+                self.anchors.append(x2)
 
             x = self.TDLayer2(x2)
             x3 = self.PTBlock3(x)
+            if save_anchor:
+                self.anchors.append(x3)
 
             x = self.TDLayer3(x3)
             x = self.PTBlock4(x)
+
+            if save_anchor:
+                self.anchors.append(x)
 
             x = self.TULayer5(x, x3)
             x = self.PTBlock5(x)
@@ -271,7 +282,10 @@ class MinkowskiVoxelTransformer(ME.MinkowskiNetwork):
             x = self.final_conv(x)
             x = self.fc(me.cat(x0,x))
 
-        return x
+        if save_anchor:
+            return x, self.anchors
+        else:
+            return x
 
     def _make_layer(self,
                   block,

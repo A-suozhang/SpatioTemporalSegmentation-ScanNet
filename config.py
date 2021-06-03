@@ -77,7 +77,7 @@ dir_arg.add_argument('--data_dir', type=str, default='data')
 # Data
 data_arg = add_argument_group('Data')
 data_arg.add_argument('--dataset', type=str, default='ScannetSparseVoxelizationDataset')
-data_arg.add_argument('--load_whole', type=bool, default=True) # only used when scannetSparseVoxelizationDatase`t
+data_arg.add_argument('--load_whole', type=bool, default=False) # only used when scannetSparseVoxelizationDatase`t
 data_arg.add_argument('--point_lim', type=int, default=-1)
 data_arg.add_argument('--pre_point_lim', type=int, default=-1)
 data_arg.add_argument('--batch_size', type=int, default=16)
@@ -129,6 +129,9 @@ train_arg.add_argument(
     type=str2bool,
     help='Use checkpoint optimizer states when resume training')
 train_arg.add_argument('--eval_upsample', type=str2bool, default=False)
+
+train_arg.add_argument('--distill', type=str2bool, default=False)
+# train_arg.add_argument('--tch_model', type=str, default="Res16UNet18A") # speciffy this in train_distill func
 
 # some about use the aux-info
 # train_arg.add_argument('--save_pred', type=str2bool, default=False)

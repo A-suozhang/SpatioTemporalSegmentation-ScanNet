@@ -99,8 +99,6 @@ def save_map(model, config):
     torch.save(inter_d, os.path.join(config.log_dir, 'val_map.pth'))
     logging.info('Map saved in {}'.format(config.log_dir))
 
-
-
 def feat_augmentation(data, normalized, config):
     # color shift
     if random.random() < 0.9:

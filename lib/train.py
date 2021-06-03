@@ -21,6 +21,8 @@ from MinkowskiEngine import SparseTensor
 
 import numpy as np
 
+from models import load_model
+
 
 def validate(model, val_data_loader, writer, curr_iter, config, transform_data_fn=None):
     v_loss, v_score, v_mAP, v_mIoU = test(model, val_data_loader, config)
@@ -443,9 +445,253 @@ def train_point(model, data_loader, val_data_loader, config, transform_data_fn=N
     checkpoint(model, optimizer, epoch, curr_iter, config, best_val_miou, best_val_iter)
 
     test_points(model, val_data_loader, config)
-    # if val_miou > best_val_miou:
-        # best_val_miou = val_miou
-        # best_val_iter = curr_iter
-        # checkpoint(model, optimizer, epoch, curr_iter, config, best_val_miou, best_val_iter, "best_val")
-    # logging.info("Current best mIoU: {:.3f} at iter {}".format(best_val_miou, best_val_iter))
+    if val_miou > best_val_miou:
+        best_val_miou = val_miou
+        best_val_iter = curr_iter
+        checkpoint(model, optimizer, epoch, curr_iter, config, best_val_miou, best_val_iter, "best_val")
+    logging.info("Current best mIoU: {:.3f} at iter {}".format(best_val_miou, best_val_iter))
+
+
+def DistillLoss(tch_xs, stu_xs):
+
+    # l2_loss = torch.zeros([B]).to(tch_xs[0].device)
+    print('start computing')
+    l2_losses = []
+    for tch_x,stu_x in zip(tch_xs, stu_xs):
+        diff = tch_x - stu_x
+        diff_l2 = diff*diff
+        out = ME.MinkowskiGlobalSumPooling()(diff_l2)
+        l2_losses.append(out.F.sum(-1))
+    l2_loss = torch.stack(l2_losses).sum()
+    print(l2_loss)
+
+    return l2_loss
+
+def train_distill(model, data_loader, val_data_loader, config, transform_data_fn=None):
+    '''the distillation training'''
+
+    distill_lambda = 5.e-7
+
+    device = get_torch_device(config.is_cuda)
+    # Set up the train flag for batch normalization
+    model.train()
+
+    # Configuration
+    writer = SummaryWriter(log_dir=config.log_dir)
+    data_timer, iter_timer = Timer(), Timer()
+    data_time_avg, iter_time_avg = AverageMeter(), AverageMeter()
+    losses, scores = AverageMeter(), AverageMeter()
+
+    optimizer = initialize_optimizer(model.parameters(), config)
+    scheduler = initialize_scheduler(optimizer, config)
+    criterion = nn.CrossEntropyLoss(ignore_index=config.ignore_label)
+
+    writer = SummaryWriter(log_dir=config.log_dir)
+
+    # Train the network
+    logging.info('===> Start training')
+    best_val_miou, best_val_iter, curr_iter, epoch, is_training = 0, 0, 1, 1, True
+
+    # TODO: 
+    # load the sub-model only
+    # FIXME: some dirty hard-written stuff, only supporting current state
+
+    tch_model_cls = load_model('Res16UNet18A')
+    tch_model = tch_model_cls(3,20,config).to(device)
+    checkpoint_fn = "/home/zhaotianchen/project/point-transformer/SpatioTemporalSegmentation-ScanNet/outputs/ScannetSparseVoxelizationDataset/Res16UNet18A/bak/weights.pth"
+    assert osp.isfile(checkpoint_fn)
+    logging.info("=> loading checkpoint '{}'".format(checkpoint_fn))
+    state = torch.load(checkpoint_fn)
+    d = {k:v for k,v in state['state_dict'].items() if 'map' not in k }
+    tch_model.load_state_dict(d)
+    if 'best_val' in state:
+        best_val_miou = state['best_val']
+        best_val_iter = state['best_val_iter']
+    logging.info("=> loaded checkpoint '{}' (epoch {})".format(checkpoint_fn, state['epoch']))
+
+    if config.resume:
+        raise NotImplementedError
+        # Test loaded ckpt first
+
+        # checkpoint_fn = config.resume + '/weights.pth'
+        # if osp.isfile(checkpoint_fn):
+            # logging.info("=> loading checkpoint '{}'".format(checkpoint_fn))
+            # state = torch.load(checkpoint_fn)
+            # curr_iter = state['iteration'] + 1
+            # epoch = state['epoch']
+            # d = {k:v for k,v in state['state_dict'].items() if 'map' not in k }
+            # model.load_state_dict(d)
+            # if config.resume_optimizer:
+                # scheduler = initialize_scheduler(optimizer, config, last_step=curr_iter)
+                # optimizer.load_state_dict(state['optimizer'])
+            # if 'best_val' in state:
+                # best_val_miou = state['best_val']
+                # best_val_iter = state['best_val_iter']
+            # logging.info("=> loaded checkpoint '{}' (epoch {})".format(checkpoint_fn, state['epoch']))
+        # else:
+            # raise ValueError("=> no checkpoint found at '{}'".format(checkpoint_fn))
+
+    # test after loading the ckpt
+    # v_loss, v_score, v_mAP, v_mIoU = test(tch_model, val_data_loader, config)
+    # logging.info('Tch model tested, bes_miou: {}'.format(v_mIoU))
+
+    data_iter = data_loader.__iter__()
+    while is_training:
+
+        num_class = 20
+        total_correct_class = torch.zeros(num_class, device=device)
+        total_iou_deno_class = torch.zeros(num_class, device=device)
+
+        for iteration in range(len(data_loader) // config.iter_size):
+
+
+            # TODO: add some warmup
+            if iteration < 10:
+                use_distill = False
+            else:
+                use_distill = True
+
+            optimizer.zero_grad()
+            data_time, batch_loss = 0, 0
+            iter_timer.tic()
+
+            for sub_iter in range(config.iter_size):
+                # Get training data
+                data_timer.tic()
+                if config.return_transformation:
+                    coords, input, target, _, _, pointcloud, transformation = data_iter.next()
+                else:
+                    coords, input, target, _, _ = data_iter.next()  # ignore unique_map and inverse_map
+
+                if config.use_aux:
+                    assert target.shape[1] == 2
+                    aux = target[:,1]
+                    target = target[:,0]
+                else:
+                    aux = None
+
+                # For some networks, making the network invariant to even, odd coords is important
+                coords[:, 1:] += (torch.rand(3) * 100).type_as(coords)
+
+                # Preprocess input
+                if config.normalize_color:
+                    input[:, :3] = input[:, :3] / 255. - 0.5
+                    coords_norm = coords[:,1:] / coords[:,1:].max() - 0.5
+
+                # cat xyz into the rgb feature
+                if config.xyz_input:
+                    input = torch.cat([coords_norm, input], dim=1)
+
+                sinput = SparseTensor(input, coords, device=device)
+
+                # TODO: return both-models
+                # in order to not breaking the valid interface, use a get_loss to get the regsitered loss
+
+                data_time += data_timer.toc(False)
+                # model.initialize_coords(*init_args)
+                if aux is not None:
+                    raise NotImplementedError
+                    soutput = model(sinput, aux)
+                else:
+                    if use_distill:
+                        soutput, anchor = model(sinput, save_anchor=True)
+                        with torch.no_grad():
+                            tch_soutput, tch_anchor = tch_model(sinput, save_anchor=True)
+                    else:
+                        soutput = model(sinput)
+                # The output of the network is not sorted
+                target = target.view(-1).long().to(device)
+                loss = criterion(soutput.F, target.long())
+
+                if use_distill:
+                    distill_loss = DistillLoss(tch_anchor, anchor)*distill_lambda
+                    loss += distill_loss
+
+                # Compute and accumulate gradient
+                loss /= config.iter_size
+                batch_loss += loss.item()
+                loss.backward()
+
+            # Update number of steps
+            optimizer.step()
+            scheduler.step()
+
+            # CLEAR CACHE!
+            torch.cuda.empty_cache()
+
+            data_time_avg.update(data_time)
+            iter_time_avg.update(iter_timer.toc(False))
+
+            pred = get_prediction(data_loader.dataset, soutput.F, target)
+            score = precision_at_one(pred, target, ignore_label=-1)
+            losses.update(batch_loss, target.size(0))
+            scores.update(score, target.size(0))
+
+            # calc the train-iou
+            for l in range(num_class):
+                total_correct_class[l] += ((pred == l) & (target == l)).sum()
+                total_iou_deno_class[l] += (((pred == l) & (target!=-1)) | (target == l) ).sum()
+
+            if curr_iter >= config.max_iter:
+                is_training = False
+                break
+
+            if curr_iter % config.stat_freq == 0 or curr_iter == 1:
+                lrs = ', '.join(['{:.3e}'.format(x) for x in scheduler.get_lr()])
+                debug_str = "===> Epoch[{}]({}/{}): Loss {:.4f}\tLR: {}\t".format(
+                        epoch, curr_iter,
+                        len(data_loader) // config.iter_size, losses.avg, lrs)
+                debug_str += "Score {:.3f}\tData time: {:.4f}, Iter time: {:.4f}".format(
+                        scores.avg, data_time_avg.avg, iter_time_avg.avg)
+                logging.info(debug_str)
+                if use_distill:
+                    logging.info('Loss {} Distill Loss:{}'.format(loss, distill_loss))
+                # Reset timers
+                data_time_avg.reset()
+                iter_time_avg.reset()
+                # Write logs
+                # writer.add_scalar('training/loss', losses.avg, curr_iter)
+                # writer.add_scalar('training/precision_at_1', scores.avg, curr_iter)
+                # writer.add_scalar('training/learning_rate', scheduler.get_lr()[0], curr_iter)
+                losses.reset()
+                scores.reset()
+
+            # Save current status, save before val to prevent occational mem overflow
+            if curr_iter % config.save_freq == 0:
+                checkpoint(model, optimizer, epoch, curr_iter, config, best_val_miou, best_val_iter, save_inter=True)
+
+            # Validation
+            if curr_iter % config.val_freq == 0:
+                val_miou = validate(model, val_data_loader, writer, curr_iter, config, transform_data_fn)
+                if val_miou > best_val_miou:
+                    best_val_miou = val_miou
+                    best_val_iter = curr_iter
+                    checkpoint(model, optimizer, epoch, curr_iter, config, best_val_miou, best_val_iter,
+                                         "best_val", save_inter=True)
+                logging.info("Current best mIoU: {:.3f} at iter {}".format(best_val_miou, best_val_iter))
+
+                # Recover back
+                model.train()
+
+            # End of iteration
+            curr_iter += 1
+
+        IoU = (total_correct_class) / (total_iou_deno_class+1e-6)
+        logging.info('train point avg class IoU: %f' % ((IoU).mean()*100.))
+
+        epoch += 1
+
+    # Explicit memory cleanup
+    if hasattr(data_iter, 'cleanup'):
+        data_iter.cleanup()
+
+    # Save the final model
+    checkpoint(model, optimizer, epoch, curr_iter, config, best_val_miou, best_val_iter)
+    v_loss, v_score, v_mAP, val_miou = test(model, val_data_loader, config)
+    if val_miou > best_val_miou:
+        best_val_miou = val_miou
+        best_val_iter = curr_iter
+        checkpoint(model, optimizer, epoch, curr_iter, config, best_val_miou, best_val_iter, "best_val")
+    logging.info("Current best mIoU: {:.3f} at iter {}".format(best_val_miou, best_val_iter))
+
 

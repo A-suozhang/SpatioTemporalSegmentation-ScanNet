@@ -23,6 +23,7 @@ export RESUME=${RESUME:-none}
 export POINTS=${POINTS:-8192}
 
 export USE_AUX=${USE_AUX:-false}
+export DISTILL=${DISTILL:-false}
 
 export OUTPATH=./outputs/$DATASET/$MODEL/$LOG/
 #export VERSION=$(git rev-parse HEAD)
@@ -68,6 +69,7 @@ time python -W ignore main.py \
 	--num_points $POINTS \
 	--resume $RESUME \
 	--use_aux $USE_AUX \
+	--distill $DISTILL \
 	$3 
 
 #time python -W ignore main.py \

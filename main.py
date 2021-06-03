@@ -27,7 +27,7 @@ from config import get_config
 import shutil
 
 from lib.test import test, test_points
-from lib.train import train, train_point
+from lib.train import train, train_point, train_distill
 from lib.utils import load_state_with_same_shape, get_torch_device, count_parameters
 from lib.dataset import initialize_data_loader, _init_fn
 from lib.datasets import load_dataset
@@ -78,7 +78,7 @@ def main():
         if not os.path.exists(os.path.join(config.log_dir,'models')):
             os.mkdir(os.path.join(config.log_dir,'models'))
         for filename in os.listdir('./models'):
-                if ".py" in filename and not 'init' in filename: # donnot cp the init file since it will raise import error
+                if ".py" in filename: # donnot cp the init file since it will raise import error
                     shutil.copy(os.path.join("./models", filename), os.path.join(config.log_dir,'models'))
                 elif 'modules' in filename:
                     # copy the moduls folder also
@@ -297,6 +297,7 @@ def main():
             model = NetClass(num_in_channel, num_labels, config)
         else:
             model = NetClass(num_in_channel, num_labels, config)
+
     logging.info('===> Number of trainable parameters: {}: {}'.format(NetClass.__name__,count_parameters(model)))
     logging.info(model)
 
@@ -326,10 +327,14 @@ def main():
             else:
                 model.load_state_dict(d, strict=True)
     if config.is_train:
-        if point_scannet:
-            train_point(model, train_data_loader, val_data_loader, config)
+        if hasattr(config, 'distill') and config.distill:
+            assert point_scannet is not True # only support whole scene for no
+            train_distill(model, train_data_loader, val_data_loader, config)
         else:
-            train(model, train_data_loader, val_data_loader, config)
+            if point_scannet:
+                train_point(model, train_data_loader, val_data_loader, config)
+            else:
+                train(model, train_data_loader, val_data_loader, config)
     elif config.is_export:
         if point_scannet:
             raise NotImplementedError

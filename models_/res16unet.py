@@ -210,8 +210,10 @@ class Res16UNetBase(ResNetBase):
 
     self.final = conv(self.PLANES[7], out_channels, kernel_size=1, stride=1, bias=True, D=D)
 
-  def forward(self, x):
-    # import ipdb; ipdb.set_trace()
+  def forward(self, x, save_anchor=False):
+    if save_anchor:
+        self.anchors = []
+
     out = self.conv0p1s1(x)
     out = self.bn0(out)
     out_p1 = get_nonlinearity_fn(self.config.nonlinearity, out)
@@ -221,27 +223,39 @@ class Res16UNetBase(ResNetBase):
     out = get_nonlinearity_fn(self.config.nonlinearity, out)
     out_b1p2 = self.block1(out)
 
+    if save_anchor:
+        self.anchors.append(out_b1p2)
+
     out = self.conv2p2s2(out_b1p2)
     out = self.bn2(out)
     out = get_nonlinearity_fn(self.config.nonlinearity, out)
     out_b2p4 = self.block2(out)
+
+    if save_anchor:
+        self.anchors.append(out_b2p4)
 
     out = self.conv3p4s2(out_b2p4)
     out = self.bn3(out)
     out = get_nonlinearity_fn(self.config.nonlinearity, out)
     out_b3p8 = self.block3(out)
 
+    if save_anchor:
+        self.anchors.append(out_b3p8)
+
     # pixel_dist=16
     out = self.conv4p8s2(out_b3p8)
     out = self.bn4(out)
     out = get_nonlinearity_fn(self.config.nonlinearity, out)
     out = self.block4(out)
+    if save_anchor:
+        self.anchors.append(out)
+
 
     # pixel_dist=8
     out = self.convtr4p16s2(out)
     out = self.bntr4(out)
     out = get_nonlinearity_fn(self.config.nonlinearity, out)
-
+    
     out = me.cat(out, out_b3p8)
     out = self.block5(out)
 
@@ -269,7 +283,10 @@ class Res16UNetBase(ResNetBase):
     out = me.cat(out, out_p1)
     out = self.block8(out)
 
-    return self.final(out)
+    if save_anchor:
+        return self.final(out), self.anchors
+    else:
+        return self.final(out)
 
 
 class Res16UNet14(Res16UNetBase):
