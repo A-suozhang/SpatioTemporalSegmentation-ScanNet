@@ -164,26 +164,40 @@ class TDLayer(nn.Module):
         '''a few additional cfg for TDLayer'''
         self.POINT_TR_LIKE = False
         self.FPS_ONLY = True
-        self.cat_xyz_feature = False
+        self.cat_xyz_feature = True
 
         if self.POINT_TR_LIKE:
             if self.FPS_ONLY:
                 # DEBUG: use 3x3 downsample
-                if self.cat_xyz_feature:
-                    self.projection = nn.Sequential(
-                        nn.Conv2d(input_dim+3, out_dim, 1),
-                        nn.BatchNorm2d(out_dim),
-                        nn.Conv2d(out_dim, out_dim, 1),
-                        nn.BatchNorm2d(out_dim),
-                            )
-                else:
-                    self.projection = nn.Sequential(
-                        nn.Conv2d(input_dim, out_dim, 1),
-                        nn.BatchNorm2d(out_dim),
-                        nn.ReLU(),
+                # if self.cat_xyz_feature:
+                    # self.projection = nn.Sequential(
+                        # nn.Conv2d(input_dim+3, out_dim, 1),
+                        # nn.BatchNorm2d(out_dim),
                         # nn.Conv2d(out_dim, out_dim, 1),
                         # nn.BatchNorm2d(out_dim),
-                            )
+                            # )
+                # else:
+                    # self.projection = nn.Sequential(
+                        # nn.Conv2d(input_dim, out_dim, 1),
+                        # nn.BatchNorm2d(out_dim),
+                        # nn.ReLU(),
+                        # # nn.Conv2d(out_dim, out_dim, 1),
+                        # # nn.BatchNorm2d(out_dim),
+                            # )
+                if self.cat_xyz_feature:
+                    self.conv = nn.Sequential(
+                        ME.MinkowskiConvolution(input_dim+3, out_dim, kernel_size=1, bias=True, dimension=3),
+                        ME.MinkowskiBatchNorm(out_dim),
+                        ME.MinkowskiReLU(),
+                        )
+                else:
+                    self.conv = nn.Sequential(
+                        ME.MinkowskiConvolution(input_dim, out_dim, kernel_size=1, bias=True, dimension=3),
+                        ME.MinkowskiBatchNorm(out_dim),
+                        ME.MinkowskiReLU(),
+                        )
+
+
             else:
                 self.mlp_convs = nn.ModuleList()
                 self.mlp_bns = nn.ModuleList()
@@ -196,12 +210,7 @@ class TDLayer(nn.Module):
                 self.mlp_bns.append(nn.BatchNorm2d(input_dim))
                 self.mlp_bns.append(nn.BatchNorm2d(out_dim))
 
-            self.conv = nn.Sequential(
-                    ME.MinkowskiConvolution(input_dim, out_dim, kernel_size=1, bias=True, dimension=3),
-                    ME.MinkowskiBatchNorm(out_dim),
-                    ME.MinkowskiReLU(),
-                    )
-            # DEBUG ONLY
+                        # DEBUG ONLY
             # self.strided_conv = nn.Sequential(
                 # ME.MinkowskiConvolution(input_dim,out_dim,kernel_size=1,stride=2,bias=True,dimension=3),
                 # ME.MinkowskiBatchNorm(out_dim),
@@ -210,7 +219,7 @@ class TDLayer(nn.Module):
 
         else:
             self.conv = nn.Sequential(
-                ME.MinkowskiConvolution(input_dim,out_dim,kernel_size=2,stride=2,bias=True,dimension=3),
+                ME.MinkowskiConvolution(input_dim,out_dim,kernel_size=1,stride=2,bias=True,dimension=3),
                 ME.MinkowskiBatchNorm(out_dim),
                 ME.MinkowskiReLU()
             )

@@ -76,10 +76,16 @@ def main():
     else:
         '''bakup files'''
         if not os.path.exists(os.path.join(config.log_dir,'models')):
-            os.mkdir(os.th.join(config.log_dir,'models'))
+            os.mkdir(os.path.join(config.log_dir,'models'))
         for filename in os.listdir('./models'):
                 if ".py" in filename and not 'init' in filename: # donnot cp the init file since it will raise import error
-                        shutil.copy(os.path.join("./models", filename), os.path.join(config.log_dir,'models'))
+                    shutil.copy(os.path.join("./models", filename), os.path.join(config.log_dir,'models'))
+                elif 'modules' in filename:
+                    # copy the moduls folder also
+                    if os.path.exists(os.path.join(config.log_dir,'models/modules')):
+                        shutil.rmtree(os.path.join(config.log_dir,'models/modules'))
+                    shutil.copytree(os.path.join('./models',filename), os.path.join(config.log_dir,'models/modules'))
+
         shutil.copy('./main.py', config.log_dir)
         shutil.copy('./config.py', config.log_dir)
         shutil.copy('./lib/train.py', config.log_dir)

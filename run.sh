@@ -52,6 +52,9 @@ echo Logging output to "$LOG"
 #echo "" >> $LOG
 #nvidia-smi | tee -a $LOG
 
+rm ./models
+ln -s ./models_ ./models
+
 time python -W ignore main.py \
 	--log_dir $OUTPATH \
 	--dataset $DATASET \

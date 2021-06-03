@@ -27,6 +27,10 @@ export IS_EXPORT=${IS_EXPORT:-False}
 # Save the experiment detail and dir to the common log file
 mkdir -p $OUTPATH
 
+rm ./models
+echo 'ln -s $OUTPATH/models ./models'
+ln -s $OUTPATH/models ./models
+
 # put the arguments on the first line for easy resume
 echo "
     --log_dir $OUTPATH \
@@ -68,3 +72,6 @@ time python -W ignore main.py \
 	--val_batch_size $BATCH_SIZE \
 	--is_export $IS_EXPORT \
 	$3 
+
+rm ./models
+ln -s ./models_ models
