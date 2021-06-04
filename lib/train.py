@@ -22,6 +22,7 @@ from MinkowskiEngine import SparseTensor
 import numpy as np
 
 from models import load_model
+from models.pct_voxel_utils import separate_batch, voxel2points
 
 
 def validate(model, val_data_loader, writer, curr_iter, config, transform_data_fn=None):
@@ -458,11 +459,26 @@ def DistillLoss(tch_xs, stu_xs):
     # print('start computing')
     l2_losses = []
     for tch_x,stu_x in zip(tch_xs, stu_xs):
-        diff = tch_x - stu_x
-        diff_l2 = diff*diff
-        out = ME.MinkowskiGlobalSumPooling()(diff_l2)
-        l2_losses.append(out.F.sum(-1))
-    l2_loss = torch.stack(l2_losses).sum()
+
+        tch_xc, tch_xf, tch_x_idx = voxel2points(tch_x)
+        stu_xc, stu_xf, stu_x_idx = voxel2points(stu_x)
+
+        tch_xf_l2 = torch.norm(tch_xf, dim=(1,2)).reshape(-1,1,1)
+        stu_xf_l2 = torch.norm(stu_xf, dim=(1,2)).reshape(-1,1,1)
+
+        # tch_xf_l2 = (tch_xf*tch_xf).sum(dim=2).sum(dim=1).reshape(-1,1,1)
+        # stu_xf_l2 = (stu_xf*stu_xf).sum(dim=2).sum(dim=1).reshape(-1,1,1)
+
+        diff = tch_xf / tch_xf_l2 - stu_xf / stu_xf_l2
+        diff_l2 = torch.norm(diff, dim=(1,2)).sum()
+        l2_losses.append(diff_l2)
+
+        # diff = tch_x - stu_x
+        # diff_l2 = diff*diff
+        # out = ME.MinkowskiGlobalSumPooling()(diff_l2)
+        # l2_losses.append(out.F.sum(-1))
+
+    l2_loss = torch.stack(l2_losses).sum() / len(l2_losses)
     # print(l2_loss)
 
     return l2_loss
@@ -472,7 +488,10 @@ def train_distill(model, data_loader, val_data_loader, config, transform_data_fn
     the distillation training
     some cfgs here
     '''
-    distill_lambda = 5.e-7
+    distill_lambda = 1.
+    # TWO_STAGE=True: Transformer is first trained with L2 loss to match ResNet's activation, and then it fintunes like normal training on the second stage. 
+    # TWO_STAGE=False: Transformer trains with combined loss
+    TWO_STAGE = False
 
     device = get_torch_device(config.is_cuda)
     # Set up the train flag for batch normalization
@@ -545,13 +564,18 @@ def train_distill(model, data_loader, val_data_loader, config, transform_data_fn
         total_correct_class = torch.zeros(num_class, device=device)
         total_iou_deno_class = torch.zeros(num_class, device=device)
 
-        for iteration in range(len(data_loader) // config.iter_size):
+        total_iteration = len(data_loader) // config.iter_size
+        for iteration in range(total_iteration):
 
-            # TODO: add some warmup
-            if iteration < 10:
+            # NOTE: for single stage distillation, L2 loss might be too large at first 
+            # so we added a warmup training that don't use L2 loss
+            if iteration < 0:
                 use_distill = False
             else:
                 use_distill = True
+
+            # Stage 1 / Stage 2 boundary
+            stage_boundary = int(total_iteration * 0.4)
 
             optimizer.zero_grad()
             data_time, batch_loss = 0, 0
@@ -593,23 +617,37 @@ def train_distill(model, data_loader, val_data_loader, config, transform_data_fn
                 # model.initialize_coords(*init_args)
                 if aux is not None:
                     raise NotImplementedError
-                    soutput = model(sinput, aux)
-                else:
-                    if use_distill:
+                
+                # flatten ground truth tensor
+                target = target.view(-1).long().to(device)
+                
+                if TWO_STAGE:
+                    if iteration < stage_boundary:
+                        # Stage 1: train transformer on L2 loss
                         soutput, anchor = model(sinput, save_anchor=True)
-                        # if pretrained tch, donot let the grad flow to tch to update its params
+                        # Make sure gradient don't flow to teacher model
+                        with torch.no_grad():
+                            _, tch_anchor = tch_model(sinput, save_anchor=True)
+                        loss = DistillLoss(tch_anchor, anchor)
+                    else:
+                        # Stage 2: finetune transformer on Cross-Entropy
+                        soutput = model(sinput)
+                        loss = criterion(soutput.F, target.long())
+                else:
+                    if use_distill: # after warm up 
+                        soutput, anchor = model(sinput, save_anchor=True)
+                        # if pretrained teacher, do not let the grad flow to teacher to update its params
                         with torch.no_grad():
                             tch_soutput, tch_anchor = tch_model(sinput, save_anchor=True)
 
-                    else:
+                    else: # warming up
                         soutput = model(sinput)
-                # The output of the network is not sorted
-                target = target.view(-1).long().to(device)
-                loss = criterion(soutput.F, target.long())
-
-                if use_distill:
-                    distill_loss = DistillLoss(tch_anchor, anchor)*distill_lambda
-                    loss += distill_loss
+                    # The output of the network is not sorted
+                    loss = criterion(soutput.F, target.long())
+                    #  Add L2 loss if use distillation
+                    if use_distill:
+                        distill_loss = DistillLoss(tch_anchor, anchor)*distill_lambda
+                        loss += distill_loss
 
                 # Compute and accumulate gradient
                 loss /= config.iter_size
@@ -648,7 +686,7 @@ def train_distill(model, data_loader, val_data_loader, config, transform_data_fn
                 debug_str += "Score {:.3f}\tData time: {:.4f}, Iter time: {:.4f}".format(
                         scores.avg, data_time_avg.avg, iter_time_avg.avg)
                 logging.info(debug_str)
-                if use_distill:
+                if use_distill and not TWO_STAGE:
                     logging.info('Loss {} Distill Loss:{}'.format(loss, distill_loss))
                 # Reset timers
                 data_time_avg.reset()

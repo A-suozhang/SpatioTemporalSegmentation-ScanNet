@@ -39,7 +39,6 @@ def square_distance(src, dst):
     """
     return torch.sum((src[:, :, None] - dst[:, None]) ** 2, dim=-1)
 
-
 def index_points_cuda(points, idx):
     """
 
@@ -53,20 +52,6 @@ def index_points_cuda(points, idx):
     new_points = index_points_cuda_transpose(points, idx) #[B, C, S]
 
     return new_points.transpose(1,2).contiguous()
-
-
-def stem_knn(xyz, points, k):
-    knn = KNN(k=k, transpose_mode=True)
-    xyz = xyz.permute([0,2,1])
-    _, idx = knn(xyz.coniguous(), xyz) # xyz: [bs, npoints, coord] idx: [bs, npoint, k]
-    idx = idx.int()
-
-    # take in [B, 3, N]
-    grouped_xyz = grouping_operation_cuda(xyz.transpose(1,2).contiguous(), idx) # [bs, xyz, n_point, k]
-    grouped_points = grouping_operation_cuda(points.contiguous(), idx) #B, C, npoint, k)
-
-    return grouped_xyz, grouped_points
-
 
 def sample_and_group_cuda(npoint, k, xyz, points, cat_xyz_feature=True, fps_only=False):
     """
@@ -168,22 +153,6 @@ class TDLayer(nn.Module):
 
         if self.POINT_TR_LIKE:
             if self.FPS_ONLY:
-                # DEBUG: use 3x3 downsample
-                # if self.cat_xyz_feature:
-                    # self.projection = nn.Sequential(
-                        # nn.Conv2d(input_dim+3, out_dim, 1),
-                        # nn.BatchNorm2d(out_dim),
-                        # nn.Conv2d(out_dim, out_dim, 1),
-                        # nn.BatchNorm2d(out_dim),
-                            # )
-                # else:
-                    # self.projection = nn.Sequential(
-                        # nn.Conv2d(input_dim, out_dim, 1),
-                        # nn.BatchNorm2d(out_dim),
-                        # nn.ReLU(),
-                        # # nn.Conv2d(out_dim, out_dim, 1),
-                        # # nn.BatchNorm2d(out_dim),
-                            # )
                 if self.cat_xyz_feature:
                     self.conv = nn.Sequential(
                         ME.MinkowskiConvolution(input_dim+3, out_dim, kernel_size=1, bias=True, dimension=3),
@@ -197,7 +166,6 @@ class TDLayer(nn.Module):
                         ME.MinkowskiReLU(),
                         )
 
-
             else:
                 self.mlp_convs = nn.ModuleList()
                 self.mlp_bns = nn.ModuleList()
@@ -210,16 +178,9 @@ class TDLayer(nn.Module):
                 self.mlp_bns.append(nn.BatchNorm2d(input_dim))
                 self.mlp_bns.append(nn.BatchNorm2d(out_dim))
 
-                        # DEBUG ONLY
-            # self.strided_conv = nn.Sequential(
-                # ME.MinkowskiConvolution(input_dim,out_dim,kernel_size=1,stride=2,bias=True,dimension=3),
-                # ME.MinkowskiBatchNorm(out_dim),
-                # ME.MinkowskiReLU()
-            # )
-
         else:
             self.conv = nn.Sequential(
-                ME.MinkowskiConvolution(input_dim,out_dim,kernel_size=1,stride=2,bias=True,dimension=3),
+                ME.MinkowskiConvolution(input_dim,out_dim,kernel_size=2,stride=2,bias=True,dimension=3),
                 ME.MinkowskiBatchNorm(out_dim),
                 ME.MinkowskiReLU()
             )
@@ -258,25 +219,12 @@ class TDLayer(nn.Module):
                 else:
                     new_points_pooled = new_points
 
-                # DEBUG: debug here, skip the projection and project on the voxel
-                # new_points_pooled = self.projection(new_points_pooled.unsqueeze(-1)).squeeze(-1) # [N,dim,nvoxel,1]
-
                 B, new_dim, new_N = list(new_points_pooled.shape)
 
-                # TODO: CK missing mask here：may create some points which is not there(as 0,0,0)
                 # idx: [N-voxel] -> value in range(0, B*N)
                 # fps_idx: [B,N//2] -> check whether in idx(transform): -> fps_mask: [<B*N/2] value: [0, B,N//2]
 
                 batch_ids = torch.arange(B).unsqueeze(-1).repeat(1,new_N).reshape(-1,1).cuda()
-                # fps_idx_full = batch_ids.view(-1)*N + fps_idx.view(-1)
-                # # DEBUG: pytorch has no isin() function, parallel compare is memory-hungry
-                # # and the iter version is slow
-                # fps_in_mask = np.in1d(fps_idx_full.cpu().numpy(), idx.cpu().numpy().astype(int))
-                # # the +1 and -1 are for the 0-idx
-                # new_fps_idx_full = (((fps_idx_full.cpu().numpy()+1)*fps_in_mask).nonzero()[0]-1)
-                # if len(new_fps_idx_full) < len(fps_idx_full):
-                    # print('detected masked point!')
-                    # import ipdb; ipdb.set_trace()
 
                 # if no masked points are sampled, we could simply use a full-idx to gather new_feature
                 new_idx = torch.arange(B*new_N).cuda()
@@ -304,7 +252,7 @@ class TDLayer(nn.Module):
 
                 B, new_dim, new_N = new_points_pooled.shape
                 new_idx = torch.arange(B*new_N).cuda()  # the keep all idxs
-                # TODO: 
+
                 new_points_pooled = new_points_pooled.transpose(1,2).reshape(B*new_N, new_dim)
                 new_points_pooled = torch.gather(new_points_pooled, dim=0, index=new_idx.reshape(-1,1).repeat(1,new_dim))
                 new_xyz = torch.gather(new_xyz.transpose(1,2).reshape(B*new_N, 3), dim=0, index=new_idx.reshape(-1,1).repeat(1,3))
@@ -316,19 +264,38 @@ class TDLayer(nn.Module):
             if self.FPS_ONLY:
                 y = self.conv(y)
 
-            # y_test = self.strided_conv(x)
-            # d = {}
-            # d['origin'] = x.C
-            # d['FPS'] = y.C
-            # d['stride'] = y_test.C
-            # torch.save(d, 'sample.pth')
-            # print(x.C.shape, y.C.shape, y_test.C.shape)
-            # import ipdb; ipdb.set_trace()
-
         else:
             y = self.conv(x)
 
         return y
+
+class ResNetLikeTU(nn.Module):
+    def __init__(self, input_a_dim, input_b_dim, out_dim, kernel_size=2):
+        '''
+        Deconv x_a
+        concat with x_b
+        then apply output-projection
+        '''
+        self.input_a_dim = input_a_dim
+        self.input_b_dim = input_b_dim
+        self.out_a_dim = out_a_dim
+        self.conv_a = nn.Sequential(
+                        ME.MinkowskiConvolutionTranspose(in_channels=input_a_dim, out_channels=input_a_dim ,kernel_size=2,stride=2,dimension=3),
+                        ME.MinkowskiBatchNorm(input_a_dim),
+                        ME.MinkowskiReLU(),
+                        )
+
+        self.conv_proj = nn.Sequential(
+                        ME.MinkowskiConvolutionTranspose(in_channels=input_a_dim + input_a_dim, out_channels=out_dim,kernel_size=2,stride=2,dimension=3),
+                        ME.MinkowskiBatchNorm(out_dim),
+                        ME.MinkowskiReLU(),
+                        )
+
+    def forward(self, x_a, x_b):
+        x_a = self.conv_a(x_a)
+        x = ME.cat(x_a, x_b)
+        x = self.conv_proj(x)
+        return x
 
 class TULayer(nn.Module):
     def __init__(self, input_a_dim, input_b_dim, out_dim,k=3):
@@ -435,13 +402,6 @@ class TULayer(nn.Module):
 
             dists, idx = three_nn(x_bc.float(), x_ac.float())
 
-            # dists_ = square_distance(x_bc, x_ac)
-            # dists_, idx_ = dists_.sort(dim=-1)
-            # dists, idx = dists_[:,:,:self.k], idx_[:,:,:self.k]
-
-            # del dists_, idx_
-            # torch.cuda.empty_cache()
-
             mask = (dists.sum(dim=-1)>0).unsqueeze(-1).repeat(1,1,3)
 
             dist_recip = 1.0 / (dists + 1e-1)
@@ -450,10 +410,8 @@ class TULayer(nn.Module):
             weight = weight*mask  # mask the zeros part
 
             interpolated_points = three_interpolate(x_af.transpose(1,2).contiguous(), idx, weight).transpose(1,2) # [B, N_b, dim]
-            # interpolated_points = torch.sum(grouping_operation_cuda(x_af.transpose(1,2).contiguous(), idx.int())*weight.view(B, 1, N_b, 3) ,dim=-1)  # [B, dim, N_b]
-            # interpolated_points = interpolated_points.transpose(1,2) # [B, N_b, dim]
             out = interpolated_points + x_bf
-            # DEBUG: only assign to the b-branch is ok?
+
             out = torch.gather(out.reshape(B*N_b,dim), dim=0, index=idx_b) # should be the same size with x_a.F
             x = ME.SparseTensor(features = out, coordinate_map_key=x_b.coordinate_map_key, coordinate_manager=x_b.coordinate_manager)
 
@@ -486,25 +444,6 @@ def index_points(points, idx):
     res = torch.gather(points, 1, idx[..., None].expand(-1, -1, points.size(-1)))
     return res.reshape(*raw_size, -1)
 
-class TransposeLayerNorm(nn.Module):
-
-    def __init__(self, dim):
-        super(TransposeLayerNorm, self).__init__()
-        self.dim = dim
-        self.norm = nn.LayerNorm(dim)
-
-    def forward(self, x):
-        if len(x.shape) == 3:
-            # [bs, in_dim, npoints]
-            pass
-        elif len(x.shape) == 4:
-            # [bs, in_dim, npoints, k]
-            pass
-        else:
-            raise NotImplementedError
-
-        return self.norm(x.transpose(1,-1)).transpose(1,-1)
-
 class StackedPTBlock(nn.Module):
     def __init__(self, in_dim, hidden_dim, is_firstlayer=False, n_sample=16, r=10, skip_knn=False, kernel_size=1):
         super().__init__()
@@ -518,7 +457,6 @@ class StackedPTBlock(nn.Module):
         return x
 
 class PTBlock(nn.Module):
-    # TODO: set proper r, too small will cause less points
     def __init__(self, in_dim, hidden_dim, is_firstlayer=False, n_sample=16, r=10, skip_knn=False, kernel_size=1):
         super().__init__()
         '''
@@ -532,20 +470,21 @@ class PTBlock(nn.Module):
         self.skip_knn = skip_knn
         self.kernel_size = kernel_size
 
-
-        self.kernel_size = 1 # DEBUG ONLY
-
         self.in_dim = in_dim
         self.hidden_dim = hidden_dim
         self.out_dim = self.hidden_dim
         self.vector_dim = self.out_dim // 1
-
         self.n_sample = n_sample
 
+        self.KS_1 = True
         self.USE_KNN = True
+        self.use_vector_attn = True  # whether to use the vector att or the original attention
+        self.WITH_POSE_ENCODING = True
+        self.SKIP_ATTN=False
 
-        # whether to use the vector att or the original attention
-        self.use_vector_attn = True
+        if self.KS_1:
+            self.kernel_size = 1
+
         if not self.use_vector_attn:
             self.nhead = 4
 
@@ -564,7 +503,7 @@ class PTBlock(nn.Module):
         self.psi = nn.Sequential(
             ME.MinkowskiConvolution(self.hidden_dim, self.out_dim, kernel_size=self.kernel_size, dimension=3)
         )
-        self.SKIP_ATTN=False
+
         if self.SKIP_ATTN:
             KERNEL_SIZE = 1
             self.alpha = nn.Sequential(
@@ -575,15 +514,6 @@ class PTBlock(nn.Module):
                     nn.BatchNorm1d(self.hidden_dim),
                     nn.ReLU(),
                     )
-
-            # self.alpha = nn.Sequential(
-                # ME.MinkowskiConvolution(self.hidden_dim, self.out_dim, kernel_size=self.kernel_size, dimension=3),
-                # ME.MinkowskiBatchNorm(self.out_dim),
-                # ME.MinkowskiReLU(),
-                # ME.MinkowskiConvolution(self.out_dim, self.out_dim, kernel_size=self.kernel_size, dimension=3),
-                # ME.MinkowskiBatchNorm(self.out_dim),
-                # ME.MinkowskiReLU(),
-                # )
         else:
             self.alpha = nn.Sequential(
                 ME.MinkowskiConvolution(self.hidden_dim, self.out_dim, kernel_size=self.kernel_size, dimension=3)
@@ -605,14 +535,6 @@ class PTBlock(nn.Module):
                     nn.BatchNorm2d(self.out_dim),
                 )
 
-        # self.delta = nn.Sequential(
-            # nn.Conv2d(3, self.hidden_dim, 3, padding=1), # debug： whether using 3x3 or 1x1 linear embedding
-            # nn.BatchNorm2d(self.hidden_dim),
-            # nn.ReLU(),
-            # nn.Conv2d(self.hidden_dim, self.out_dim, 3, padding=1),
-            # nn.BatchNorm2d(self.out_dim),
-        # )
-
     def forward(self, x : ME.SparseTensor, aux=None):
         '''
         input_p:  B, 3, npoint
@@ -633,40 +555,13 @@ class PTBlock(nn.Module):
             y = self.linear_down(x)
             return y+res
 
-            # self.cube_query = cube_query(r=self.r, k=self.k)
-            # neighbor, mask, idx_ = self.cube_query.get_neighbor(x, x)
-            # x = self.linear_top(x)
-            # new_x = get_neighbor_feature(neighbor, x)
-
-            # y = get_neighbor_feature(neighbor, self.tmp_linear(x))
-            # y = y.mean(dim=1)
-            # y = ME.SparseTensor(features = y, coordinate_map_key=x.coordinate_map_key, coordinate_manager=x.coordinate_manager)
-            # y = self.linear_down(x)
-            # return y+res
-
-        # ------------------------------------------------------------------------------
-
         else:
-            # self.USE_KNN = False
             self.cube_query = cube_query(r=self.r, k=self.k, knn=self.USE_KNN)
 
             # neighbor: [B*npoint, k, bxyz]
             # mask: [B*npoint, k]
             # idx: [B_nq], used for scatter/gather
             neighbor, mask, idx_ = self.cube_query.get_neighbor(x, x)
-
-            # DEBUG ONLY
-            # self.query_knn = cube_query(r=1000, k=self.k, knn=True)
-            # neighbor_knn, mask, idx_ = self.query_knn.get_neighbor(x, x)
-            # d = {}
-            # batch_id = 0
-            # point_id = 1000
-            # batch_ends = torch.where(x.C[:,0] == batch_id)[0][-1]
-            # d['voxels'] = x.C[:batch_ends,1:]
-            # d['center'] = x.C[point_id,1:]
-            # d['nei-ball'] = neighbor[point_id,:,1:]
-            # d['nei-knn'] = neighbor_knn[point_id,:,1:]
-            # torch.save(d, 'voxel.pth')
 
             self.register_buffer('neighbor_map', neighbor)
             self.register_buffer('input_map', x.C)
@@ -693,10 +588,7 @@ class PTBlock(nn.Module):
             '''
 
             '''Gene the pos_encoding'''
-            try:
-                relative_xyz = neighbor - x.C[:,None,:].repeat(1,self.k,1) # (nvoxel, k, bxyz), we later pad it to [B, xyz, nvoxel_batch, k]
-            except RuntimeError:
-                import ipdb; ipdb.set_trace()
+            relative_xyz = neighbor - x.C[:,None,:].repeat(1,self.k,1) # (nvoxel, k, bxyz), we later pad it to [B, xyz, nvoxel_batch, k]
 
             '''
             mask the neighbor when not in the same instance-class
@@ -710,8 +602,7 @@ class PTBlock(nn.Module):
             else:
                 neighbor_mask = None
 
-            WITH_POSE_ENCODING = True
-            if WITH_POSE_ENCODING:
+            if self.WITH_POSE_ENCODING:
                 relative_xyz[:,0,0] = x.C[:,0] # get back the correct batch index, because we messed batch index in the subtraction above
                 relative_xyz = pad_zero(relative_xyz, mask) # [B, xyz, nvoxel_batch, k]
                 pose_tensor = self.delta(relative_xyz.float()) # (B, feat_dim, nvoxel_batch, k)
@@ -719,7 +610,7 @@ class PTBlock(nn.Module):
 
             if self.SKIP_ATTN:
                 grouped_x = get_neighbor_feature(neighbor, x) # (nvoxel, k, feat_dim)
-                if WITH_POSE_ENCODING:
+                if self.WITH_POSE_ENCODING:
                     alpha = self.alpha((grouped_x + pose_tensor).transpose(1,2))
                 else:
                     alpha = self.alpha((grouped_x).transpose(1,2))
@@ -744,11 +635,11 @@ class PTBlock(nn.Module):
                 self.out_dim and self.vector_dim are all 32 here, so y is still [16, 32, 4096, 16]
                 y = y.sum(dim=-1) # feature aggregation, y becomes [B, out_dim, npoint]
                 '''
-                if WITH_POSE_ENCODING:
+                if self.WITH_POSE_ENCODING:
                     attn_map = F.softmax(self.gamma((phi - psi + pose_tensor).transpose(1,2)), dim=-1)
                 else:
                     attn_map = F.softmax(self.gamma((phi - psi).transpose(1,2)), dim=-1)
-                if WITH_POSE_ENCODING:
+                if self.WITH_POSE_ENCODING:
                     self_feat = (alpha + pose_tensor).permute(0,2,1) # (nvoxel, k, feat_dim) -> (nvoxel, feat_dim, k)
                 else:
                     self_feat = (alpha).permute(0,2,1) # (nvoxel, k, feat_dim) -> (nvoxel, feat_dim, k)
@@ -923,20 +814,6 @@ class cube_query(object):
         else:
             query_and_group_cuda = QueryAndGroup(radius=self.r, nsample=self.k, use_xyz=False)
             coord = coord.float()
-
-            # CK the proper radius size
-            # radius = 6000 / n
-            # k = 8
-
-            # query_idx = query_ball_point_cuda(self.r, self.k, coord, coord) # [bs, npoint, k]
-            # self.knn = KNN(k=self.k, transpose_mode=True)
-            # _, knn_idx = self.knn(coord.contiguous(), coord)
-            # d = {}
-            # d['data'] = coord
-            # d['query'] = query_idx[0,100]
-            # d['knn'] = knn_idx[0,100]
-            # torch.save(d, './coord.pth')
-            # import ipdb; ipdb.set_trace()
 
             idxs = query_and_group_cuda(
                 xyz=coord,

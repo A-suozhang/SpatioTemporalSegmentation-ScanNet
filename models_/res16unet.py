@@ -213,36 +213,38 @@ class Res16UNetBase(ResNetBase):
   def forward(self, x, save_anchor=False):
     if save_anchor:
         self.anchors = []
-
+    # mapped to transformer.stem1
     out = self.conv0p1s1(x)
     out = self.bn0(out)
     out_p1 = get_nonlinearity_fn(self.config.nonlinearity, out)
-
+    # mapped to transformer.stem2
     out = self.conv1p1s2(out_p1)
     out = self.bn1(out)
     out = get_nonlinearity_fn(self.config.nonlinearity, out)
+    
+    # mapped to transformer.PTBlock1
     out_b1p2 = self.block1(out)
-
     if save_anchor:
         self.anchors.append(out_b1p2)
 
+    # mapped to transformer.PTBlock2
     out = self.conv2p2s2(out_b1p2)
     out = self.bn2(out)
     out = get_nonlinearity_fn(self.config.nonlinearity, out)
     out_b2p4 = self.block2(out)
-
     if save_anchor:
         self.anchors.append(out_b2p4)
 
+    # mapped to transformer.PTBlock3
     out = self.conv3p4s2(out_b2p4)
     out = self.bn3(out)
     out = get_nonlinearity_fn(self.config.nonlinearity, out)
     out_b3p8 = self.block3(out)
-
     if save_anchor:
         self.anchors.append(out_b3p8)
 
     # pixel_dist=16
+    # mapped to transformer.PTBlock4
     out = self.conv4p8s2(out_b3p8)
     out = self.bn4(out)
     out = get_nonlinearity_fn(self.config.nonlinearity, out)
@@ -252,30 +254,37 @@ class Res16UNetBase(ResNetBase):
 
 
     # pixel_dist=8
+    # mapped to transfrormer.PTBlock5
     out = self.convtr4p16s2(out)
     out = self.bntr4(out)
     out = get_nonlinearity_fn(self.config.nonlinearity, out)
-
     out = me.cat(out, out_b3p8)
     out = self.block5(out)
+    if save_anchor:
+      self.anchors.append(out)
 
     # pixel_dist=4
+    # mapped to transformer.PTBlock6
     out = self.convtr5p8s2(out)
     out = self.bntr5(out)
     out = get_nonlinearity_fn(self.config.nonlinearity, out)
-
     out = me.cat(out, out_b2p4)
     out = self.block6(out)
+    if save_anchor:
+      self.anchors.append(out)
 
     # pixel_dist=2
+    # mapped to transformer.PTBlock7
     out = self.convtr6p4s2(out)
     out = self.bntr6(out)
     out = get_nonlinearity_fn(self.config.nonlinearity, out)
-
     out = me.cat(out, out_b1p2)
     out = self.block7(out)
+    if save_anchor:
+      self.anchors.append(out)
 
     # pixel_dist=1
+    # mapped to transformer.final_conv
     out = self.convtr7p2s2(out)
     out = self.bntr7(out)
     out = get_nonlinearity_fn(self.config.nonlinearity, out)

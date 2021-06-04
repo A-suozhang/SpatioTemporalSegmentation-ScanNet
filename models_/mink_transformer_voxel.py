@@ -47,7 +47,7 @@ from models.modules.resnet_block import BasicBlock, Bottleneck
 
 import sys
 # sys.path.append('/home/zhaotianchen/project/point-transformer/pt-cls/model')
-from models.pct_voxel_utils import TDLayer, TULayer, PTBlock, StackedPTBlock
+from models.pct_voxel_utils import TDLayer, TULayer, PTBlock, StackedPTBlock, ResNetLikeTU
 
 
 
@@ -147,9 +147,15 @@ class MinkowskiVoxelTransformer(ME.MinkowskiNetwork):
         self.PTBlock2 = PTBlock(in_dim=self.dims[1], hidden_dim = self.dims[1], n_sample=self.neighbor_ks[1], skip_knn=False, r=2*base_r, kernel_size=config.ks)
         self.PTBlock3 = PTBlock(in_dim=self.dims[2],hidden_dim = self.dims[2], n_sample=self.neighbor_ks[2], skip_knn=False, r=2*base_r, kernel_size=config.ks)
         self.PTBlock4 = PTBlock(in_dim=self.dims[3], hidden_dim = self.dims[3], n_sample=self.neighbor_ks[3], skip_knn=False, r=4*base_r, kernel_size=config.ks)
-        self.PTBlock5 = PTBlock(in_dim=self.dims[2], hidden_dim = self.dims[2], n_sample=self.neighbor_ks[3], skip_knn=False, r=2*base_r, kernel_size=config.ks) # out: 256
-        self.PTBlock6 = PTBlock(in_dim=self.dims[1], hidden_dim=self.dims[1], n_sample=self.neighbor_ks[2], skip_knn=False, r=2*base_r, kernel_size=config.ks) # out: 128
-        self.PTBlock7 = PTBlock(in_dim=self.dims[0], hidden_dim=self.dims[0], n_sample=self.neighbor_ks[1], skip_knn=False, r=base_r, kernel_size=config.ks) # out: 64
+
+        # self.PTBlock5 = PTBlock(in_dim=self.dims[2], hidden_dim = self.dims[2], n_sample=self.neighbor_ks[3], skip_knn=False, r=2*base_r, kernel_size=config.ks) # out: 256
+        # self.PTBlock6 = PTBlock(in_dim=self.dims[1], hidden_dim=self.dims[1], n_sample=self.neighbor_ks[2], skip_knn=False, r=2*base_r, kernel_size=config.ks) # out: 128
+        # self.PTBlock7 = PTBlock(in_dim=self.dims[0], hidden_dim=self.dims[0], n_sample=self.neighbor_ks[1], skip_knn=False, r=base_r, kernel_size=config.ks) # out: 64
+
+        self.PTBlock5 = PTBlock(in_dim=128, hidden_dim=128,n_sample=self.neighbor_ks[3], skip_knn=False, r=2*base_r, kernel_size=config.ks) # out: 256
+        self.PTBlock6 = PTBlock(in_dim=128, hidden_dim=128, n_sample=self.neighbor_ks[2], skip_knn=False, r=2*base_r, kernel_size=config.ks) # out: 128
+        self.PTBlock7 = PTBlock(in_dim=96, hidden_dim=96, n_sample=self.neighbor_ks[1], skip_knn=False, r=base_r, kernel_size=config.ks) # out: 64
+
 
         # self.PTBlock1 = StackedPTBlock(in_dim=self.dims[0], hidden_dim = self.dims[0], n_sample=self.neighbor_ks[0], skip_knn=False, r=base_r, kernel_size=config.ks)
         # self.PTBlock2 = StackedPTBlock(in_dim=self.dims[1], hidden_dim = self.dims[1], n_sample=self.neighbor_ks[1], skip_knn=False, r=2*base_r, kernel_size=config.ks)
@@ -179,27 +185,30 @@ class MinkowskiVoxelTransformer(ME.MinkowskiNetwork):
         # pixel size 16: PTBlock4
 
         # pixel size 8
-        self.TULayer5 = TULayer(input_a_dim=self.dims[3], input_b_dim = self.dims[2], out_dim=self.dims[2]) # out: 256//2 + 128 = 256
+        # self.TULayer5 = TULayer(input_a_dim=self.dims[3], input_b_dim = self.dims[2], out_dim=self.dims[2]) # out: 256//2 + 128 = 256
+        self.TULayer5 = TULayer(input_a_dim=256, input_b_dim = 128, out_dim=128) # out: 256//2 + 128 = 256
 
         # pixel size 4
-        self.TULayer6 = TULayer(input_a_dim=self.dims[2], input_b_dim = self.dims[1], out_dim=self.dims[1]) # out: 256//2 + 64 = 192
+        # self.TULayer6 = TULayer(input_a_dim=self.dims[2], input_b_dim = self.dims[1], out_dim=self.dims[1]) # out: 256//2 + 64 = 192
+        self.TULayer6 = TULayer(input_a_dim=128, input_b_dim = 64, out_dim=128) # out: 256//2 + 64 = 192
 
         # pixel size 2
-        self.TULayer7 = TULayer(input_a_dim=self.dims[1], input_b_dim = self.dims[0], out_dim=self.dims[0]) # 128 // 2 + 32 = 96
+        # self.TULayer7 = TULayer(input_a_dim=self.dims[1], input_b_dim = self.dims[0], out_dim=self.dims[0]) # 128 // 2 + 32 = 96
+        self.TULayer7 = TULayer(input_a_dim=128, input_b_dim = 32, out_dim=96) # 128 // 2 + 32 = 96
 
         # pixel size 1
         # self.PTBlock8 = PTBlock(in_dim=self.dims[0], hidden_dim=self.dims[0], n_sample=self.neighbor_ks[1])  # 32
 
         # self.TULayer8 = TULayer(input_a_dim=self.dims[0], input_b_dim = self.dims[0], out_dim=self.dims[0]) # 64 // 2 + 32
-        # self.fc = ME.MinkowskiLinear(self.dims[0], out_channel)
+        self.TULayer8 = TULayer(input_a_dim=96, input_b_dim = 32, out_dim=96) # 64 // 2 + 32
+        self.fc = ME.MinkowskiLinear(96, out_channel)
 
-        self.final_conv = nn.Sequential(
-                ME.MinkowskiConvolutionTranspose(self.dims[0], self.final_dim, kernel_size=2, stride=2, dimension=3),
-                ME.MinkowskiBatchNorm(self.final_dim),
-                ME.MinkowskiReLU(),
-                # ME.MinkowskiDropout(0.4), # DEBUG: no use
-            )
-        self.fc = ME.MinkowskiLinear(self.final_dim+self.dims[0], out_channel)
+        # self.final_conv = nn.Sequential(
+                # ME.MinkowskiConvolutionTranspose(self.dims[0], self.final_dim, kernel_size=2, stride=2, dimension=3),
+                # ME.MinkowskiBatchNorm(self.final_dim),
+                # ME.MinkowskiReLU(),
+            # )
+        # self.fc = ME.MinkowskiLinear(self.final_dim+self.dims[0], out_channel)
 
 
     def forward(self, in_field: ME.TensorField, aux=None, save_anchor=False):
@@ -258,24 +267,29 @@ class MinkowskiVoxelTransformer(ME.MinkowskiNetwork):
 
             x = self.TDLayer3(x3)
             x = self.PTBlock4(x)
-
             if save_anchor:
                 self.anchors.append(x)
 
             x = self.TULayer5(x, x3)
             x = self.PTBlock5(x)
+            if save_anchor:
+                self.anchors.append(x)
 
             x = self.TULayer6(x, x2)
             x = self.PTBlock6(x)
+            if save_anchor:
+                self.anchors.append(x)
 
             x = self.TULayer7(x, x1)
             x = self.PTBlock7(x)
+            if save_anchor:
+                self.anchors.append(x)
 
-            # x = self.TULayer8(x, x0)
-            # x = self.fc(x)
+            x = self.TULayer8(x, x0)
+            x = self.fc(x)
 
-            x = self.final_conv(x)
-            x = self.fc(me.cat(x0,x))
+            # x = self.final_conv(x)
+            # x = self.fc(me.cat(x0,x))
 
         if save_anchor:
             return x, self.anchors
