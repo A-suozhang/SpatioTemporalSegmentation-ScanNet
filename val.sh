@@ -1,8 +1,8 @@
 export BATCH_SIZE=8
 
 #export MODEL=Res16UNet34C
-export MODEL=Res16UNet18A
-#export MODEL=MinkowskiVoxelTransformer
+#export MODEL=Res16UNet18A
+export MODEL=MinkowskiVoxelTransformer
 
 #export MODEL=PointTransformer
 #export IS_EXPORT=True

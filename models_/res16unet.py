@@ -255,7 +255,7 @@ class Res16UNetBase(ResNetBase):
     out = self.convtr4p16s2(out)
     out = self.bntr4(out)
     out = get_nonlinearity_fn(self.config.nonlinearity, out)
-    
+
     out = me.cat(out, out_b3p8)
     out = self.block5(out)
 

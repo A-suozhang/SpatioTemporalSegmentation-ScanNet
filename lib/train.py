@@ -455,7 +455,7 @@ def train_point(model, data_loader, val_data_loader, config, transform_data_fn=N
 def DistillLoss(tch_xs, stu_xs):
 
     # l2_loss = torch.zeros([B]).to(tch_xs[0].device)
-    print('start computing')
+    # print('start computing')
     l2_losses = []
     for tch_x,stu_x in zip(tch_xs, stu_xs):
         diff = tch_x - stu_x
@@ -463,13 +463,15 @@ def DistillLoss(tch_xs, stu_xs):
         out = ME.MinkowskiGlobalSumPooling()(diff_l2)
         l2_losses.append(out.F.sum(-1))
     l2_loss = torch.stack(l2_losses).sum()
-    print(l2_loss)
+    # print(l2_loss)
 
     return l2_loss
 
 def train_distill(model, data_loader, val_data_loader, config, transform_data_fn=None):
-    '''the distillation training'''
-
+    '''
+    the distillation training
+    some cfgs here
+    '''
     distill_lambda = 5.e-7
 
     device = get_torch_device(config.is_cuda)
@@ -498,6 +500,7 @@ def train_distill(model, data_loader, val_data_loader, config, transform_data_fn
 
     tch_model_cls = load_model('Res16UNet18A')
     tch_model = tch_model_cls(3,20,config).to(device)
+
     checkpoint_fn = "/home/zhaotianchen/project/point-transformer/SpatioTemporalSegmentation-ScanNet/outputs/ScannetSparseVoxelizationDataset/Res16UNet18A/bak/weights.pth"
     assert osp.isfile(checkpoint_fn)
     logging.info("=> loading checkpoint '{}'".format(checkpoint_fn))
@@ -543,7 +546,6 @@ def train_distill(model, data_loader, val_data_loader, config, transform_data_fn
         total_iou_deno_class = torch.zeros(num_class, device=device)
 
         for iteration in range(len(data_loader) // config.iter_size):
-
 
             # TODO: add some warmup
             if iteration < 10:
@@ -595,8 +597,10 @@ def train_distill(model, data_loader, val_data_loader, config, transform_data_fn
                 else:
                     if use_distill:
                         soutput, anchor = model(sinput, save_anchor=True)
+                        # if pretrained tch, donot let the grad flow to tch to update its params
                         with torch.no_grad():
                             tch_soutput, tch_anchor = tch_model(sinput, save_anchor=True)
+
                     else:
                         soutput = model(sinput)
                 # The output of the network is not sorted

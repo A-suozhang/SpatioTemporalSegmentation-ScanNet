@@ -51,7 +51,7 @@ def index_points_cuda(points, idx):
     """
     points = points.transpose(1,2).contiguous() #[B, C, N]
     new_points = index_points_cuda_transpose(points, idx) #[B, C, S]
-    
+
     return new_points.transpose(1,2).contiguous()
 
 
@@ -60,7 +60,7 @@ def stem_knn(xyz, points, k):
     xyz = xyz.permute([0,2,1])
     _, idx = knn(xyz.coniguous(), xyz) # xyz: [bs, npoints, coord] idx: [bs, npoint, k]
     idx = idx.int()
-    
+
     # take in [B, 3, N]
     grouped_xyz = grouping_operation_cuda(xyz.transpose(1,2).contiguous(), idx) # [bs, xyz, n_point, k]
     grouped_points = grouping_operation_cuda(points.contiguous(), idx) #B, C, npoint, k)
@@ -349,37 +349,50 @@ class TULayer(nn.Module):
         self.out_dim = out_dim
 
         self.POINT_TR_LIKE = False
+        self.SUM_FEATURE = True # only used when POINTTR_LIKE is False
 
         # -------- Point TR like -----------
         if self.POINT_TR_LIKE:
             self.linear_a = nn.Linear(input_a_dim, out_dim)
             self.linear_b = nn.Linear(input_b_dim, out_dim)
         else:
-            self.conv = ME.MinkowskiConvolutionTranspose(
-                in_channels=input_a_dim,
-                out_channels=input_a_dim // 2,
-                kernel_size=2,
-                stride=2,
-                dimension=3
-            )
-            self.bn = ME.MinkowskiBatchNorm(
-                self.input_a_dim // 2
-            )
-            self.relu = ME.MinkowskiReLU()
+            if self.SUM_FEATURE:
+                self.conv_a = nn.Sequential(
+                        ME.MinkowskiConvolutionTranspose(in_channels=input_a_dim, out_channels=out_dim,kernel_size=2,stride=2,dimension=3),
+                        ME.MinkowskiBatchNorm(out_dim),
+                        ME.MinkowskiReLU(),
+                        )
+                self.conv_b = nn.Sequential(
+                        ME.MinkowskiConvolutionTranspose(in_channels=input_b_dim, out_channels=out_dim,kernel_size=1,stride=1,dimension=3),
+                        ME.MinkowskiBatchNorm(out_dim),
+                        ME.MinkowskiReLU(),
+                        )
+            else:
+                self.conv = ME.MinkowskiConvolutionTranspose(
+                    in_channels=input_a_dim,
+                    out_channels=input_a_dim // 2,
+                    kernel_size=2,
+                    stride=2,
+                    dimension=3
+                )
+                self.bn = ME.MinkowskiBatchNorm(
+                    self.input_a_dim // 2
+                )
+                self.relu = ME.MinkowskiReLU()
 
-            # -----------------------------------------
+                # -----------------------------------------
 
-            self.out_conv = ME.MinkowskiConvolution(
-                in_channels=input_a_dim//2 + input_b_dim,
-                out_channels=out_dim,
-                kernel_size=3,
-                stride=1,
-                dimension=3
-            )
-            self.out_bn = ME.MinkowskiBatchNorm(
-                self.out_dim
-            )
-            self.out_relu = ME.MinkowskiReLU()
+                self.out_conv = ME.MinkowskiConvolution(
+                    in_channels=input_a_dim//2 + input_b_dim,
+                    out_channels=out_dim,
+                    kernel_size=3,
+                    stride=1,
+                    dimension=3
+                )
+                self.out_bn = ME.MinkowskiBatchNorm(
+                    self.out_dim
+                )
+                self.out_relu = ME.MinkowskiReLU()
 
     def forward(self, x_a : ME.SparseTensor, x_b: ME.SparseTensor):
         """
@@ -445,14 +458,18 @@ class TULayer(nn.Module):
             x = ME.SparseTensor(features = out, coordinate_map_key=x_b.coordinate_map_key, coordinate_manager=x_b.coordinate_manager)
 
         else:
-
-            x_a = self.conv(x_a)
-            x_a = self.bn(x_a)
-            x_a = self.relu(x_a)
-            x = me.cat(x_a, x_b)
-            x = self.out_conv(x)
-            x = self.out_bn(x)
-            x = self.out_relu(x)
+            if self.SUM_FEATURE:
+                x_a = self.conv_a(x_a)
+                x_b = self.conv_b(x_b)
+                x = x_a + x_b
+            else:
+                x_a = self.conv(x_a)
+                x_a = self.bn(x_a)
+                x_a = self.relu(x_a)
+                x = me.cat(x_a, x_b)
+                x = self.out_conv(x)
+                x = self.out_bn(x)
+                x = self.out_relu(x)
 
         return x
 
@@ -516,7 +533,7 @@ class PTBlock(nn.Module):
         self.kernel_size = kernel_size
 
 
-        # self.kernel_size = 1 # DEBUG ONLY
+        self.kernel_size = 1 # DEBUG ONLY
 
         self.in_dim = in_dim
         self.hidden_dim = hidden_dim

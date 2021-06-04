@@ -124,8 +124,6 @@ class MinkowskiVoxelTransformer(ME.MinkowskiNetwork):
         else:
             in_channel = in_channel
 
-        # the 1st ds & last upsample use stridedConv/TransitionUp/Down
-        self.POINT_TR_LIKE = False
 
         # pixel size 1
         self.stem1 = nn.Sequential(
@@ -134,16 +132,14 @@ class MinkowskiVoxelTransformer(ME.MinkowskiNetwork):
             ME.MinkowskiReLU(),
         )
 
-        if self.POINT_TR_LIKE:
-            self.stem2 = TDLayer(input_dim=self.dims[0], out_dim=self.dims[0])
-        else:
-            # does the spatial downsampling
-            # pixel size 2
-            self.stem2 = nn.Sequential(
+        # self.stem2 = TDLayer(input_dim=self.dims[0], out_dim=self.dims[0])
+        # DEBUG ONLY!!
+        self.stem2 = nn.Sequential(
                     ME.MinkowskiConvolution(stem_dim, stem_dim, kernel_size=config.ks, dimension=3, stride=2),
                     ME.MinkowskiBatchNorm(stem_dim),
                     ME.MinkowskiReLU(),
                 )
+
 
         base_r = 5
 
@@ -194,17 +190,17 @@ class MinkowskiVoxelTransformer(ME.MinkowskiNetwork):
         # pixel size 1
         # self.PTBlock8 = PTBlock(in_dim=self.dims[0], hidden_dim=self.dims[0], n_sample=self.neighbor_ks[1])  # 32
 
-        if self.POINT_TR_LIKE:
-            self.TULayer8 = TULayer(input_a_dim=self.dims[0], input_b_dim = self.dims[0], out_dim=self.dims[0]) # 64 // 2 + 32
-            self.fc = ME.MinkowskiLinear(self.dims[0], out_channel)
-        else:
-            self.final_conv = nn.Sequential(
+        # self.TULayer8 = TULayer(input_a_dim=self.dims[0], input_b_dim = self.dims[0], out_dim=self.dims[0]) # 64 // 2 + 32
+        # self.fc = ME.MinkowskiLinear(self.dims[0], out_channel)
+
+        self.final_conv = nn.Sequential(
                 ME.MinkowskiConvolutionTranspose(self.dims[0], self.final_dim, kernel_size=2, stride=2, dimension=3),
                 ME.MinkowskiBatchNorm(self.final_dim),
                 ME.MinkowskiReLU(),
                 # ME.MinkowskiDropout(0.4), # DEBUG: no use
             )
-            self.fc = ME.MinkowskiLinear(self.final_dim+self.dims[0], out_channel)
+        self.fc = ME.MinkowskiLinear(self.final_dim+self.dims[0], out_channel)
+
 
     def forward(self, in_field: ME.TensorField, aux=None, save_anchor=False):
 
@@ -275,10 +271,9 @@ class MinkowskiVoxelTransformer(ME.MinkowskiNetwork):
             x = self.TULayer7(x, x1)
             x = self.PTBlock7(x)
 
-        if self.POINT_TR_LIKE:
-            x = self.TULayer8(x, x0)
-            x = self.fc(x)
-        else:
+            # x = self.TULayer8(x, x0)
+            # x = self.fc(x)
+
             x = self.final_conv(x)
             x = self.fc(me.cat(x0,x))
 
