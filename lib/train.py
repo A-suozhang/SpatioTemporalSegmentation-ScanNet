@@ -128,7 +128,8 @@ def train(model, data_loader, val_data_loader, config, transform_data_fn=None):
                 if aux is not None:
                     soutput = model(sinput, aux)
                 else:
-                    soutput = model(sinput)
+                    soutput = model(sinput, iter_= curr_iter / config.max_iter)  # feed in the progress of training for annealing inside the model
+                    # soutput = model(sinput)
                 # The output of the network is not sorted
                 target = target.view(-1).long().to(device)
 
@@ -488,10 +489,14 @@ def train_distill(model, data_loader, val_data_loader, config, transform_data_fn
     the distillation training
     some cfgs here
     '''
-    distill_lambda = 1.
+
+    distill_lambda = 1
+
     # TWO_STAGE=True: Transformer is first trained with L2 loss to match ResNet's activation, and then it fintunes like normal training on the second stage. 
     # TWO_STAGE=False: Transformer trains with combined loss
+
     TWO_STAGE = False
+    # STAGE_PERCENTAGE = 0.7
 
     device = get_torch_device(config.is_cuda)
     # Set up the train flag for batch normalization
@@ -520,7 +525,7 @@ def train_distill(model, data_loader, val_data_loader, config, transform_data_fn
     tch_model_cls = load_model('Res16UNet18A')
     tch_model = tch_model_cls(3,20,config).to(device)
 
-    checkpoint_fn = "/home/zhaotianchen/project/point-transformer/SpatioTemporalSegmentation-ScanNet/outputs/ScannetSparseVoxelizationDataset/Res16UNet18A/bak/weights.pth"
+    checkpoint_fn = "/home/zhaotianchen/project/point-transformer/SpatioTemporalSegmentation-ScanNet/outputs/ScannetSparseVoxelizationDataset/Res16UNet18A/resnet_base/weights.pth"
     assert osp.isfile(checkpoint_fn)
     logging.info("=> loading checkpoint '{}'".format(checkpoint_fn))
     state = torch.load(checkpoint_fn)
@@ -575,7 +580,8 @@ def train_distill(model, data_loader, val_data_loader, config, transform_data_fn
                 use_distill = True
 
             # Stage 1 / Stage 2 boundary
-            stage_boundary = int(total_iteration * 0.4)
+            if TWO_STAGE:
+                stage_boundary = int(total_iteration * STAGE_PERCENTAGE)
 
             optimizer.zero_grad()
             data_time, batch_loss = 0, 0

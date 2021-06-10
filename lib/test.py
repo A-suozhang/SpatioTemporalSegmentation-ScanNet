@@ -120,10 +120,10 @@ def test(model, data_loader, config, transform_data_fn=None, has_gt=True, save_p
 
             # Feed forward
             if aux is not None:
-                inputs = (sinput,aux)
+                soutput = model(sinput)
             else:
-                inputs = (sinput,)
-            soutput = model(*inputs)
+                soutput = model(sinput)
+                # soutput = model(sinput, iter_ = 0.99)
             output = soutput.F
             pred = get_prediction(dataset, output, target).int()
             assert sum([int(t.shape[0]) for t in unique_map_list]) == len(pred), "number of points in unique_map doesn't match predition, do not enable preprocessing"
@@ -195,6 +195,8 @@ def test(model, data_loader, config, transform_data_fn=None, has_gt=True, save_p
         print("===> saved prediction result")
 
     global_time = global_timer.toc(False)
+
+    save_map(model, config)
 
     reordered_ious = dataset.reorder_result(ious)
     reordered_ap_class = dataset.reorder_result(ap_class)

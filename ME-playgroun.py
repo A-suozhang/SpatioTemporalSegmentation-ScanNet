@@ -57,6 +57,7 @@ coords = torch.tensor([[0, 2., 4., 2.],
                        ])
 
 conv1 = ME.MinkowskiConvolution(1,1,kernel_size=1,dimension=3)
+convt1 = ME.MinkowskiConvolutionTranspose(1,1,kernel_size=1,dimension=3)
 conv2 = nn.Conv2d(1,1,kernel_size=1,bias=False)
 
 
@@ -70,7 +71,11 @@ for n, m in conv1.named_parameters():
 
 conv2.weight = nn.Parameter(m.reshape(1,1,1,1))
 
-x1 = ME.SparseTensor(coordinates=coords, features=feats.reshape([-1,1]))
+x1 = ME.SparseTensor(coordinates=coords, features=feats.reshape([-1,1]))\
+
+y1 = conv1(x1)
+y1t = convt1(x1) # different weight, but they are equal
+
 x2 = ME.SparseTensor(coordinates=coords, features=feats2.reshape([-1,1]))
 
 x1_s2 = conv_s2(x1)
@@ -104,8 +109,6 @@ query_F = x1.features_at_coordinates(query_C.float()).reshape(-1,8)  # [N, 8]
 
 # find the most freq
 out, _ = torch.mode(query_F)
-
-import ipdb; ipdb.set_trace()
 
 subsampled_x1 = x1.features_at_coordinates(x1_s2.C.float())
 

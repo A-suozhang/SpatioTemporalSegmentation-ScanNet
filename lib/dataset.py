@@ -254,7 +254,7 @@ class SparseVoxelizationDataset(VoxelizationDatasetBase):
         return_transformation=return_transformation)
 
     self.sparse_voxelizer = SparseVoxelizer(
-        voxel_size=self.VOXEL_SIZE,
+        voxel_size=config.voxel_size,
         clip_bound=self.CLIP_BOUND,
         use_augmentation=augment_data,
         scale_augmentation_bound=self.SCALE_AUGMENTATION_BOUND,

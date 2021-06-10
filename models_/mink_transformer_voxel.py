@@ -111,8 +111,10 @@ class MinkowskiVoxelTransformer(ME.MinkowskiNetwork):
         self.CONV_TYPE = ConvType.SPATIAL_HYPERCUBE
 
         self.dims = np.array([32, 64, 128, 256])
-        self.neighbor_ks = np.array([12, 12, 12, 12])
-        # self.neighbor_ks = np.array([16, 16, 16, 16])
+        # self.neighbor_ks = np.array([12, 12, 12, 12])
+        self.neighbor_ks = np.array([16, 16, 16, 16])
+        # self.neighbor_ks = np.array([32, 32, 32, 32])
+        # self.neighbor_ks = np.array([8, 12, 16, 24])
         # self.neighbor_ks = np.array([8, 8, 8, 8])
 
         self.final_dim = final_dim
@@ -143,27 +145,33 @@ class MinkowskiVoxelTransformer(ME.MinkowskiNetwork):
 
         base_r = 5
 
-        self.PTBlock1 = PTBlock(in_dim=self.dims[0], hidden_dim = self.dims[0], n_sample=self.neighbor_ks[0], skip_knn=False, r=base_r, kernel_size=config.ks)
-        self.PTBlock2 = PTBlock(in_dim=self.dims[1], hidden_dim = self.dims[1], n_sample=self.neighbor_ks[1], skip_knn=False, r=2*base_r, kernel_size=config.ks)
-        self.PTBlock3 = PTBlock(in_dim=self.dims[2],hidden_dim = self.dims[2], n_sample=self.neighbor_ks[2], skip_knn=False, r=2*base_r, kernel_size=config.ks)
-        self.PTBlock4 = PTBlock(in_dim=self.dims[3], hidden_dim = self.dims[3], n_sample=self.neighbor_ks[3], skip_knn=False, r=4*base_r, kernel_size=config.ks)
+        self.ALPHA_BLENDING_MID_TR = False
 
-        # self.PTBlock5 = PTBlock(in_dim=self.dims[2], hidden_dim = self.dims[2], n_sample=self.neighbor_ks[3], skip_knn=False, r=2*base_r, kernel_size=config.ks) # out: 256
-        # self.PTBlock6 = PTBlock(in_dim=self.dims[1], hidden_dim=self.dims[1], n_sample=self.neighbor_ks[2], skip_knn=False, r=2*base_r, kernel_size=config.ks) # out: 128
-        # self.PTBlock7 = PTBlock(in_dim=self.dims[0], hidden_dim=self.dims[0], n_sample=self.neighbor_ks[1], skip_knn=False, r=base_r, kernel_size=config.ks) # out: 64
+        self.PTBlock1 = PTBlock(in_dim=self.dims[0], hidden_dim = self.dims[0], n_sample=self.neighbor_ks[0], skip_attn=True, r=base_r, kernel_size=config.ks)
+        self.PTBlock2 = PTBlock(in_dim=self.dims[1], hidden_dim = self.dims[1], n_sample=self.neighbor_ks[1], skip_attn=True, r=2*base_r, kernel_size=config.ks)
+        self.PTBlock3 = PTBlock(in_dim=self.dims[2],hidden_dim = self.dims[2], n_sample=self.neighbor_ks[2], skip_attn=True, r=2*base_r, kernel_size=config.ks)
+        self.PTBlock4 = PTBlock(in_dim=self.dims[3], hidden_dim = self.dims[3], n_sample=self.neighbor_ks[3], skip_attn=True, r=4*base_r, kernel_size=config.ks)
 
-        self.PTBlock5 = PTBlock(in_dim=128, hidden_dim=128,n_sample=self.neighbor_ks[3], skip_knn=False, r=2*base_r, kernel_size=config.ks) # out: 256
-        self.PTBlock6 = PTBlock(in_dim=128, hidden_dim=128, n_sample=self.neighbor_ks[2], skip_knn=False, r=2*base_r, kernel_size=config.ks) # out: 128
-        self.PTBlock7 = PTBlock(in_dim=96, hidden_dim=96, n_sample=self.neighbor_ks[1], skip_knn=False, r=base_r, kernel_size=config.ks) # out: 64
+        if self.ALPHA_BLENDING_MID_TR:
+            self.PTBlock4_branch = PTBlock(in_dim=self.dims[3], hidden_dim = self.dims[3], n_sample=self.neighbor_ks[3], skip_attn=True, r=4*base_r, kernel_size=config.ks)
+            self.PTBlock5_branch = PTBlock(in_dim=128, hidden_dim=128,n_sample=self.neighbor_ks[3], skip_attn=True, r=2*base_r, kernel_size=config.ks) # out: 256
+
+        # self.PTBlock5 = PTBlock(in_dim=self.dims[2], hidden_dim = self.dims[2], n_sample=self.neighbor_ks[3], skip_attn=False, r=2*base_r, kernel_size=config.ks) # out: 256
+        # self.PTBlock6 = PTBlock(in_dim=self.dims[1], hidden_dim=self.dims[1], n_sample=self.neighbor_ks[2], skip_attn=False, r=2*base_r, kernel_size=config.ks) # out: 128
+        # self.PTBlock7 = PTBlock(in_dim=self.dims[0], hidden_dim=self.dims[0], n_sample=self.neighbor_ks[1], skip_attn=False, r=base_r, kernel_size=config.ks) # out: 64
+
+        self.PTBlock5 = PTBlock(in_dim=128, hidden_dim=128,n_sample=self.neighbor_ks[3], skip_attn=True, r=2*base_r, kernel_size=config.ks) # out: 256
+        self.PTBlock6 = PTBlock(in_dim=128, hidden_dim=128, n_sample=self.neighbor_ks[2], skip_attn=True, r=2*base_r, kernel_size=config.ks) # out: 128
+        self.PTBlock7 = PTBlock(in_dim=96, hidden_dim=96, n_sample=self.neighbor_ks[1], skip_attn=True, r=base_r, kernel_size=config.ks) # out: 64
 
 
-        # self.PTBlock1 = StackedPTBlock(in_dim=self.dims[0], hidden_dim = self.dims[0], n_sample=self.neighbor_ks[0], skip_knn=False, r=base_r, kernel_size=config.ks)
-        # self.PTBlock2 = StackedPTBlock(in_dim=self.dims[1], hidden_dim = self.dims[1], n_sample=self.neighbor_ks[1], skip_knn=False, r=2*base_r, kernel_size=config.ks)
-        # self.PTBlock3 = StackedPTBlock(in_dim=self.dims[2],hidden_dim = self.dims[2], n_sample=self.neighbor_ks[2], skip_knn=False, r=2*base_r, kernel_size=config.ks)
-        # self.PTBlock4 = StackedPTBlock(in_dim=self.dims[3], hidden_dim = self.dims[3], n_sample=self.neighbor_ks[3], skip_knn=False, r=4*base_r, kernel_size=config.ks)
-        # self.PTBlock5 = StackedPTBlock(in_dim=self.dims[2], hidden_dim = self.dims[2], n_sample=self.neighbor_ks[3], skip_knn=False, r=2*base_r, kernel_size=config.ks) # out: 256
-        # self.PTBlock6 = StackedPTBlock(in_dim=self.dims[1], hidden_dim=self.dims[1], n_sample=self.neighbor_ks[2], skip_knn=False, r=2*base_r, kernel_size=config.ks) # out: 128
-        # self.PTBlock7 = StackedPTBlock(in_dim=self.dims[0], hidden_dim=self.dims[0], n_sample=self.neighbor_ks[1], skip_knn=False, r=base_r, kernel_size=config.ks) # out: 64
+        # self.PTBlock1 = StackedPTBlock(in_dim=self.dims[0], hidden_dim = self.dims[0], n_sample=self.neighbor_ks[0], skip_attn=False, r=base_r, kernel_size=config.ks)
+        # self.PTBlock2 = StackedPTBlock(in_dim=self.dims[1], hidden_dim = self.dims[1], n_sample=self.neighbor_ks[1], skip_attn=False, r=2*base_r, kernel_size=config.ks)
+        # self.PTBlock3 = StackedPTBlock(in_dim=self.dims[2],hidden_dim = self.dims[2], n_sample=self.neighbor_ks[2], skip_attn=False, r=2*base_r, kernel_size=config.ks)
+        # self.PTBlock4 = StackedPTBlock(in_dim=self.dims[3], hidden_dim = self.dims[3], n_sample=self.neighbor_ks[3], skip_attn=False, r=4*base_r, kernel_size=config.ks)
+        # self.PTBlock5 = StackedPTBlock(in_dim=self.dims[2], hidden_dim = self.dims[2], n_sample=self.neighbor_ks[3], skip_attn=False, r=2*base_r, kernel_size=config.ks) # out: 256
+        # self.PTBlock6 = StackedPTBlock(in_dim=self.dims[1], hidden_dim=self.dims[1], n_sample=self.neighbor_ks[2], skip_attn=False, r=2*base_r, kernel_size=config.ks) # out: 128
+        # self.PTBlock7 = StackedPTBlock(in_dim=self.dims[0], hidden_dim=self.dims[0], n_sample=self.neighbor_ks[1], skip_attn=False, r=base_r, kernel_size=config.ks) # out: 64
 
         # self.PTBlock1 = self._make_layer(block=BasicBlock, inplanes=self.dims[0], planes=self.dims[0], num_blocks=2)
         # self.PTBlock2 = self._make_layer(block=BasicBlock, inplanes=self.dims[1], planes=self.dims[1], num_blocks=2)
@@ -186,21 +194,21 @@ class MinkowskiVoxelTransformer(ME.MinkowskiNetwork):
 
         # pixel size 8
         # self.TULayer5 = TULayer(input_a_dim=self.dims[3], input_b_dim = self.dims[2], out_dim=self.dims[2]) # out: 256//2 + 128 = 256
-        self.TULayer5 = TULayer(input_a_dim=256, input_b_dim = 128, out_dim=128) # out: 256//2 + 128 = 256
+        self.TULayer5 = ResNetLikeTU(input_a_dim=256, input_b_dim = 128, out_dim=128) # out: 256//2 + 128 = 256
 
         # pixel size 4
         # self.TULayer6 = TULayer(input_a_dim=self.dims[2], input_b_dim = self.dims[1], out_dim=self.dims[1]) # out: 256//2 + 64 = 192
-        self.TULayer6 = TULayer(input_a_dim=128, input_b_dim = 64, out_dim=128) # out: 256//2 + 64 = 192
+        self.TULayer6 = ResNetLikeTU(input_a_dim=128, input_b_dim = 64, out_dim=128) # out: 256//2 + 64 = 192
 
         # pixel size 2
         # self.TULayer7 = TULayer(input_a_dim=self.dims[1], input_b_dim = self.dims[0], out_dim=self.dims[0]) # 128 // 2 + 32 = 96
-        self.TULayer7 = TULayer(input_a_dim=128, input_b_dim = 32, out_dim=96) # 128 // 2 + 32 = 96
+        self.TULayer7 = ResNetLikeTU(input_a_dim=128, input_b_dim = 32, out_dim=96) # 128 // 2 + 32 = 96
 
         # pixel size 1
         # self.PTBlock8 = PTBlock(in_dim=self.dims[0], hidden_dim=self.dims[0], n_sample=self.neighbor_ks[1])  # 32
 
         # self.TULayer8 = TULayer(input_a_dim=self.dims[0], input_b_dim = self.dims[0], out_dim=self.dims[0]) # 64 // 2 + 32
-        self.TULayer8 = TULayer(input_a_dim=96, input_b_dim = 32, out_dim=96) # 64 // 2 + 32
+        self.TULayer8 = ResNetLikeTU(input_a_dim=96, input_b_dim = 32, out_dim=96) # 64 // 2 + 32
         self.fc = ME.MinkowskiLinear(96, out_channel)
 
         # self.final_conv = nn.Sequential(
@@ -211,7 +219,8 @@ class MinkowskiVoxelTransformer(ME.MinkowskiNetwork):
         # self.fc = ME.MinkowskiLinear(self.final_dim+self.dims[0], out_channel)
 
 
-    def forward(self, in_field: ME.TensorField, aux=None, save_anchor=False):
+    # the iter_ is the progress of training (curr_iter / max_iter)
+    def forward(self, in_field: ME.TensorField, aux=None, save_anchor=False, iter_=None):
 
         x = in_field
         if save_anchor:
@@ -265,13 +274,30 @@ class MinkowskiVoxelTransformer(ME.MinkowskiNetwork):
             if save_anchor:
                 self.anchors.append(x3)
 
+            # alpha from 0 ~ 1.0
+            # gradually from pointnet(skip_attn: TR) to tr-block
+            if self.ALPHA_BLENDING_MID_TR:
+                assert iter_ is not None
+                alpha = 1 - 1.01 ** (-iter_)
+
             x = self.TDLayer3(x3)
+            if self.ALPHA_BLENDING_MID_TR:
+                x_ = self.PTBlock4_branch(x)
             x = self.PTBlock4(x)
+            if self.ALPHA_BLENDING_MID_TR:
+                new_x = alpha*x.F + (1-alpha)*x_.F
+                x = ME.SparseTensor(features = new_x, coordinate_map_key=x.coordinate_map_key, coordinate_manager=x.coordinate_manager)
+
             if save_anchor:
                 self.anchors.append(x)
 
             x = self.TULayer5(x, x3)
+            if self.ALPHA_BLENDING_MID_TR:
+                x_ = self.PTBlock5_branch(x)
             x = self.PTBlock5(x)
+            if self.ALPHA_BLENDING_MID_TR:
+                new_x = alpha*x.F + (1-alpha)*x_.F
+                x = ME.SparseTensor(features = new_x, coordinate_map_key=x.coordinate_map_key, coordinate_manager=x.coordinate_manager)
             if save_anchor:
                 self.anchors.append(x)
 
