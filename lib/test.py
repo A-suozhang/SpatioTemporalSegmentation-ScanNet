@@ -122,8 +122,7 @@ def test(model, data_loader, config, transform_data_fn=None, has_gt=True, save_p
             if aux is not None:
                 soutput = model(sinput)
             else:
-                soutput = model(sinput)
-                # soutput = model(sinput, iter_ = 0.99)
+                soutput = model(sinput, iter_ = iteration / max_iter)
             output = soutput.F
             pred = get_prediction(dataset, output, target).int()
             assert sum([int(t.shape[0]) for t in unique_map_list]) == len(pred), "number of points in unique_map doesn't match predition, do not enable preprocessing"

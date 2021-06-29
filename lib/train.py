@@ -490,7 +490,9 @@ def train_distill(model, data_loader, val_data_loader, config, transform_data_fn
     some cfgs here
     '''
 
-    distill_lambda = 1
+    # distill_lambda = 1
+    # distill_lambda = 0.33
+    distill_lambda = 0.67
 
     # TWO_STAGE=True: Transformer is first trained with L2 loss to match ResNet's activation, and then it fintunes like normal training on the second stage. 
     # TWO_STAGE=False: Transformer trains with combined loss
@@ -525,7 +527,8 @@ def train_distill(model, data_loader, val_data_loader, config, transform_data_fn
     tch_model_cls = load_model('Res16UNet18A')
     tch_model = tch_model_cls(3,20,config).to(device)
 
-    checkpoint_fn = "/home/zhaotianchen/project/point-transformer/SpatioTemporalSegmentation-ScanNet/outputs/ScannetSparseVoxelizationDataset/Res16UNet18A/resnet_base/weights.pth"
+    # checkpoint_fn = "/home/zhaotianchen/project/point-transformer/SpatioTemporalSegmentation-ScanNet/outputs/ScannetSparseVoxelizationDataset/Res16UNet18A/resnet_base/weights.pth"
+    checkpoint_fn = "/home/zhaotianchen/project/point-transformer/SpatioTemporalSegmentation-ScanNet/outputs/ScannetSparseVoxelizationDataset/Res16UNet18A/Res18A/weights.pth" # voxel-size: 0.05
     assert osp.isfile(checkpoint_fn)
     logging.info("=> loading checkpoint '{}'".format(checkpoint_fn))
     state = torch.load(checkpoint_fn)
@@ -559,8 +562,8 @@ def train_distill(model, data_loader, val_data_loader, config, transform_data_fn
             # raise ValueError("=> no checkpoint found at '{}'".format(checkpoint_fn))
 
     # test after loading the ckpt
-    # v_loss, v_score, v_mAP, v_mIoU = test(tch_model, val_data_loader, config)
-    # logging.info('Tch model tested, bes_miou: {}'.format(v_mIoU))
+    v_loss, v_score, v_mAP, v_mIoU = test(tch_model, val_data_loader, config)
+    logging.info('Tch model tested, bes_miou: {}'.format(v_mIoU))
 
     data_iter = data_loader.__iter__()
     while is_training:

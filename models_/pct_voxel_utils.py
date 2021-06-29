@@ -450,13 +450,13 @@ class StackedPTBlock(nn.Module):
         self.block1 = PTBlock(in_dim, hidden_dim, is_firstlayer, n_sample, r, skip_attn, kernel_size)
         self.block2 = PTBlock(in_dim, hidden_dim, is_firstlayer, n_sample, r, skip_attn, kernel_size)
 
-    def forward(self, x : ME.SparseTensor):
-        x = self.block1(x)
-        x = self.block2(x)
+    def forward(self, x : ME.SparseTensor, iter_=None):
+        x = self.block1(x, iter_=iter_)
+        x = self.block2(x, iter_=iter_)
         return x
 
 class PTBlock(nn.Module):
-    def __init__(self, in_dim, hidden_dim, is_firstlayer=False, n_sample=16, r=10, skip_attn=False, kernel_size=1):
+    def __init__(self, in_dim, hidden_dim, is_firstlayer=False, n_sample=16, r=10, skip_attn=False, kernel_size=1, window_beta=None):
         super().__init__()
         '''
         Point Transformer Layer
@@ -477,9 +477,31 @@ class PTBlock(nn.Module):
         self.KS_1 = True
         self.USE_KNN = True
         self.use_vector_attn = True  # whether to use the vector att or the original attention
-        self.WITH_POSE_ENCODING = True
-        self.GAUSSIAN_DECAY = False # use gaussian decay instead of hard knn for larger ks
+        self.WITH_POSE_ENCODING = False
+        self.GAUSSIAN_DECAY = window_beta is not None # use gaussian decay instead of hard knn for larger ks
+        self.GAUSSIAN_ONLY = False
+        self.DYNAMIC_GAUSSIAN = False
         self.SKIP_ATTN=skip_attn
+        self.CONV_TOP_DOWN = False
+        self.SUBSAMPLE_NEIGHBOR = False
+        self.SKIP_QK = False
+
+        if self.GAUSSIAN_ONLY:
+            assert self.GAUSSIAN_DECAY==True
+
+        if self.GAUSSIAN_DECAY:
+            self.window_beta = window_beta
+
+        if self.SUBSAMPLE_NEIGHBOR:
+            self.perms = torch.sort(torch.randperm(n_sample)[:n_sample//2])[0]
+            assert self.GAUSSIAN_DECAY is False
+        else:
+            pass
+
+        if self.CONV_TOP_DOWN:
+            self.top_down_ks = 3
+        else:
+            self.top_down_ks = 1
 
         if self.KS_1:
             self.kernel_size = 1
@@ -488,11 +510,11 @@ class PTBlock(nn.Module):
             self.nhead = 4
 
         self.linear_top = nn.Sequential(
-            ME.MinkowskiConvolution(in_dim, self.hidden_dim, kernel_size=self.kernel_size, dimension=3),
+            ME.MinkowskiConvolution(in_dim, self.hidden_dim, kernel_size=self.top_down_ks, dimension=3),
             ME.MinkowskiBatchNorm(self.hidden_dim),
         )
         self.linear_down = nn.Sequential(
-            ME.MinkowskiConvolution(self.out_dim, self.in_dim, kernel_size=self.kernel_size, dimension=3),
+            ME.MinkowskiConvolution(self.out_dim, self.in_dim, kernel_size=self.top_down_ks, dimension=3),
             ME.MinkowskiBatchNorm(self.in_dim),
         )
         # feature transformations
@@ -517,7 +539,14 @@ class PTBlock(nn.Module):
                 ME.MinkowskiConvolution(self.hidden_dim, self.out_dim, kernel_size=self.kernel_size, dimension=3)
             )
 
-        self.gamma = nn.Sequential(
+        if self.SKIP_QK:
+            self.gamma = nn.Sequential(
+                nn.Conv1d(3*self.n_sample, self.hidden_dim*self.n_sample, 1),
+                nn.BatchNorm1d(self.hidden_dim*self.n_sample),
+                nn.ReLU(),
+            )
+        else:
+            self.gamma = nn.Sequential(
             nn.Conv1d(self.out_dim, self.hidden_dim, 1),
             nn.BatchNorm1d(self.hidden_dim),
             nn.ReLU(),
@@ -532,8 +561,14 @@ class PTBlock(nn.Module):
                     nn.Conv2d(self.hidden_dim, self.out_dim, 1),
                     nn.BatchNorm2d(self.out_dim),
                 )
+        self.out_bn_relu = nn.Sequential(
+                ME.MinkowskiBatchNorm(self.out_dim),
+                ME.MinkowskiReLU(),
+                )
+        self.out_relu = ME.MinkowskiReLU()
 
-    def forward(self, x : ME.SparseTensor, aux=None):
+
+    def forward(self, x : ME.SparseTensor, aux=None, iter_=None):
         '''
         input_p:  B, 3, npoint
         input_x: B, in_dim, npoint
@@ -595,18 +630,28 @@ class PTBlock(nn.Module):
         else:
             neighbor_mask = None
 
+        relative_xyz[:,0,0] = x.C[:,0] # get back the correct batch index, because we messed batch index in the subtraction above
+        relative_xyz = pad_zero(relative_xyz, mask) # [B, xyz, nvoxel_batch, k]
         if self.WITH_POSE_ENCODING:
-            relative_xyz[:,0,0] = x.C[:,0] # get back the correct batch index, because we messed batch index in the subtraction above
-            relative_xyz = pad_zero(relative_xyz, mask) # [B, xyz, nvoxel_batch, k]
             pose_tensor = self.delta(relative_xyz.float()) # (B, feat_dim, nvoxel_batch, k)
             pose_tensor = make_position_tensor(pose_tensor, mask, idx_, x.C.shape[0]) # (nvoxel, k, feat_dim)S
+            if self.SUBSAMPLE_NEIGHBOR:
+                pose_tensor = pose_tensor[:,self.perms,:]
+            self.register_buffer('pos_map', pose_tensor.detach().cpu().data)
+
+        if self.SKIP_QK:
+            relative_xyz = make_position_tensor(relative_xyz.float(), mask, idx_, x.C.shape[0]) # (nvoxel, k, feat_dim)
+
 
         if self.SKIP_ATTN:
+            if self.SUBSAMPLE_NEIGHBOR:
+                raise NotImplementedError
             grouped_x = get_neighbor_feature(neighbor, x) # (nvoxel, k, feat_dim)
             if self.WITH_POSE_ENCODING:
                 alpha = self.alpha((grouped_x + pose_tensor).transpose(1,2))
             else:
                 alpha = self.alpha((grouped_x).transpose(1,2))
+            self.register_buffer('point_map', alpha.detach().cpu().data)
             y = alpha.max(dim=-1)[0]
             y = ME.SparseTensor(features = y, coordinate_map_key=x.coordinate_map_key, coordinate_manager=x.coordinate_manager)
 
@@ -617,6 +662,10 @@ class PTBlock(nn.Module):
         phi = phi[:,None,:].repeat(1,k,1) # (nvoxel, k, feat_dim)
         psi = get_neighbor_feature(neighbor, self.psi(x)) # (nvoxel, k, feat_dim)
         alpha = get_neighbor_feature(neighbor, self.alpha(x)) # (nvoxel, k, feat_dim)
+        if self.SUBSAMPLE_NEIGHBOR:
+            phi = phi[:,self.perms,:]
+            psi = psi[:,self.perms,:]
+            alpha = alpha[:,self.perms,:]
 
         '''The Self-Attn Part'''
         if self.use_vector_attn:
@@ -629,9 +678,18 @@ class PTBlock(nn.Module):
             y = y.sum(dim=-1) # feature aggregation, y becomes [B, out_dim, npoint]
             '''
             if self.WITH_POSE_ENCODING:
-                attn_map = F.softmax(self.gamma((phi - psi + pose_tensor).transpose(1,2)), dim=-1)
+                if self.SKIP_QK:
+                    attn_map = F.softmax(self.gamma((relative_xyz).transpose(1,2)), dim=-1) # acquire attn-weight from raw relative_xyz
+                else:
+                    attn_map = F.softmax(self.gamma((phi - psi + pose_tensor).transpose(1,2)), dim=-1)
             else:
-                attn_map = F.softmax(self.gamma((phi - psi).transpose(1,2)), dim=-1)
+                if self.SKIP_QK:
+                    # relative_xyz: [N, n_sample, 3]
+                    attn_map = F.softmax(
+                            self.gamma((relative_xyz.reshape([-1, 3*self.n_sample]).unsqueeze(-1))).reshape([-1,self.n_sample,self.out_dim]).transpose(1,2)
+                            , dim=-1) # acquire attn-weight from raw relative_xyz
+                else:
+                    attn_map = F.softmax(self.gamma((phi - psi).transpose(1,2)), dim=-1)
             if self.WITH_POSE_ENCODING:
                 self_feat = (alpha + pose_tensor).permute(0,2,1) # (nvoxel, k, feat_dim) -> (nvoxel, feat_dim, k)
             else:
@@ -641,9 +699,18 @@ class PTBlock(nn.Module):
             if neighbor_mask is not None:
                 attn_map = attn_map*(neighbor_mask.unsqueeze(1))
             if self.GAUSSIAN_DECAY:
-                window = np.kaiser(2*k, beta=5)[k:]
+                if self.DYNAMIC_GAUSSIAN:
+                    if iter_ > 0.8:
+                        self.window_beta = 0
+                    else:
+                        self.window_beta = 1000**(-iter_) # first close to 1, then quickly decrease
+                window = np.kaiser(2*k, beta=self.window_beta)[k:]
                 window = torch.tensor(window, device='cuda').float().reshape(1,1,-1)
-                attn_map = attn_map*window
+                self.register_buffer('pre_map', attn_map.detach().cpu().data) # pack it with nn parameter to save in state-dict
+                if self.GAUSSIAN_ONLY:
+                    attn_map = F.softmax(window.repeat(attn_map.shape[0], attn_map.shape[1], 1), dim=-1)
+                else:
+                    attn_map = attn_map*window
 
             y = attn_map.repeat(1, self.out_dim // self.vector_dim, 1, 1) * self_feat # (nvoxel, feat_dim, k)
             y = y.sum(dim=-1).view(x.C.shape[0], -1) # feature aggregation, y becomes (nvoxel, feat_dim)
@@ -661,8 +728,10 @@ class PTBlock(nn.Module):
         y = self.linear_down(y)
 
         self.register_buffer('attn_map', attn_map.detach().cpu().data) # pack it with nn parameter to save in state-dict
+        y = self.out_bn_relu(y)
+        out = self.out_relu(y+res)
 
-        return y+res
+        return out
 
 def make_position_tensor(pose_encoding : torch.Tensor, mask : torch.Tensor, idx_: torch.Tensor, nvoxel : int):
     """

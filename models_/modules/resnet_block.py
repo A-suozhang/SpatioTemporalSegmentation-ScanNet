@@ -7,6 +7,46 @@ import torch.nn as nn
 
 from models.modules.common import ConvType, NormType, get_norm, conv, get_nonlinearity_fn
 
+class ConvBase(nn.Module):
+  expansion = 1
+  NORM_TYPE = NormType.BATCH_NORM
+
+  def __init__(self,
+               inplanes,
+               planes,
+               stride=1,
+               dilation=1,
+               downsample=None,
+               conv_type=ConvType.HYPERCUBE,
+               nonlinearity_type='ReLU',
+               bn_momentum=0.1,
+               D=3):
+    super(ConvBase, self).__init__()
+
+    self.conv = conv(
+        inplanes, planes, kernel_size=3, stride=stride, dilation=dilation, conv_type=conv_type, D=D)
+    self.norm = get_norm(self.NORM_TYPE, planes, D, bn_momentum=bn_momentum)
+    self.downsample = downsample
+    assert self.downsample is None   # we should not use downsample here
+    self.nonlinearity_type = nonlinearity_type
+
+  def forward(self, x, iter_=None):
+    residual = x
+
+    out = self.conv(x)
+    out = self.norm(out)
+    out = get_nonlinearity_fn(self.nonlinearity_type, out)
+
+    if self.downsample is not None:
+      residual = self.downsample(x)
+
+    out += residual
+    out = get_nonlinearity_fn(self.nonlinearity_type, out)
+
+    return out
+
+class SingleConv(ConvBase):
+    NORM_TYPE = NormType.BATCH_NORM
 
 class BasicBlockBase(nn.Module):
   expansion = 1
@@ -40,7 +80,7 @@ class BasicBlockBase(nn.Module):
     self.downsample = downsample
     self.nonlinearity_type = nonlinearity_type
 
-  def forward(self, x):
+  def forward(self, x, iter_=None):
     residual = x
 
     out = self.conv1(x)

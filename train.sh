@@ -24,7 +24,6 @@ export LOG=$1
 
 #export USE_AUX=True
 #export RESUME=True
-
 #export DISTILL=True
 
 ./run.sh $2 \

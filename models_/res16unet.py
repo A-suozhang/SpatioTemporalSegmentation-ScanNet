@@ -210,7 +210,7 @@ class Res16UNetBase(ResNetBase):
 
     self.final = conv(self.PLANES[7], out_channels, kernel_size=1, stride=1, bias=True, D=D)
 
-  def forward(self, x, save_anchor=False):
+  def forward(self, x, save_anchor=False, iter_=None):
     if save_anchor:
         self.anchors = []
     # mapped to transformer.stem1
@@ -240,8 +240,8 @@ class Res16UNetBase(ResNetBase):
     out = self.bn3(out)
     out = get_nonlinearity_fn(self.config.nonlinearity, out)
     out_b3p8 = self.block3(out)
-    if save_anchor:
-        self.anchors.append(out_b3p8)
+    # if save_anchor:
+        # self.anchors.append(out_b3p8)
 
     # pixel_dist=16
     # mapped to transformer.PTBlock4
@@ -249,8 +249,8 @@ class Res16UNetBase(ResNetBase):
     out = self.bn4(out)
     out = get_nonlinearity_fn(self.config.nonlinearity, out)
     out = self.block4(out)
-    if save_anchor:
-        self.anchors.append(out)
+    # if save_anchor:
+        # self.anchors.append(out)
 
 
     # pixel_dist=8
@@ -260,8 +260,8 @@ class Res16UNetBase(ResNetBase):
     out = get_nonlinearity_fn(self.config.nonlinearity, out)
     out = me.cat(out, out_b3p8)
     out = self.block5(out)
-    if save_anchor:
-      self.anchors.append(out)
+    # if save_anchor:
+      # self.anchors.append(out)
 
     # pixel_dist=4
     # mapped to transformer.PTBlock6
