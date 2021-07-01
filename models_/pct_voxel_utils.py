@@ -455,6 +455,7 @@ class StackedPTBlock(nn.Module):
         x = self.block2(x, iter_=iter_)
         return x
 
+
 class PTBlock(nn.Module):
     def __init__(self, in_dim, hidden_dim, is_firstlayer=False, n_sample=16, r=10, skip_attn=False, kernel_size=1, window_beta=None):
         super().__init__()
@@ -482,9 +483,13 @@ class PTBlock(nn.Module):
         self.GAUSSIAN_ONLY = False
         self.DYNAMIC_GAUSSIAN = False
         self.SKIP_ATTN=skip_attn
+        self.SKIP_TOPDOWN = False
         self.CONV_TOP_DOWN = False
         self.SUBSAMPLE_NEIGHBOR = False
         self.SKIP_QK = False
+
+        self.MULTI_RESO = True
+        self.NUM_RESO = 2
 
         if self.GAUSSIAN_ONLY:
             assert self.GAUSSIAN_DECAY==True
@@ -509,14 +514,72 @@ class PTBlock(nn.Module):
         if not self.use_vector_attn:
             self.nhead = 4
 
-        self.linear_top = nn.Sequential(
-            ME.MinkowskiConvolution(in_dim, self.hidden_dim, kernel_size=self.top_down_ks, dimension=3),
-            ME.MinkowskiBatchNorm(self.hidden_dim),
-        )
-        self.linear_down = nn.Sequential(
-            ME.MinkowskiConvolution(self.out_dim, self.in_dim, kernel_size=self.top_down_ks, dimension=3),
-            ME.MinkowskiBatchNorm(self.in_dim),
-        )
+        if not self.SKIP_TOPDOWN:
+            self.linear_top = nn.Sequential(
+                ME.MinkowskiConvolution(in_dim, self.hidden_dim, kernel_size=self.top_down_ks, dimension=3),
+                ME.MinkowskiBatchNorm(self.hidden_dim),
+            )
+            self.linear_down = nn.Sequential(
+                ME.MinkowskiConvolution(self.out_dim, self.in_dim, kernel_size=self.top_down_ks, dimension=3),
+                ME.MinkowskiBatchNorm(self.in_dim),
+            )
+
+        if self.MULTI_RESO:
+            self.pool_1 = ME.MinkowskiAvgPooling(kernel_size=2, stride=2, dimension=3)
+            # self.pool_2 = ME.MinkowskiAvgPooling(kernel_size=2, stride=2, dimension=3)
+            self.psi_pool1 = nn.Sequential(
+                ME.MinkowskiConvolution(self.hidden_dim, self.out_dim, kernel_size=self.kernel_size, dimension=3)
+                )
+            # self.psi_pool2 = nn.Sequential(
+                # ME.MinkowskiConvolution(self.hidden_dim, self.out_dim, kernel_size=self.kernel_size, dimension=3)
+                # )
+            self.alpha_pool1 = nn.Sequential(
+                    nn.Conv1d(self.in_dim, self.in_dim, self.kernel_size),
+                    nn.BatchNorm1d(self.in_dim),
+                    nn.ReLU(),
+                    nn.Conv1d(self.in_dim, self.hidden_dim, self.kernel_size),
+                    nn.BatchNorm1d(self.hidden_dim),
+                    nn.ReLU(),
+                    )
+            # self.alpha_pool2 = nn.Sequential(
+                    # nn.Conv1d(self.in_dim, self.in_dim, self.kernel_size),
+                    # nn.BatchNorm1d(self.in_dim),
+                    # nn.ReLU(),
+                    # nn.Conv1d(self.in_dim, self.hidden_dim, self.kernel_size),
+                    # nn.BatchNorm1d(self.hidden_dim),
+                    # nn.ReLU(),
+                    # )
+            self.gamma_pool1 = nn.Sequential(
+                nn.Conv1d(self.out_dim, self.hidden_dim, 1),
+                nn.BatchNorm1d(self.hidden_dim),
+                nn.ReLU(),
+                nn.Conv1d(self.hidden_dim, self.vector_dim, 1),
+                nn.BatchNorm1d(self.vector_dim),
+            )
+            self.multi_reso_proj = ME.MinkowskiConvolution(self.out_dim*self.NUM_RESO, self.out_dim, kernel_size=1, dimension=3)
+            # self.multi_reso_proj = nn.Conv1d(self.out_dim*self.NUM_RESO, self.out_dim, 1)
+            # self.gamma_pool2 = nn.Sequential(
+                # nn.Conv1d(self.out_dim, self.hidden_dim, 1),
+                # nn.BatchNorm1d(self.hidden_dim),
+                # nn.ReLU(),
+                # nn.Conv1d(self.hidden_dim, self.vector_dim, 1),
+                # nn.BatchNorm1d(self.vector_dim),
+            # )
+            # self.delta_pool1 = nn.Sequential(
+                    # nn.Conv2d(3, self.hidden_dim, 1),
+                    # nn.BatchNorm2d(self.hidden_dim),
+                    # nn.ReLU(),
+                    # nn.Conv2d(self.hidden_dim, self.out_dim, 1),
+                    # nn.BatchNorm2d(self.out_dim),
+                # )
+            # self.delta_pool2 = nn.Sequential(
+                    # nn.Conv2d(3, self.hidden_dim, 1),
+                    # nn.BatchNorm2d(self.hidden_dim),
+                    # nn.ReLU(),
+                    # nn.Conv2d(self.hidden_dim, self.out_dim, 1),
+                    # nn.BatchNorm2d(self.out_dim),
+                # )
+
         # feature transformations
         self.phi = nn.Sequential(
             ME.MinkowskiConvolution(self.hidden_dim, self.out_dim, kernel_size=self.kernel_size, dimension=3)
@@ -547,12 +610,12 @@ class PTBlock(nn.Module):
             )
         else:
             self.gamma = nn.Sequential(
-            nn.Conv1d(self.out_dim, self.hidden_dim, 1),
-            nn.BatchNorm1d(self.hidden_dim),
-            nn.ReLU(),
-            nn.Conv1d(self.hidden_dim, self.vector_dim, 1),
-            nn.BatchNorm1d(self.vector_dim),
-        )
+                nn.Conv1d(self.out_dim, self.hidden_dim, 1),
+                nn.BatchNorm1d(self.hidden_dim),
+                nn.ReLU(),
+                nn.Conv1d(self.hidden_dim, self.vector_dim, 1),
+                nn.BatchNorm1d(self.vector_dim),
+            )
 
         self.delta = nn.Sequential(
                     nn.Conv2d(3, self.hidden_dim, 1),
@@ -561,11 +624,134 @@ class PTBlock(nn.Module):
                     nn.Conv2d(self.hidden_dim, self.out_dim, 1),
                     nn.BatchNorm2d(self.out_dim),
                 )
+
         self.out_bn_relu = nn.Sequential(
                 ME.MinkowskiBatchNorm(self.out_dim),
                 ME.MinkowskiReLU(),
                 )
         self.out_relu = ME.MinkowskiReLU()
+
+    # proj from the input coord to pos_enc 
+    def gen_pos_enc(self, x: ME.SparseTensor, neighbor, mask, idx_, delta, rel_xyz_only=False, register_map=False):
+        k = neighbor.shape[1]
+        try:
+            relative_xyz = neighbor - x.C[:,None,:].repeat(1,k,1) # (nvoxel, k, bxyz), we later pad it to [B, xyz, nvoxel_batch, k]
+        except:
+            import ipdb; ipdb.set_trace()
+        relative_xyz[:,0,0] = x.C[:,0] # get back the correct batch index, because we messed batch index in the subtraction above
+        relative_xyz = pad_zero(relative_xyz, mask) # [B, xyz, nvoxel_batch, k]
+
+        pose_tensor = delta(relative_xyz.float()) # (B, feat_dim, nvoxel_batch, k)
+        pose_tensor = make_position_tensor(pose_tensor, mask, idx_, x.C.shape[0]) # (nvoxel, k, feat_dim)S
+        if self.SUBSAMPLE_NEIGHBOR:
+            pose_tensor = pose_tensor[:,self.perms,:]
+        if register_map:
+            self.register_buffer('pos_map', pose_tensor.detach().cpu().data)
+        if rel_xyz_only:
+            pose_tensor = make_position_tensor(relative_xyz.float(), mask, idx_, x.C.shape[0]) # (nvoxel, k, feat_dim)
+        return pose_tensor
+
+    def gen_attn_map(self, x, neighbor, phi, psi, alpha, gamma, pose_tensor, neighbor_mask=None, register_map=False,\
+            cross_attn=False, cross_x=None):
+
+        k = neighbor.shape[1]
+        if cross_attn:
+            phi = self.phi(cross_x).F
+            phi = phi[:,None,:].repeat(1,k,1) # (nvoxel, k, feat_dim)
+        else:
+            phi = self.phi(x).F # (nvoxel, feat_dim)
+            phi = phi[:,None,:].repeat(1,k,1) # (nvoxel, k, feat_dim)
+        psi = get_neighbor_feature(neighbor, self.psi(x)) # (nvoxel, k, feat_dim)
+        alpha = get_neighbor_feature(neighbor, self.alpha(x)) # (nvoxel, k, feat_dim)
+        if self.SUBSAMPLE_NEIGHBOR:
+            phi = phi[:,self.perms,:]
+            psi = psi[:,self.perms,:]
+            alpha = alpha[:,self.perms,:]
+
+        # when use cross_attn, cross_x and x maynot have the same shape need to align em
+        if cross_attn:
+            assert phi.shape[1] == psi.shape[1] and phi.shape[2] == psi.shape[2]
+            N1 = phi.shape[0]
+            N2 = psi.shape[0]
+            k = phi.shape[1]
+            dim = phi.shape[2]
+            # when use cross_attn, the pose_enc should align with the bigger N
+            assert pose_tensor.shape[0] == N1
+            if N1 != N2:
+                assert N2 < N1
+                # in our case, N2 are generated with stride=2 & ks=2 AvgPool
+                # so we need to duplicate N2's feature to match N1 points
+                maps = cross_x.coordinate_manager.stride_map(cross_x.coordinate_map_key, x.coordinate_map_key)
+
+                psi_ = torch.gather(psi, dim=0, index=maps[1].reshape([-1,1,1]).repeat(1,k,dim))
+                psi_new = torch.zeros(psi_.shape, device=psi_.device)
+                psi_new.scatter_(dim=0, index=maps[0].reshape(-1,1,1).repeat(1,k,dim), src=psi_)
+
+                alpha_ = torch.gather(alpha, dim=0, index=maps[1].reshape([-1,1,1]).repeat(1,k,dim))
+                alpha_new = torch.zeros(alpha_.shape, device=alpha_.device)
+                alpha_new.scatter_(dim=0, index=maps[0].reshape(-1,1,1).repeat(1,k,dim), src=alpha_)
+            else:
+                psi_new = psi
+                alpha_new = alpha
+        else:
+            psi_new = psi
+            alpha_new = alpha
+
+
+        '''The Self-Attn Part'''
+        assert self.use_vector_attn is True
+        '''
+        the attn_map: [vector_dim];
+        the alpha:    [out_dim]
+        attn_map = F.softmax(self.gamma(phi - psi + pos_encoding), dim=-1) # [B, in_dim, npoint, k], such as [16, 32, 4096, 16]
+        y = attn_map.repeat(1, self.out_dim // self.vector_dim,1,1)*(alpha + pos_encoding) # multiplies attention weight
+        self.out_dim and self.vector_dim are all 32 here, so y is still [16, 32, 4096, 16]
+        y = y.sum(dim=-1) # feature aggregation, y becomes [B, out_dim, npoint]
+        '''
+        if self.WITH_POSE_ENCODING:
+            if self.SKIP_QK:
+                attn_map = F.softmax(gamma((pose_tensor).transpose(1,2)), dim=-1) # acquire attn-weight from raw relative_xyz
+            else:
+                attn_map = F.softmax(gamma((phi - psi_new + pose_tensor).transpose(1,2)), dim=-1)
+        else:
+            if self.SKIP_QK:
+                # relative_xyz: [N, n_sample, 3]
+                attn_map = F.softmax(
+                        gamma((pose_tensor.reshape([-1, 3*k]).unsqueeze(-1))).reshape([-1,k,self.out_dim]).transpose(1,2)
+                        , dim=-1) # acquire attn-weight from raw relative_xyz
+            else:
+                attn_map = F.softmax(gamma((phi - psi_new).transpose(1,2)), dim=-1)
+        if self.WITH_POSE_ENCODING:
+            self_feat = (alpha_new + pose_tensor).permute(0,2,1) # (nvoxel, k, feat_dim) -> (nvoxel, feat_dim, k)
+        else:
+            self_feat = (alpha_new).permute(0,2,1) # (nvoxel, k, feat_dim) -> (nvoxel, feat_dim, k)
+
+        # use aux info and mask the  attn_map
+        if neighbor_mask is not None:
+            attn_map = attn_map*(neighbor_mask.unsqueeze(1))
+        if self.GAUSSIAN_DECAY:
+            if self.DYNAMIC_GAUSSIAN:
+                if iter_ > 0.8:
+                    self.window_beta = 0
+                else:
+                    self.window_beta = 1000**(-iter_) # first close to 1, then quickly decrease
+            window = np.kaiser(2*k, beta=self.window_beta)[k:]
+            window = torch.tensor(window, device='cuda').float().reshape(1,1,-1)
+            if register_map:
+                self.register_buffer('pre_map', attn_map.detach().cpu().data) # pack it with nn parameter to save in state-dict
+            if self.GAUSSIAN_ONLY:
+                attn_map = F.softmax(window.repeat(attn_map.shape[0], attn_map.shape[1], 1), dim=-1)
+            else:
+                attn_map = attn_map*window
+
+        if register_map:
+            self.register_buffer('attn_map', attn_map.detach().cpu().data) # pack it with nn parameter to save in state-dict
+        y = attn_map.repeat(1, self.out_dim // self.vector_dim, 1, 1) * self_feat # (nvoxel, feat_dim, k)
+        if cross_attn:
+            y = y.sum(dim=-1).view(cross_x.C.shape[0], -1) # feature aggregation, y becomes (nvoxel, feat_dim)
+        else:
+            y = y.sum(dim=-1).view(x.C.shape[0], -1) # feature aggregation, y becomes (nvoxel, feat_dim)
+        return y
 
 
     def forward(self, x : ME.SparseTensor, aux=None, iter_=None):
@@ -582,14 +768,19 @@ class PTBlock(nn.Module):
 
         res = x
 
-        self.cube_query = cube_query(r=self.r, k=self.k, knn=self.USE_KNN)
+        self.cube_query = cube_query(r=self.r, k=self.k, knn=self.USE_KNN) # make sure it doesnot contain param
 
         # neighbor: [B*npoint, k, bxyz]
         # mask: [B*npoint, k]
         # idx: [B_nq], used for scatter/gather
         neighbor, mask, idx_ = self.cube_query.get_neighbor(x, x)
-        k = neighbor.shape[1]  # in case of nvoxel < self.k, assign a new k
-        assert k <= self.k
+
+        if self.MULTI_RESO:
+            x_pool1 = self.pool_1(x)
+            # x_pool2 = self.pool_2(x)
+
+            neighbor_pool1, mask_pool1, idx_pool1 = self.cube_query.get_neighbor(x_pool1, x_pool1)
+            # neighbor_pool2, mask_pool2, idx_pool2 = self.cube_query.get_neighbor(x_pool2, x_pool2)
 
         self.register_buffer('neighbor_map', neighbor)
         self.register_buffer('input_map', x.C)
@@ -604,7 +795,8 @@ class PTBlock(nn.Module):
                 # pass
                 # logging.info('Detected Abnormal neighbors, num outlier {}, all points {}'.format(outlier_point, x.shape[0]))
 
-        x = self.linear_top(x) # [B, in_dim, npoint], such as [16, 32, 4096]
+        if not self.SKIP_TOPDOWN:
+            x = self.linear_top(x) # [B, in_dim, npoint], such as [16, 32, 4096]
 
         '''
         illustration on dimension notations:
@@ -614,9 +806,6 @@ class PTBlock(nn.Module):
         - feat_dim: feature dimension, or channel as others call it
         - nvoxel_batch: the maximum voxel number of a single SparseTensor in the current batch
         '''
-
-        '''Gene the pos_encoding'''
-        relative_xyz = neighbor - x.C[:,None,:].repeat(1,k,1) # (nvoxel, k, bxyz), we later pad it to [B, xyz, nvoxel_batch, k]
 
         '''
         mask the neighbor when not in the same instance-class
@@ -630,20 +819,16 @@ class PTBlock(nn.Module):
         else:
             neighbor_mask = None
 
-        relative_xyz[:,0,0] = x.C[:,0] # get back the correct batch index, because we messed batch index in the subtraction above
-        relative_xyz = pad_zero(relative_xyz, mask) # [B, xyz, nvoxel_batch, k]
-        if self.WITH_POSE_ENCODING:
-            pose_tensor = self.delta(relative_xyz.float()) # (B, feat_dim, nvoxel_batch, k)
-            pose_tensor = make_position_tensor(pose_tensor, mask, idx_, x.C.shape[0]) # (nvoxel, k, feat_dim)S
-            if self.SUBSAMPLE_NEIGHBOR:
-                pose_tensor = pose_tensor[:,self.perms,:]
-            self.register_buffer('pos_map', pose_tensor.detach().cpu().data)
+        '''Gene the pos_encoding'''
+        pose_tensor = self.gen_pos_enc(x, neighbor, mask, idx_, delta=self.delta, register_map=False)
 
-        if self.SKIP_QK:
-            relative_xyz = make_position_tensor(relative_xyz.float(), mask, idx_, x.C.shape[0]) # (nvoxel, k, feat_dim)
-
+        if self.MULTI_RESO:
+            pass
+            # pose_tensor_pool1 = self.gen_pos_enc(x_pool1, neighbor_pool1, mask_pool1, idx_pool1, delta=self.delta_pool1)
+            # pose_tensor_pool2 = self.gen_pos_enc(x_pool2, neighbor_pool2, mask_pool2, idx_pool2, delta=self.delta_pool2)
 
         if self.SKIP_ATTN:
+            assert self.MULTI_RESO is not True
             if self.SUBSAMPLE_NEIGHBOR:
                 raise NotImplementedError
             grouped_x = get_neighbor_feature(neighbor, x) # (nvoxel, k, feat_dim)
@@ -655,79 +840,23 @@ class PTBlock(nn.Module):
             y = alpha.max(dim=-1)[0]
             y = ME.SparseTensor(features = y, coordinate_map_key=x.coordinate_map_key, coordinate_manager=x.coordinate_manager)
 
-            y = self.linear_down(y)
+            if not self.SKIP_TOPDOWN:
+                y = self.linear_down(y)
             return y+res
 
-        phi = self.phi(x).F # (nvoxel, feat_dim)
-        phi = phi[:,None,:].repeat(1,k,1) # (nvoxel, k, feat_dim)
-        psi = get_neighbor_feature(neighbor, self.psi(x)) # (nvoxel, k, feat_dim)
-        alpha = get_neighbor_feature(neighbor, self.alpha(x)) # (nvoxel, k, feat_dim)
-        if self.SUBSAMPLE_NEIGHBOR:
-            phi = phi[:,self.perms,:]
-            psi = psi[:,self.perms,:]
-            alpha = alpha[:,self.perms,:]
-
-        '''The Self-Attn Part'''
-        if self.use_vector_attn:
-            '''
-            the attn_map: [vector_dim];
-            the alpha:    [out_dim]
-            attn_map = F.softmax(self.gamma(phi - psi + pos_encoding), dim=-1) # [B, in_dim, npoint, k], such as [16, 32, 4096, 16]
-            y = attn_map.repeat(1, self.out_dim // self.vector_dim,1,1)*(alpha + pos_encoding) # multiplies attention weight
-            self.out_dim and self.vector_dim are all 32 here, so y is still [16, 32, 4096, 16]
-            y = y.sum(dim=-1) # feature aggregation, y becomes [B, out_dim, npoint]
-            '''
-            if self.WITH_POSE_ENCODING:
-                if self.SKIP_QK:
-                    attn_map = F.softmax(self.gamma((relative_xyz).transpose(1,2)), dim=-1) # acquire attn-weight from raw relative_xyz
-                else:
-                    attn_map = F.softmax(self.gamma((phi - psi + pose_tensor).transpose(1,2)), dim=-1)
-            else:
-                if self.SKIP_QK:
-                    # relative_xyz: [N, n_sample, 3]
-                    attn_map = F.softmax(
-                            self.gamma((relative_xyz.reshape([-1, 3*self.n_sample]).unsqueeze(-1))).reshape([-1,self.n_sample,self.out_dim]).transpose(1,2)
-                            , dim=-1) # acquire attn-weight from raw relative_xyz
-                else:
-                    attn_map = F.softmax(self.gamma((phi - psi).transpose(1,2)), dim=-1)
-            if self.WITH_POSE_ENCODING:
-                self_feat = (alpha + pose_tensor).permute(0,2,1) # (nvoxel, k, feat_dim) -> (nvoxel, feat_dim, k)
-            else:
-                self_feat = (alpha).permute(0,2,1) # (nvoxel, k, feat_dim) -> (nvoxel, feat_dim, k)
-
-            # use aux info and mask the  attn_map
-            if neighbor_mask is not None:
-                attn_map = attn_map*(neighbor_mask.unsqueeze(1))
-            if self.GAUSSIAN_DECAY:
-                if self.DYNAMIC_GAUSSIAN:
-                    if iter_ > 0.8:
-                        self.window_beta = 0
-                    else:
-                        self.window_beta = 1000**(-iter_) # first close to 1, then quickly decrease
-                window = np.kaiser(2*k, beta=self.window_beta)[k:]
-                window = torch.tensor(window, device='cuda').float().reshape(1,1,-1)
-                self.register_buffer('pre_map', attn_map.detach().cpu().data) # pack it with nn parameter to save in state-dict
-                if self.GAUSSIAN_ONLY:
-                    attn_map = F.softmax(window.repeat(attn_map.shape[0], attn_map.shape[1], 1), dim=-1)
-                else:
-                    attn_map = attn_map*window
-
-            y = attn_map.repeat(1, self.out_dim // self.vector_dim, 1, 1) * self_feat # (nvoxel, feat_dim, k)
-            y = y.sum(dim=-1).view(x.C.shape[0], -1) # feature aggregation, y becomes (nvoxel, feat_dim)
+        y = self.gen_attn_map(x, neighbor, self.phi, self.psi, self.alpha, self.gamma, pose_tensor, register_map=True)
+        if self.MULTI_RESO:
+            y_pool1 = self.gen_attn_map(x_pool1, neighbor_pool1, self.phi, self.psi_pool1, self.alpha_pool1, self.gamma_pool1, pose_tensor, cross_attn=True, cross_x=x)
+            # y_pool2 = self.gen_attn_map(x_pool2, neighbor_pool2, self.phi, self.psi_pool2, self.alpha_pool2, self.gamma_pool2, pose_tensor, cross_attn=True, cross_x=x)
+            y = torch.cat([y, y_pool1],dim=-1)
             y = ME.SparseTensor(features = y, coordinate_map_key=x.coordinate_map_key, coordinate_manager=x.coordinate_manager)
+            y = self.multi_reso_proj(y)
         else:
-            raise NotImplementedError
-            # phi = phi.permute([2,1,0]) # [out_dim, k, npoint]
-            # psi = psi.permute([2,0,1]) # [out_dim. npoint, k]
-            # attn_map = F.softmax(torch.matmul(phi,psi), dim=0) # [out_dim, k, k]
-            # alpha = (alpha+pose_tensor).permute([2,0,1])  # [out_dim, npoint, k]
-            # y = torch.matmul(alpha, attn_map)  # [out_dim, npoint, k]
-            # y = y.sum(-1).transpose(0,1)  # [out_dim. npoint]
-            # y = ME.SparseTensor(features = y, coordinate_map_key=x.coordinate_map_key, coordinate_manager=x.coordinate_manager)
+            y = ME.SparseTensor(features = y, coordinate_map_key=x.coordinate_map_key, coordinate_manager=x.coordinate_manager)
 
-        y = self.linear_down(y)
+        if not self.SKIP_TOPDOWN:
+            y = self.linear_down(y)
 
-        self.register_buffer('attn_map', attn_map.detach().cpu().data) # pack it with nn parameter to save in state-dict
         y = self.out_bn_relu(y)
         out = self.out_relu(y+res)
 

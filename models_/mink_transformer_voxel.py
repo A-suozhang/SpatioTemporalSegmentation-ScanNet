@@ -122,12 +122,12 @@ class MinkowskiVoxelTransformer(ME.MinkowskiNetwork):
         # self.dims = np.array([32, 64, 128, 256])
         self.dims = np.array([32, 64, 128, 256])
         # self.neighbor_ks = np.array([12, 12, 12, 12])
-        self.neighbor_ks = np.array([16, 16, 16, 16])
-        # self.neighbor_ks = np.array([16, 32, 32, 32])
+        # self.neighbor_ks = np.array([16, 16, 16, 16])
+        # self.neighbor_ks = np.array([32, 32, 32, 32])
         # self.neighbor_ks = np.array([8, 8, 16, 16])
         # self.neighbor_ks = np.array([32, 32, 32, 32])
         # self.neighbor_ks = np.array([8, 12, 16, 24])
-        # self.neighbor_ks = np.array([8, 8, 8, 8])
+        self.neighbor_ks = np.array([8, 8, 8, 8])
 
         self.final_dim = final_dim
 
@@ -157,7 +157,7 @@ class MinkowskiVoxelTransformer(ME.MinkowskiNetwork):
         base_r = 5
         self.ALPHA_BLENDING_MID_TR = False
 
-        self.PTBlock1 = PTBlock(in_dim=self.dims[0], hidden_dim = self.dims[0], n_sample=self.neighbor_ks[0], skip_attn=False, r=base_r, kernel_size=config.ks, window_beta=window_beta)
+        # self.PTBlock1 = PTBlock(in_dim=self.dims[0], hidden_dim = self.dims[0], n_sample=self.neighbor_ks[0], skip_attn=False, r=base_r, kernel_size=config.ks, window_beta=window_beta)
         self.PTBlock2 = PTBlock(in_dim=self.dims[1], hidden_dim = self.dims[1], n_sample=self.neighbor_ks[1], skip_attn=False, r=2*base_r, kernel_size=config.ks, window_beta=window_beta)
         self.PTBlock3 = PTBlock(in_dim=self.dims[2],hidden_dim = self.dims[2], n_sample=self.neighbor_ks[2], skip_attn=False, r=2*base_r, kernel_size=config.ks, window_beta=window_beta)
         self.PTBlock4 = PTBlock(in_dim=self.dims[3], hidden_dim = self.dims[3], n_sample=self.neighbor_ks[3], skip_attn=False, r=4*base_r, kernel_size=config.ks, window_beta=window_beta)
@@ -177,7 +177,7 @@ class MinkowskiVoxelTransformer(ME.MinkowskiNetwork):
         # BLOCK_TYPE = SingleConv
         BLOCK_TYPE = BasicBlock
 
-        # self.PTBlock1 = self._make_layer(block=BLOCK_TYPE, inplanes=self.dims[0], planes=self.dims[0], num_blocks=1)
+        self.PTBlock1 = self._make_layer(block=BLOCK_TYPE, inplanes=self.dims[0], planes=self.dims[0], num_blocks=1)
         # self.PTBlock2 = self._make_layer(block=BLOCK_TYPE, inplanes=self.dims[1], planes=self.dims[1], num_blocks=1)
         # self.PTBlock3 = self._make_layer(block=BLOCK_TYPE, inplanes=self.dims[2], planes=self.dims[2], num_blocks=1)
         # self.PTBlock4 = self._make_layer(block=BLOCK_TYPE, inplanes=self.dims[3], planes=self.dims[3], num_blocks=1)

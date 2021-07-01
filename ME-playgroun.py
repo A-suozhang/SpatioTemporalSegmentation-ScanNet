@@ -60,11 +60,8 @@ conv1 = ME.MinkowskiConvolution(1,1,kernel_size=1,dimension=3)
 convt1 = ME.MinkowskiConvolutionTranspose(1,1,kernel_size=1,dimension=3)
 conv2 = nn.Conv2d(1,1,kernel_size=1,bias=False)
 
-
 conv_s2 = ME.MinkowskiConvolution(1,1,kernel_size=2,stride=2,dimension=3)
 pool_s2 = ME.MinkowskiMaxPooling(2,stride=2,dimension=3)
-
-
 
 for n, m in conv1.named_parameters():
     print(n,m)
@@ -80,6 +77,46 @@ x2 = ME.SparseTensor(coordinates=coords, features=feats2.reshape([-1,1]))
 
 x1_s2 = conv_s2(x1)
 x1_p2 = pool_s2(x1)
+
+
+'''
+Illustration of the coordinate manager in MinkEngine
+example:
+    the x1 has 3 values
+    after stride=2 conv, only 2 values left(2 merged into 1)
+'''
+
+# `the SparseTensor.coordinate_manager`
+# if these two tensors are in the same computation graph, theu share the same cm
+
+cm0 = x1.coordinate_manager
+# cm1 = x1_s2.coordinate_manager
+# assert cm0 == cm1
+
+# the `SparseTensor.CoordinateMapKey`
+mk1 = x1.coordinate_map_key
+mk2 = x1_s2.coordinate_map_key
+
+kernel_map0 = cm0.kernel_map(mk1, mk2, kernel_size=2, stride=2)
+# has 3 keys:
+# 0: [0] -> [0]
+# 6: [2] -> [1]
+# 7: [3] -> [1]
+# 0,6,7 means the rlative pos in kernel
+# represents 3 voxels mapping to 2 voxels
+
+stride_map = cm0.stride_map(mk1, mk2)
+# return a tuple
+# 1st is input idx
+# 2nd is output idx
+# both of the shape [N]
+# 1st has unique [N], 2nd has unique of [N_ds], ordered by 2nd element
+
+import ipdb; ipdb.set_trace()
+
+# ========================================================================
+
+
 
 '''
 a little demo of getting the neighbor of each point manually after stride=2 conv
@@ -112,6 +149,7 @@ out, _ = torch.mode(query_F)
 
 subsampled_x1 = x1.features_at_coordinates(x1_s2.C.float())
 
+# ===================================================================
 
 # part_x1_feat = x1.features_at_coordinates(x1.C[:3,:].float())
 # part_x1_coord = x1.C[:3,:]
