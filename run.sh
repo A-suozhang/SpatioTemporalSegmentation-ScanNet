@@ -14,12 +14,14 @@ export TIME=$(date +"%Y-%m-%d_%H-%M-%S")
 export DATASET=${DATASET:-ScannetSparseVoxelizationDataset}
 export MODEL=${MODEL:-Res16UNet34C}
 export OPTIMIZER=${OPTIMIZER:-SGD}
+#export LR=${LR:-1e-3}
 export LR=${LR:-1e-2}
 export BATCH_SIZE=${BATCH_SIZE:-12}
 export SCHEDULER=${SCHEDULER:-SquaredLR}
 export MAX_ITER=${MAX_ITER:-60000}
 
 export RESUME=${RESUME:-none}
+# export RESUME=${RESUME:-True}
 export POINTS=${POINTS:-8192}
 
 export USE_AUX=${USE_AUX:-false}

@@ -121,8 +121,8 @@ class MinkowskiVoxelTransformer(ME.MinkowskiNetwork):
 
         # self.dims = np.array([32, 64, 128, 256])
         self.dims = np.array([32, 64, 128, 256])
-        self.neighbor_ks = np.array([8, 8, 8, 8])
-        # self.neighbor_ks = np.array([12, 12, 12, 12])
+        # self.neighbor_ks = np.array([8, 8, 8, 8])
+        self.neighbor_ks = np.array([12, 12, 12, 12])
         # self.neighbor_ks = np.array([16, 16, 16, 16])
         # self.neighbor_ks = np.array([32, 32, 32, 32])
         # self.neighbor_ks = np.array([8, 8, 16, 16])

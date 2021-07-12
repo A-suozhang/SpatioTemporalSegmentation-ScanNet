@@ -482,7 +482,8 @@ class PTBlock(nn.Module):
         self.GAUSSIAN_DECAY = window_beta is not None # use gaussian decay instead of hard knn for larger ks
         self.GAUSSIAN_ONLY = False
         self.DYNAMIC_GAUSSIAN = False
-        self.SKIP_ATTN=skip_attn
+        # self.SKIP_ATTN=skip_attn
+        self.SKIP_ATTN = False
         self.SKIP_TOPDOWN = False
         self.CONV_TOP_DOWN = False
         self.SUBSAMPLE_NEIGHBOR = False
@@ -490,6 +491,23 @@ class PTBlock(nn.Module):
 
         self.MULTI_RESO = True
         self.NUM_RESO = 2
+        self.MULTI_RESO_STRIDE = 2
+
+        logging.info("[PTBlock] KS_1 = " + str(self.KS_1))
+        logging.info("[PTBlock] USE_KNN = " + str(self.USE_KNN))
+        logging.info("[PTBlock] use_vector_attn = " + str(self.use_vector_attn))
+        logging.info("[PTBlock] WITH_POSE_ENCODING = " + str(self.WITH_POSE_ENCODING))
+        logging.info("[PTBlock] GAUSSIAN_DECAY = " + str(self.GAUSSIAN_DECAY))
+        logging.info("[PTBlock] GAUSSIAN_ONLY = " + str(self.GAUSSIAN_ONLY))
+        logging.info("[PTBlock] DYNAMIC_GAUSSIAN = " + str(self.DYNAMIC_GAUSSIAN))
+        logging.info("[PTBlock] SKIP_ATTN = " + str(self.SKIP_ATTN))
+        logging.info("[PTBlock] SKIP_TOPDOWN = " + str(self.SKIP_TOPDOWN))
+        logging.info("[PTBlock] CONV_TOP_DOWN = " + str(self.CONV_TOP_DOWN))
+        logging.info("[PTBlock] SUBSAMPLE_NEIGHBOR = " + str(self.SUBSAMPLE_NEIGHBOR))
+        logging.info("[PTBlock] SKIP_QK = " + str(self.SKIP_QK))
+        logging.info("[PTBlock] MULTI_RESO = " + str(self.MULTI_RESO))
+        logging.info("[PTBlock] NUM_RESO = " + str(self.NUM_RESO))
+        logging.info("[PTBlock] MULTI_RESO_STRIDE = " + str(self.MULTI_RESO_STRIDE))
 
         if self.GAUSSIAN_ONLY:
             assert self.GAUSSIAN_DECAY==True
@@ -525,7 +543,7 @@ class PTBlock(nn.Module):
             )
 
         if self.MULTI_RESO:
-            self.pool_1 = ME.MinkowskiAvgPooling(kernel_size=2, stride=2, dimension=3)
+            self.pool_1 = ME.MinkowskiAvgPooling(kernel_size=self.MULTI_RESO_STRIDE, stride=self.MULTI_RESO_STRIDE, dimension=3)
             # self.pool_2 = ME.MinkowskiAvgPooling(kernel_size=2, stride=2, dimension=3)
             # self.psi_pool1 = nn.Sequential(
                 # ME.MinkowskiConvolution(self.hidden_dim, self.out_dim, kernel_size=self.kernel_size, dimension=3)
@@ -702,6 +720,7 @@ class PTBlock(nn.Module):
         else:
             psi_new = psi
             alpha_new = alpha
+            pose_tensor_new = pose_tensor
 
 
         '''The Self-Attn Part'''
@@ -715,11 +734,13 @@ class PTBlock(nn.Module):
         y = y.sum(dim=-1) # feature aggregation, y becomes [B, out_dim, npoint]
         '''
         if self.WITH_POSE_ENCODING:
+            # print("WITH_POSE_ENCODING = True")
             if self.SKIP_QK:
                 attn_map = F.softmax(gamma_fn((pose_tensor_new).transpose(1,2)), dim=-1) # acquire attn-weight from raw relative_xyz
             else:
                 attn_map = F.softmax(gamma_fn((phi - psi_new + pose_tensor_new).transpose(1,2)), dim=-1)
         else:
+            # print("WITH_POSE_ENCODING = False")
             if self.SKIP_QK:
                 # relative_xyz: [N, n_sample, 3]
                 attn_map = F.softmax(
