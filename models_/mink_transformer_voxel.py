@@ -121,8 +121,8 @@ class MinkowskiVoxelTransformer(ME.MinkowskiNetwork):
 
         # self.dims = np.array([32, 64, 128, 256])
         self.dims = np.array([32, 64, 128, 256])
-        self.neighbor_ks = np.array([12, 12, 12, 12])
-        # self.neighbor_ks = np.array([16, 16, 16, 16])
+        # self.neighbor_ks = np.array([12, 12, 12, 12])
+        self.neighbor_ks = np.array([16, 16, 16, 16])
         # self.neighbor_ks = np.array([32, 32, 32, 32])
         # self.neighbor_ks = np.array([8, 8, 16, 16])
         # self.neighbor_ks = np.array([32, 32, 32, 32])
@@ -156,6 +156,7 @@ class MinkowskiVoxelTransformer(ME.MinkowskiNetwork):
         window_beta = None
         base_r = 5
         self.ALPHA_BLENDING_MID_TR = False
+        self.ALPHA_BLENDING_FIRST_TR = True
 
         # self.PTBlock1 = PTBlock(in_dim=self.dims[0], hidden_dim = self.dims[0], n_sample=self.neighbor_ks[0], skip_attn=False, r=base_r, kernel_size=config.ks, window_beta=window_beta)
         self.PTBlock2 = PTBlock(in_dim=self.dims[1], hidden_dim = self.dims[1], n_sample=self.neighbor_ks[1], skip_attn=False, r=2*base_r, kernel_size=config.ks, window_beta=window_beta)
@@ -166,9 +167,12 @@ class MinkowskiVoxelTransformer(ME.MinkowskiNetwork):
             self.PTBlock4_branch = PTBlock(in_dim=self.dims[3], hidden_dim = self.dims[3], n_sample=self.neighbor_ks[3], skip_attn=True, r=4*base_r, kernel_size=config.ks)
             self.PTBlock5_branch = PTBlock(in_dim=128, hidden_dim=128,n_sample=self.neighbor_ks[3], skip_attn=True, r=2*base_r, kernel_size=config.ks) # out: 256
 
+        if self.ALPHA_BLENDING_FIRST_TR:
+            self.PTBlock1_branch = PTBlock(in_dim=self.dims[0], hidden_dim = self.dims[0], n_sample=self.neighbor_ks[0], skip_attn=False, r=base_r, kernel_size=config.ks, window_beta=window_beta)
+
         self.PTBlock5 = PTBlock(in_dim=128, hidden_dim=128,n_sample=self.neighbor_ks[3], skip_attn=False, r=2*base_r, kernel_size=config.ks, window_beta=window_beta) # out: 256
         self.PTBlock6 = PTBlock(in_dim=128, hidden_dim=128, n_sample=self.neighbor_ks[2], skip_attn=False, r=2*base_r, kernel_size=config.ks, window_beta=window_beta) # out: 128
-        self.PTBlock7 = PTBlock(in_dim=96, hidden_dim=96, n_sample=self.neighbor_ks[1], skip_attn=False, r=base_r, kernel_size=config.ks, window_beta=5) # out: 64
+        self.PTBlock7 = PTBlock(in_dim=96, hidden_dim=96, n_sample=self.neighbor_ks[1], skip_attn=False, r=base_r, kernel_size=config.ks, window_beta=window_beta) # out: 64
 
         # self.PTBlock5 = StackedPTBlock(in_dim=128, hidden_dim=128,n_sample=self.neighbor_ks[3], skip_attn=False, r=2*base_r, kernel_size=config.ks) # out: 256
         # self.PTBlock6 = StackedPTBlock(in_dim=128, hidden_dim=128, n_sample=self.neighbor_ks[2], skip_attn=False, r=2*base_r, kernel_size=config.ks) # out: 128
@@ -261,11 +265,24 @@ class MinkowskiVoxelTransformer(ME.MinkowskiNetwork):
             x = self.PTBlock7(x, aux=aux1)
 
         else:
+
+             # alpha from 0 ~ 1.0
+            # gradually from pointnet(skip_attn: TR) to tr-block
+            if self.ALPHA_BLENDING_MID_TR or self.ALPHA_BLENDING_FIRST_TR:
+                assert iter_ is not None
+                alpha = 1 - 1.01 ** (-iter_)
+
             x0 = self.stem1(x)
             x = self.stem2(x0)
 
             # x1 = self.PTBlock1(x)
-            x1 = self.PTBlock1(x, iter_=iter_)
+            if self.ALPHA_BLENDING_FIRST_TR:
+                x1 = self.PTBlock1(x, iter_=iter_)
+                x1_ = self.PTBlock1_branch(x, iter_=iter_)
+                new_x1 = alpha*x1.F + (1-alpha)*x1_.F
+                x1 = ME.SparseTensor(features = new_x1, coordinate_map_key=x.coordinate_map_key, coordinate_manager=x.coordinate_manager)
+            else:
+                x1 = self.PTBlock1(x, iter_=iter_)
             if save_anchor:
                 self.anchors.append(x1)
 
@@ -279,12 +296,6 @@ class MinkowskiVoxelTransformer(ME.MinkowskiNetwork):
             x3 = self.PTBlock3(x, iter_=iter_)
             # if save_anchor:
                 # self.anchors.append(x3)
-
-            # alpha from 0 ~ 1.0
-            # gradually from pointnet(skip_attn: TR) to tr-block
-            if self.ALPHA_BLENDING_MID_TR:
-                assert iter_ is not None
-                alpha = 1 - 1.01 ** (-iter_)
 
             x = self.TDLayer3(x3)
             if self.ALPHA_BLENDING_MID_TR:
