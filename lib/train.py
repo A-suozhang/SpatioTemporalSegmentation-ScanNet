@@ -64,7 +64,13 @@ def train(model, data_loader, val_data_loader, config, transform_data_fn=None):
             state = torch.load(checkpoint_fn)
             curr_iter = state['iteration'] + 1
             epoch = state['epoch']
+            # we skip attention maps because the shape won't match because voxel number is different
+            # e.g. copyting a param with shape (23385, 8, 4) to (43529, 8, 4)
             d = {k:v for k,v in state['state_dict'].items() if 'map' not in k }
+            # handle those attn maps we don't load from saved dict
+            for k in model.state_dict().keys():
+                if k in d.keys(): continue
+                d[k] = model.state_dict()[k]
             model.load_state_dict(d)
             if config.resume_optimizer:
                 scheduler = initialize_scheduler(optimizer, config, last_step=curr_iter)
