@@ -457,7 +457,7 @@ class StackedPTBlock(nn.Module):
 
 
 class PTBlock(nn.Module):
-    def __init__(self, in_dim, hidden_dim, is_firstlayer=False, n_sample=16, r=10, skip_attn=False, kernel_size=1, window_beta=None):
+    def __init__(self, in_dim, hidden_dim, is_firstlayer=False, n_sample=16, r=10, skip_attn=False, kernel_size=3, window_beta=None):
         super().__init__()
         '''
         Point Transformer Layer
@@ -472,13 +472,15 @@ class PTBlock(nn.Module):
         self.in_dim = in_dim
         self.hidden_dim = hidden_dim
         self.out_dim = self.hidden_dim
-        self.vector_dim = self.out_dim // 1
+        self.vector_dim = 8
+        # self.vector_dim = self.out_dim // 16
+        # self.vector_dim = self.out_dim
         self.n_sample = n_sample
 
         self.KS_1 = True
         self.USE_KNN = True
         self.use_vector_attn = True  # whether to use the vector att or the original attention
-        self.WITH_POSE_ENCODING = False
+        self.WITH_POSE_ENCODING = True
         self.GAUSSIAN_DECAY = window_beta is not None # use gaussian decay instead of hard knn for larger ks
         self.GAUSSIAN_ONLY = False
         self.DYNAMIC_GAUSSIAN = False
@@ -488,8 +490,9 @@ class PTBlock(nn.Module):
         self.CONV_TOP_DOWN = False
         self.SUBSAMPLE_NEIGHBOR = False
         self.SKIP_QK = False
+        self.DISCETE_QK = False
 
-        self.MULTI_RESO = True
+        self.MULTI_RESO = False
         self.NUM_RESO = 2
         self.MULTI_RESO_STRIDE = 2
 
@@ -538,8 +541,8 @@ class PTBlock(nn.Module):
                 ME.MinkowskiBatchNorm(self.hidden_dim),
             )
             self.linear_down = nn.Sequential(
-                ME.MinkowskiConvolution(self.out_dim, self.in_dim, kernel_size=self.top_down_ks, dimension=3),
-                ME.MinkowskiBatchNorm(self.in_dim),
+                ME.MinkowskiConvolution(self.out_dim, self.out_dim, kernel_size=self.top_down_ks, dimension=3),
+                ME.MinkowskiBatchNorm(self.out_dim),
             )
 
         if self.MULTI_RESO:
@@ -599,19 +602,28 @@ class PTBlock(nn.Module):
                 # )
 
         # feature transformations
-        self.phi = nn.Sequential(
-            ME.MinkowskiConvolution(self.hidden_dim, self.out_dim, kernel_size=self.kernel_size, dimension=3)
-        )
-        self.psi = nn.Sequential(
-            ME.MinkowskiConvolution(self.hidden_dim, self.out_dim, kernel_size=self.kernel_size, dimension=3)
-        )
+        if self.SKIP_QK:
+            pass
+        elif self.DISCETE_QK:
+            self.codebook_freedom = 4
+            self.gen_choice = nn.Sequential(
+                    ME.MinkowskiConvolution(self.hidden_dim, self.codebook_freedom, kernel_size=1, dimension=3),
+                    )
+            self.codebook = nn.Parameter(torch.tensor(dim, self.codebook_freedom))
+        else:
+            self.phi = nn.Sequential(
+                ME.MinkowskiConvolution(self.hidden_dim, self.out_dim, kernel_size=self.kernel_size, dimension=3)
+            )
+            self.psi = nn.Sequential(
+                ME.MinkowskiConvolution(self.hidden_dim, self.out_dim, kernel_size=self.kernel_size, dimension=3)
+            )
 
         if self.SKIP_ATTN:
             self.alpha = nn.Sequential(
                     nn.Conv1d(self.in_dim, self.in_dim, self.kernel_size),
-                    nn.BatchNorm1d(self.in_dim),
-                    nn.ReLU(),
-                    nn.Conv1d(self.in_dim, self.hidden_dim, self.kernel_size),
+                    # nn.BatchNorm1d(self.in_dim),
+                    # nn.ReLU(),
+                    # nn.Conv1d(self.in_dim, self.hidden_dim, self.kernel_size),
                     nn.BatchNorm1d(self.hidden_dim),
                     nn.ReLU(),
                     )
@@ -628,18 +640,20 @@ class PTBlock(nn.Module):
             )
         else:
             self.gamma = nn.Sequential(
-                nn.Conv1d(self.out_dim, self.hidden_dim, 1),
-                nn.BatchNorm1d(self.hidden_dim),
-                nn.ReLU(),
-                nn.Conv1d(self.hidden_dim, self.vector_dim, 1),
+                # nn.Conv1d(self.out_dim, self.hidden_dim, 1),
+                # nn.BatchNorm1d(self.hidden_dim),
+                # nn.ReLU(),
+                # nn.Conv1d(self.hidden_dim, self.vector_dim, 1),
+                nn.Conv1d(self.out_dim, self.vector_dim, 1),
                 nn.BatchNorm1d(self.vector_dim),
             )
 
         self.delta = nn.Sequential(
-                    nn.Conv2d(3, self.hidden_dim, 1),
-                    nn.BatchNorm2d(self.hidden_dim),
-                    nn.ReLU(),
-                    nn.Conv2d(self.hidden_dim, self.out_dim, 1),
+                    # nn.Conv2d(3, self.hidden_dim, 1),
+                    # nn.BatchNorm2d(self.hidden_dim),
+                    # nn.ReLU(),
+                    # nn.Conv2d(self.hidden_dim, self.out_dim, 1),
+                    nn.Conv2d(3, self.out_dim, 1),
                     nn.BatchNorm2d(self.out_dim),
                 )
 
@@ -670,17 +684,51 @@ class PTBlock(nn.Module):
         return pose_tensor
 
     def gen_attn_map(self, x, neighbor, phi_fn, psi_fn, alpha_fn, gamma_fn, pose_tensor, neighbor_mask=None, register_map=False,\
-            cross_attn=False, cross_x=None):
+            cross_attn=False, cross_x=None, cross_neighbor=None):
+        """ Generate attention map from input tensor
+
+        Parameters
+        ----------
+        x: ME.SparseTensor
+            Input sparse tensor. When using multi-resolution, this
+            is the pooled tensor with lower resolution and larger
+            voxel size.
+
+        neighbor: torch.Tensor
+            Size: (nvoxel, k, 4). 
+            To be used with ME.SparseTensor.feature_at(). Records each
+            voxel's k neighbors' coordinates.
+
+        cross_attn: Boolean
+            Use multi-resolution cross attention or not
+        
+        cross_x: ME.SparseTensor
+            Alternative input sparse tensor for multi-resolution 
+            cross attention, has higher solution, smaller voxel
+            size.
+        
+        Return
+        ------
+        y: torch.Tensor
+            Aggregated feature according to generated attention map.
+        """
 
         k = neighbor.shape[1]
-        if cross_attn:
-            phi = phi_fn(cross_x).F
-            phi = phi[:,None,:].repeat(1,k,1) # (nvoxel, k, feat_dim)
+        if self.DISCETE_QK:
+            # TODO: finish this logic
+            choice = self.gen_choice(x)
+            phi = codebook*choice
+            psi = torch.zeros()
         else:
-            phi = phi_fn(x).F # (nvoxel, feat_dim)
+            phi = phi_fn(x).F
             phi = phi[:,None,:].repeat(1,k,1) # (nvoxel, k, feat_dim)
-        psi = get_neighbor_feature(neighbor, psi_fn(x)) # (nvoxel, k, feat_dim)
-        alpha = get_neighbor_feature(neighbor, alpha_fn(x)) # (nvoxel, k, feat_dim)
+            psi = get_neighbor_feature(neighbor, psi_fn(x)) # (nvoxel, k, feat_dim)
+
+        if cross_attn:
+            if cross_neighbor.shape[1] != k: cross_neighbor = cross_neighbor[:,:k,:].contiguous()
+            alpha = get_neighbor_feature(cross_neighbor, alpha_fn(cross_x)) # (nvoxel, k, feat_dim)
+        else:
+            alpha = get_neighbor_feature(neighbor, alpha_fn(x)) # (nvoxel, k, feat_dim)
         if self.SUBSAMPLE_NEIGHBOR:
             phi = phi[:,self.perms,:]
             psi = psi[:,self.perms,:]
@@ -689,8 +737,8 @@ class PTBlock(nn.Module):
         # when use cross_attn, cross_x and x maynot have the same shape need to align em
         if cross_attn:
             assert phi.shape[1] == psi.shape[1] and phi.shape[2] == psi.shape[2]
-            N1 = phi.shape[0]
-            N2 = psi.shape[0]
+            N1 = cross_x.shape[0]
+            N2 = x.shape[0]
             k = phi.shape[1]
             dim = phi.shape[2]
             # ~when use cross_attn, the pose_enc should align with the bigger N~
@@ -705,21 +753,25 @@ class PTBlock(nn.Module):
                 psi_ = torch.gather(psi, dim=0, index=maps[1].reshape([-1,1,1]).repeat(1,k,dim))
                 psi_new = torch.zeros(psi_.shape, device=psi_.device)
                 psi_new.scatter_(dim=0, index=maps[0].reshape(-1,1,1).repeat(1,k,dim), src=psi_)
+                
+                phi_ = torch.gather(phi, dim=0, index=maps[1].reshape([-1,1,1]).repeat(1,k,dim))
+                phi_new = torch.zeros(phi_.shape, device=phi_.device)
+                phi_new.scatter_(dim=0, index=maps[0].reshape(-1,1,1).repeat(1,k,dim), src=psi_)
 
-                alpha_ = torch.gather(alpha, dim=0, index=maps[1].reshape([-1,1,1]).repeat(1,k,dim))
-                alpha_new = torch.zeros(alpha_.shape, device=alpha_.device)
-                alpha_new.scatter_(dim=0, index=maps[0].reshape(-1,1,1).repeat(1,k,dim), src=alpha_)
+                # alpha_ = torch.gather(alpha, dim=0, index=maps[1].reshape([-1,1,1]).repeat(1,k,dim))
+                # alpha_new = torch.zeros(alpha_.shape, device=alpha_.device)
+                # alpha_new.scatter_(dim=0, index=maps[0].reshape(-1,1,1).repeat(1,k,dim), src=alpha_)
 
                 pos_ = torch.gather(pose_tensor, dim=0, index=maps[1].reshape([-1,1,1]).repeat(1,k,dim))
                 pose_tensor_new = torch.zeros(pos_.shape, device=pose_tensor.device)
                 pose_tensor_new.scatter_(dim=0, index=maps[0].reshape(-1,1,1).repeat(1,k,dim), src=pos_)
             else:
                 psi_new = psi
-                alpha_new = alpha
+                phi_new = phi
                 pose_tensor_new = pose_tensor
         else:
             psi_new = psi
-            alpha_new = alpha
+            phi_new = phi
             pose_tensor_new = pose_tensor
 
 
@@ -738,7 +790,7 @@ class PTBlock(nn.Module):
             if self.SKIP_QK:
                 attn_map = F.softmax(gamma_fn((pose_tensor_new).transpose(1,2)), dim=-1) # acquire attn-weight from raw relative_xyz
             else:
-                attn_map = F.softmax(gamma_fn((phi - psi_new + pose_tensor_new).transpose(1,2)), dim=-1)
+                attn_map = F.softmax(gamma_fn((phi_new - psi_new + pose_tensor_new).transpose(1,2)), dim=-1)
         else:
             # print("WITH_POSE_ENCODING = False")
             if self.SKIP_QK:
@@ -747,11 +799,11 @@ class PTBlock(nn.Module):
                         gamma_fn((pose_tensor_new.reshape([-1, 3*k]).unsqueeze(-1))).reshape([-1,k,self.out_dim]).transpose(1,2)
                         , dim=-1) # acquire attn-weight from raw relative_xyz
             else:
-                attn_map = F.softmax(gamma_fn((phi - psi_new).transpose(1,2)), dim=-1)
+                attn_map = F.softmax(gamma_fn((phi_new - psi_new).transpose(1,2)), dim=-1)
         if self.WITH_POSE_ENCODING:
-            self_feat = (alpha_new + pose_tensor_new).permute(0,2,1) # (nvoxel, k, feat_dim) -> (nvoxel, feat_dim, k)
+            self_feat = (alpha + pose_tensor_new).permute(0,2,1) # (nvoxel, k, feat_dim) -> (nvoxel, feat_dim, k)
         else:
-            self_feat = (alpha_new).permute(0,2,1) # (nvoxel, k, feat_dim) -> (nvoxel, feat_dim, k)
+            self_feat = alpha.permute(0,2,1) # (nvoxel, k, feat_dim) -> (nvoxel, feat_dim, k)
 
         # use aux info and mask the  attn_map
         if neighbor_mask is not None:
@@ -773,7 +825,7 @@ class PTBlock(nn.Module):
 
         if register_map:
             self.register_buffer('attn_map', attn_map.detach().cpu().data) # pack it with nn parameter to save in state-dict
-        y = attn_map.repeat(1, self.out_dim // self.vector_dim, 1, 1) * self_feat # (nvoxel, feat_dim, k)
+        y = attn_map.repeat(1,self.out_dim // self.vector_dim, 1) * self_feat # (nvoxel, feat_dim, k)
         if cross_attn:
             y = y.sum(dim=-1).view(cross_x.C.shape[0], -1) # feature aggregation, y becomes (nvoxel, feat_dim)
         else:
@@ -792,8 +844,6 @@ class PTBlock(nn.Module):
         self.k = min(self.n_sample, npoint)
         if not self.use_vector_attn:
             h = self.nhead
-
-        res = x
 
         self.cube_query = cube_query(r=self.r, k=self.k, knn=self.USE_KNN) # make sure it doesnot contain param
 
@@ -824,6 +874,8 @@ class PTBlock(nn.Module):
 
         if not self.SKIP_TOPDOWN:
             x = self.linear_top(x) # [B, in_dim, npoint], such as [16, 32, 4096]
+
+        res = x  # DEBUG: 
 
         '''
         illustration on dimension notations:
@@ -872,7 +924,7 @@ class PTBlock(nn.Module):
 
         y = self.gen_attn_map(x, neighbor, self.phi, self.psi, self.alpha, self.gamma, pose_tensor, register_map=True)
         if self.MULTI_RESO:
-            y_pool1 = self.gen_attn_map(x_pool1, neighbor_pool1, self.phi, self.psi, self.alpha, self.gamma, pose_tensor_pool1, cross_attn=True, cross_x=x)
+            y_pool1 = self.gen_attn_map(x_pool1, neighbor_pool1, self.phi, self.psi, self.alpha, self.gamma, pose_tensor_pool1, cross_attn=True, cross_x=x, cross_neighbor=neighbor)
             # y_pool2 = self.gen_attn_map(x_pool2, neighbor_pool2, self.phi, self.psi_pool2, self.alpha_pool2, self.gamma_pool2, pose_tensor, cross_attn=True, cross_x=x)
             y = torch.cat([y, y_pool1],dim=-1)
             y = ME.SparseTensor(features = y, coordinate_map_key=x.coordinate_map_key, coordinate_manager=x.coordinate_manager)
@@ -885,6 +937,7 @@ class PTBlock(nn.Module):
 
         y = self.out_bn_relu(y)
         out = self.out_relu(y+res)
+        # out = self.out_relu(y)
 
         return out
 

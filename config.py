@@ -48,7 +48,8 @@ net_arg.add_argument('--ks', default=3, type=int)
 
 # Optimizer arguments
 opt_arg = add_argument_group('Optimizer')
-opt_arg.add_argument('--optimizer', type=str, default='SGD')
+# opt_arg.add_argument('--optimizer', type=str, default='SGD')
+opt_arg.add_argument('--optimizer', type=str, default='Adam')
 opt_arg.add_argument('--lr', type=float, default=1e-2)
 opt_arg.add_argument('--sgd_momentum', type=float, default=0.9)
 opt_arg.add_argument('--sgd_dampening', type=float, default=0.1)
@@ -97,6 +98,7 @@ data_arg.add_argument('--partial_crop', type=float, default=0.)
 data_arg.add_argument('--train_limit_numpoints', type=int, default=0)
 
 # data_arg.add_argument('--points', type=bool, default=False)
+# data_arg.add_argument('--voxel_size', type=float, default=0.1)
 data_arg.add_argument('--voxel_size', type=float, default=0.075)
 # data_arg.add_argument('--voxel_size', type=float, default=0.05)
 data_arg.add_argument('--num_points', type=int, default=8192)

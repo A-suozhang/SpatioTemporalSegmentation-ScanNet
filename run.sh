@@ -17,6 +17,7 @@ export OPTIMIZER=${OPTIMIZER:-SGD}
 #export LR=${LR:-1e-3}
 export LR=${LR:-1e-2}
 export BATCH_SIZE=${BATCH_SIZE:-12}
+export WEIGHT_DECAY=${WEIGHT_DECAY:-1E-4}
 export SCHEDULER=${SCHEDULER:-SquaredLR}
 export MAX_ITER=${MAX_ITER:-60000}
 
@@ -41,6 +42,7 @@ echo "
     --train_limit_numpoints 1200000 \
     --lr $LR \
     --optimizer $OPTIMIZER \
+	--weight_decay $WEIGHT_DECAY \
     --batch_size $BATCH_SIZE \
     --scheduler $SCHEDULER \
     --max_iter $MAX_ITER \
@@ -65,6 +67,7 @@ time python -W ignore main.py \
 	--train_limit_numpoints 1200000 \
 	--lr $LR \
 	--optimizer $OPTIMIZER \
+	--weight_decay $WEIGHT_DECAY \
 	--batch_size $BATCH_SIZE \
 	--scheduler $SCHEDULER \
 	--max_iter $MAX_ITER \

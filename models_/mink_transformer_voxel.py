@@ -121,9 +121,9 @@ class MinkowskiVoxelTransformer(ME.MinkowskiNetwork):
 
         # self.dims = np.array([32, 64, 128, 256])
         self.dims = np.array([32, 64, 128, 256])
-        # self.neighbor_ks = np.array([8, 8, 8, 8])
-        self.neighbor_ks = np.array([12, 12, 12, 12])
-        # self.neighbor_ks = np.array([16, 16, 16, 16])
+        # self.neighbor_ks = np.array([4, 4, 4, 4])
+        # self.neighbor_ks = np.array([12, 12, 12, 12])
+        self.neighbor_ks = np.array([16, 16, 16, 16])
         # self.neighbor_ks = np.array([32, 32, 32, 32])
         # self.neighbor_ks = np.array([8, 8, 16, 16])
         # self.neighbor_ks = np.array([32, 32, 32, 32])
@@ -160,6 +160,7 @@ class MinkowskiVoxelTransformer(ME.MinkowskiNetwork):
         self.ALPHA_BLENDING_FIRST_TR = True
 
         # self.PTBlock1 = PTBlock(in_dim=self.dims[0], hidden_dim = self.dims[0], n_sample=self.neighbor_ks[0], skip_attn=False, r=base_r, kernel_size=config.ks, window_beta=window_beta)
+
         self.PTBlock2 = PTBlock(in_dim=self.dims[1], hidden_dim = self.dims[1], n_sample=self.neighbor_ks[1], skip_attn=False, r=2*base_r, kernel_size=config.ks, window_beta=window_beta)
         self.PTBlock3 = PTBlock(in_dim=self.dims[2],hidden_dim = self.dims[2], n_sample=self.neighbor_ks[2], skip_attn=False, r=2*base_r, kernel_size=config.ks, window_beta=window_beta)
         self.PTBlock4 = PTBlock(in_dim=self.dims[3], hidden_dim = self.dims[3], n_sample=self.neighbor_ks[3], skip_attn=False, r=4*base_r, kernel_size=config.ks, window_beta=window_beta)
@@ -271,7 +272,10 @@ class MinkowskiVoxelTransformer(ME.MinkowskiNetwork):
             # gradually from pointnet(skip_attn: TR) to tr-block
             if self.ALPHA_BLENDING_MID_TR or self.ALPHA_BLENDING_FIRST_TR:
                 assert iter_ is not None
-                alpha = 1 - 1.01 ** (-iter_)
+                # iter_ is normalized by config.iter_size
+                alpha = 1 - 1.01 ** (-24000*iter_)
+                if iter_ < 0.1:
+                    alpha = 0
 
             x0 = self.stem1(x)
             x = self.stem2(x0)

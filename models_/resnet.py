@@ -9,7 +9,7 @@ import MinkowskiEngine as ME
 
 from models.model import Model, NetworkType
 from models.modules.common import ConvType, NormType, get_norm, conv, sum_pool
-from models.modules.resnet_block import BasicBlock, Bottleneck
+from models.modules.resnet_block import BasicBlock, Bottleneck, SingleConv
 
 
 class ResNetBase(Model):
@@ -129,7 +129,7 @@ class ResNetBase(Model):
             conv_type=self.CONV_TYPE,
             nonlinearity_type=nonlinearity_type,
             D=self.D))
-    self.inplanes = planes * block.expansion
+    self.inplanes = planes * block.expansion 
     for i in range(1, blocks):
       layers.append(
           block(
@@ -194,4 +194,8 @@ class ResNet50(ResNetBase):
 
 class ResNet101(ResNetBase):
   BLOCK = Bottleneck
-  LAYERS = (3, 4, 23, 3)
+  LAYERS = (3, 4, 3, 3)
+
+class ResNetTest(ResNetBase):
+  BLOCK = SingleConv
+  LAYERS = (2, 2, 2, 2)
