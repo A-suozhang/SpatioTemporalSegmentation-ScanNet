@@ -3,12 +3,10 @@
 # Please cite "4D Spatio-Temporal ConvNets: Minkowski Convolutional Neural
 # Networks", CVPR'19 (https://arxiv.org/abs/1904.08755) if you use any part of
 # the code.
-
 from models.resnet import ResNetBase
 from models.modules.common import ConvType, NormType, conv, conv_tr, get_norm, get_nonlinearity_fn
-from models.modules.resnet_block import BasicBlock, Bottleneck, SingleConv, TestConv, MultiConv, TRBlock
+from models.modules.resnet_block import BasicBlock, Bottleneck
 
-import numpy as np
 import MinkowskiEngine.MinkowskiOps as me
 
 
@@ -29,15 +27,10 @@ class Res16UNetBase(ResNetBase):
   def __init__(self, in_channels, out_channels, config, D=3, **kwargs):
     super(Res16UNetBase, self).__init__(in_channels, out_channels, config, D)
 
-    if not isinstance(self.BLOCK, list): # if single type
-        self.BLOCK - [self.BLOCK]*len(self.PLANES)
-
   def network_initialization(self, in_channels, out_channels, config, D):
     # Setup net_metadata
     dilations = self.DILATIONS
     bn_momentum = config.bn_momentum
-
-    block_noexpansion = True
 
     def space_n_time_m(n, m):
       return n if D == 3 else [n, n, n, m]
@@ -64,17 +57,16 @@ class Res16UNetBase(ResNetBase):
 
     self.conv1p1s2 = conv(
         self.inplanes,
-        self.inplanes if not block_noexpansion else self.PLANES[0],
+        self.inplanes,
         kernel_size=space_n_time_m(2, 1),
         stride=space_n_time_m(2, 1),
         dilation=1,
         conv_type=self.NON_BLOCK_CONV_TYPE,
         D=D)
-    self.inplanes = self.inplanes if not block_noexpansion else self.PLANES[0]
     self.bn1 = get_norm(self.NORM_TYPE, self.inplanes, D, bn_momentum=bn_momentum)
 
     self.block1 = self._make_layer(
-        self.BLOCK[0],
+        self.BLOCK,
         self.PLANES[0],
         self.LAYERS[0],
         dilation=dilations[0],
@@ -84,16 +76,15 @@ class Res16UNetBase(ResNetBase):
 
     self.conv2p2s2 = conv(
         self.inplanes,
-        self.inplanes if not block_noexpansion else self.PLANES[1],
+        self.inplanes,
         kernel_size=space_n_time_m(2, 1),
         stride=space_n_time_m(2, 1),
         dilation=1,
         conv_type=self.NON_BLOCK_CONV_TYPE,
         D=D)
-    self.inplanes = self.inplanes if not block_noexpansion else self.PLANES[1]
     self.bn2 = get_norm(self.NORM_TYPE, self.inplanes, D, bn_momentum=bn_momentum)
     self.block2 = self._make_layer(
-        self.BLOCK[1],
+        self.BLOCK,
         self.PLANES[1],
         self.LAYERS[1],
         dilation=dilations[1],
@@ -103,16 +94,15 @@ class Res16UNetBase(ResNetBase):
 
     self.conv3p4s2 = conv(
         self.inplanes,
-        self.inplanes if not block_noexpansion else self.PLANES[2],
+        self.inplanes,
         kernel_size=space_n_time_m(2, 1),
         stride=space_n_time_m(2, 1),
         dilation=1,
         conv_type=self.NON_BLOCK_CONV_TYPE,
         D=D)
-    self.inplanes = self.inplanes if not block_noexpansion else self.PLANES[2]
     self.bn3 = get_norm(self.NORM_TYPE, self.inplanes, D, bn_momentum=bn_momentum)
     self.block3 = self._make_layer(
-        self.BLOCK[2],
+        self.BLOCK,
         self.PLANES[2],
         self.LAYERS[2],
         dilation=dilations[2],
@@ -122,16 +112,15 @@ class Res16UNetBase(ResNetBase):
 
     self.conv4p8s2 = conv(
         self.inplanes,
-        self.inplanes if not block_noexpansion else self.PLANES[3],
+        self.inplanes,
         kernel_size=space_n_time_m(2, 1),
         stride=space_n_time_m(2, 1),
         dilation=1,
         conv_type=self.NON_BLOCK_CONV_TYPE,
         D=D)
-    self.inplanes = self.inplanes if not block_noexpansion else self.PLANES[3]
     self.bn4 = get_norm(self.NORM_TYPE, self.inplanes, D, bn_momentum=bn_momentum)
     self.block4 = self._make_layer(
-        self.BLOCK[3],
+        self.BLOCK,
         self.PLANES[3],
         self.LAYERS[3],
         dilation=dilations[3],
@@ -149,9 +138,9 @@ class Res16UNetBase(ResNetBase):
         D=D)
     self.bntr4 = get_norm(self.NORM_TYPE, self.PLANES[4], D, bn_momentum=bn_momentum)
 
-    self.inplanes = self.PLANES[4] + self.PLANES[2] * self.BLOCK[4].expansion
+    self.inplanes = self.PLANES[4] + self.PLANES[2] * self.BLOCK.expansion
     self.block5 = self._make_layer(
-        self.BLOCK[4],
+        self.BLOCK,
         self.PLANES[4],
         self.LAYERS[4],
         dilation=dilations[4],
@@ -169,9 +158,9 @@ class Res16UNetBase(ResNetBase):
         D=D)
     self.bntr5 = get_norm(self.NORM_TYPE, self.PLANES[5], D, bn_momentum=bn_momentum)
 
-    self.inplanes = self.PLANES[5] + self.PLANES[1] * self.BLOCK[5].expansion
+    self.inplanes = self.PLANES[5] + self.PLANES[1] * self.BLOCK.expansion
     self.block6 = self._make_layer(
-        self.BLOCK[5],
+        self.BLOCK,
         self.PLANES[5],
         self.LAYERS[5],
         dilation=dilations[5],
@@ -189,9 +178,9 @@ class Res16UNetBase(ResNetBase):
         D=D)
     self.bntr6 = get_norm(self.NORM_TYPE, self.PLANES[6], D, bn_momentum=bn_momentum)
 
-    self.inplanes = self.PLANES[6] + self.PLANES[0] * self.BLOCK[6].expansion
+    self.inplanes = self.PLANES[6] + self.PLANES[0] * self.BLOCK.expansion
     self.block7 = self._make_layer(
-        self.BLOCK[6],
+        self.BLOCK,
         self.PLANES[6],
         self.LAYERS[6],
         dilation=dilations[6],
@@ -211,7 +200,7 @@ class Res16UNetBase(ResNetBase):
 
     self.inplanes = self.PLANES[7] + self.INIT_DIM
     self.block8 = self._make_layer(
-        self.BLOCK[7],
+        self.BLOCK,
         self.PLANES[7],
         self.LAYERS[7],
         dilation=dilations[7],
@@ -221,7 +210,7 @@ class Res16UNetBase(ResNetBase):
 
     self.final = conv(self.PLANES[7], out_channels, kernel_size=1, stride=1, bias=True, D=D)
 
-  def forward(self, x, save_anchor=False, iter_=None):
+  def forward(self, x, save_anchor=False):
     if save_anchor:
         self.anchors = []
     # mapped to transformer.stem1
@@ -251,8 +240,8 @@ class Res16UNetBase(ResNetBase):
     out = self.bn3(out)
     out = get_nonlinearity_fn(self.config.nonlinearity, out)
     out_b3p8 = self.block3(out)
-    # if save_anchor:
-        # self.anchors.append(out_b3p8)
+    if save_anchor:
+        self.anchors.append(out_b3p8)
 
     # pixel_dist=16
     # mapped to transformer.PTBlock4
@@ -260,8 +249,8 @@ class Res16UNetBase(ResNetBase):
     out = self.bn4(out)
     out = get_nonlinearity_fn(self.config.nonlinearity, out)
     out = self.block4(out)
-    # if save_anchor:
-        # self.anchors.append(out)
+    if save_anchor:
+        self.anchors.append(out)
 
 
     # pixel_dist=8
@@ -271,8 +260,8 @@ class Res16UNetBase(ResNetBase):
     out = get_nonlinearity_fn(self.config.nonlinearity, out)
     out = me.cat(out, out_b3p8)
     out = self.block5(out)
-    # if save_anchor:
-      # self.anchors.append(out)
+    if save_anchor:
+      self.anchors.append(out)
 
     # pixel_dist=4
     # mapped to transformer.PTBlock6
@@ -391,27 +380,3 @@ class Res16UNet34B(Res16UNet34):
 
 class Res16UNet34C(Res16UNet34):
   PLANES = (32, 64, 128, 256, 256, 128, 96, 96)
-
-class Res16UNetTest(Res16UNetBase):
-  # BLOCK = TestConv
-  # BLOCK = MultiConv
-  BLOCK = [TRBlock]*8
-  BLOCK[0] = SingleConv
-  LAYERS = (2, 2, 2, 2, 2, 2, 2, 2)
-
-class Res16UNetTestA(Res16UNetTest):
-  # BLOCK = [TestConv, TRBlock, TestConv, TRBlock, TestConv, TRBlock, TestConv, TRBlock]
-  BLOCK = [TestConv, TestConv, TRBlock, TRBlock, TRBlock, TRBlock, TRBlock, TRBlock]
-  LAYERS = (1, 1, 1, 1, 1, 1, 1, 1)
-  PLANES = (32, 64, 128, 256, 256, 128, 96, 96)
-  # PLANES = (8, 16, 32, 64, 64, 32, 24, 24)
-  # PLANES = (16, 32, 64, 128, 128, 64, 48, 48)
-  # PLANES = (16, 16, 32, 32, 32, 32, 24, 24)
-  # PLANES = (16, 16, 16, 16, 16, 16, 24, 24)
-  # PLANES = (16, 32, 32, 32, 64, 32, 24, 24)
-  # PLANES = (4, 4, 4, 4, 4, 4, 4, 4)
-
-
-
-
-

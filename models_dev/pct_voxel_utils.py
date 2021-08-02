@@ -151,6 +151,9 @@ class TDLayer(nn.Module):
         self.FPS_ONLY = True
         self.cat_xyz_feature = True
 
+        self.STRIDE = 4
+        # self.STRIDE = 2
+
         if self.POINT_TR_LIKE:
             if self.FPS_ONLY:
                 if self.cat_xyz_feature:
@@ -178,7 +181,7 @@ class TDLayer(nn.Module):
 
         else:
             self.conv = nn.Sequential(
-                ME.MinkowskiConvolution(input_dim,out_dim,kernel_size=2,stride=2,bias=True,dimension=3),
+                ME.MinkowskiConvolution(input_dim,out_dim,kernel_size=self.STRIDE, stride=self.STRIDE,bias=True,dimension=3),
                 ME.MinkowskiBatchNorm(out_dim),
                 ME.MinkowskiReLU()
             )
@@ -279,7 +282,7 @@ class ResNetLikeTU(nn.Module):
         self.input_b_dim = input_b_dim
         self.out_dim = out_dim
         self.conv_a = nn.Sequential(
-                        ME.MinkowskiConvolutionTranspose(in_channels=input_a_dim, out_channels=input_a_dim ,kernel_size=2,stride=2,dimension=3),
+                        ME.MinkowskiConvolutionTranspose(in_channels=input_a_dim, out_channels=input_a_dim ,kernel_size=4,stride=4,dimension=3),
                         ME.MinkowskiBatchNorm(input_a_dim),
                         ME.MinkowskiReLU(),
                         )
@@ -444,20 +447,19 @@ def index_points(points, idx):
     return res.reshape(*raw_size, -1)
 
 class StackedPTBlock(nn.Module):
-    def __init__(self, in_dim, hidden_dim, is_firstlayer=False, n_sample=16, r=10, skip_attn=False, kernel_size=1):
+    def __init__(self, in_dim, hidden_dim, is_firstlayer=False, n_sample=16, r=10, skip_knn=False, kernel_size=1):
         super().__init__()
 
-        self.block1 = PTBlock(in_dim, hidden_dim, is_firstlayer, n_sample, r, skip_attn, kernel_size)
-        self.block2 = PTBlock(in_dim, hidden_dim, is_firstlayer, n_sample, r, skip_attn, kernel_size)
+        self.block1 = PTBlock(in_dim, hidden_dim, is_firstlayer, n_sample, r, skip_knn, kernel_size)
+        self.block2 = PTBlock(in_dim, hidden_dim, is_firstlayer, n_sample, r, skip_knn, kernel_size)
 
-    def forward(self, x : ME.SparseTensor, iter_=None):
-        x = self.block1(x, iter_=iter_)
-        x = self.block2(x, iter_=iter_)
+    def forward(self, x : ME.SparseTensor):
+        x = self.block1(x)
+        x = self.block2(x)
         return x
 
-
 class PTBlock(nn.Module):
-    def __init__(self, in_dim, hidden_dim, is_firstlayer=False, n_sample=16, r=10, skip_attn=False, kernel_size=3, window_beta=None):
+    def __init__(self, in_dim, hidden_dim, is_firstlayer=False, n_sample=16, r=10, skip_knn=False, kernel_size=1):
         super().__init__()
         '''
         Point Transformer Layer
@@ -467,67 +469,20 @@ class PTBlock(nn.Module):
         '''
 
         self.r = r # neighborhood cube radius
+        self.skip_knn = skip_knn
         self.kernel_size = kernel_size
 
         self.in_dim = in_dim
         self.hidden_dim = hidden_dim
         self.out_dim = self.hidden_dim
-        # self.vector_dim = 8
-        self.vector_dim = self.out_dim // 4
-        # self.vector_dim = self.out_dim
+        self.vector_dim = self.out_dim // 1
         self.n_sample = n_sample
 
         self.KS_1 = True
         self.USE_KNN = True
         self.use_vector_attn = True  # whether to use the vector att or the original attention
         self.WITH_POSE_ENCODING = True
-        self.GAUSSIAN_DECAY = window_beta is not None # use gaussian decay instead of hard knn for larger ks
-        self.GAUSSIAN_ONLY = False
-        self.DYNAMIC_GAUSSIAN = False
-        # self.SKIP_ATTN=skip_attn
-        self.SKIP_ATTN = False
-        self.SKIP_TOPDOWN = False
-        self.CONV_TOP_DOWN = False
-        self.SUBSAMPLE_NEIGHBOR = False
-        self.SKIP_QK = False
-        self.DISCRETE_QK = False
-
-        self.MULTI_RESO = False
-        self.NUM_RESO = 2
-        self.MULTI_RESO_STRIDE = 2
-
-        logging.info("[PTBlock] KS_1 = " + str(self.KS_1))
-        logging.info("[PTBlock] USE_KNN = " + str(self.USE_KNN))
-        logging.info("[PTBlock] use_vector_attn = " + str(self.use_vector_attn))
-        logging.info("[PTBlock] WITH_POSE_ENCODING = " + str(self.WITH_POSE_ENCODING))
-        logging.info("[PTBlock] GAUSSIAN_DECAY = " + str(self.GAUSSIAN_DECAY))
-        logging.info("[PTBlock] GAUSSIAN_ONLY = " + str(self.GAUSSIAN_ONLY))
-        logging.info("[PTBlock] DYNAMIC_GAUSSIAN = " + str(self.DYNAMIC_GAUSSIAN))
-        logging.info("[PTBlock] SKIP_ATTN = " + str(self.SKIP_ATTN))
-        logging.info("[PTBlock] SKIP_TOPDOWN = " + str(self.SKIP_TOPDOWN))
-        logging.info("[PTBlock] CONV_TOP_DOWN = " + str(self.CONV_TOP_DOWN))
-        logging.info("[PTBlock] SUBSAMPLE_NEIGHBOR = " + str(self.SUBSAMPLE_NEIGHBOR))
-        logging.info("[PTBlock] SKIP_QK = " + str(self.SKIP_QK))
-        logging.info("[PTBlock] MULTI_RESO = " + str(self.MULTI_RESO))
-        logging.info("[PTBlock] NUM_RESO = " + str(self.NUM_RESO))
-        logging.info("[PTBlock] MULTI_RESO_STRIDE = " + str(self.MULTI_RESO_STRIDE))
-
-        if self.GAUSSIAN_ONLY:
-            assert self.GAUSSIAN_DECAY==True
-
-        if self.GAUSSIAN_DECAY:
-            self.window_beta = window_beta
-
-        if self.SUBSAMPLE_NEIGHBOR:
-            self.perms = torch.sort(torch.randperm(n_sample)[:n_sample//2])[0]
-            assert self.GAUSSIAN_DECAY is False
-        else:
-            pass
-
-        if self.CONV_TOP_DOWN:
-            self.top_down_ks = 3
-        else:
-            self.top_down_ks = 1
+        self.SKIP_ATTN=False
 
         if self.KS_1:
             self.kernel_size = 1
@@ -535,97 +490,29 @@ class PTBlock(nn.Module):
         if not self.use_vector_attn:
             self.nhead = 4
 
-        if not self.SKIP_TOPDOWN:
-            self.linear_top = nn.Sequential(
-                ME.MinkowskiConvolution(in_dim, self.hidden_dim, kernel_size=self.top_down_ks, dimension=3),
-                ME.MinkowskiBatchNorm(self.hidden_dim),
-            )
-            self.linear_down = nn.Sequential(
-                ME.MinkowskiConvolution(self.out_dim, self.out_dim, kernel_size=self.top_down_ks, dimension=3),
-                ME.MinkowskiBatchNorm(self.out_dim),
-            )
-
-        if self.MULTI_RESO:
-            self.pool_1 = ME.MinkowskiAvgPooling(kernel_size=self.MULTI_RESO_STRIDE, stride=self.MULTI_RESO_STRIDE, dimension=3)
-            # self.pool_2 = ME.MinkowskiAvgPooling(kernel_size=2, stride=2, dimension=3)
-            # self.psi_pool1 = nn.Sequential(
-                # ME.MinkowskiConvolution(self.hidden_dim, self.out_dim, kernel_size=self.kernel_size, dimension=3)
-                # )
-            # self.psi_pool2 = nn.Sequential(
-                # ME.MinkowskiConvolution(self.hidden_dim, self.out_dim, kernel_size=self.kernel_size, dimension=3)
-                # )
-            # self.alpha_pool1 = nn.Sequential(
-                    # nn.Conv1d(self.in_dim, self.in_dim, self.kernel_size),
-                    # nn.BatchNorm1d(self.in_dim),
-                    # nn.ReLU(),
-                    # nn.Conv1d(self.in_dim, self.hidden_dim, self.kernel_size),
-                    # nn.BatchNorm1d(self.hidden_dim),
-                    # nn.ReLU(),
-                    # )
-            # self.alpha_pool2 = nn.Sequential(
-                    # nn.Conv1d(self.in_dim, self.in_dim, self.kernel_size),
-                    # nn.BatchNorm1d(self.in_dim),
-                    # nn.ReLU(),
-                    # nn.Conv1d(self.in_dim, self.hidden_dim, self.kernel_size),
-                    # nn.BatchNorm1d(self.hidden_dim),
-                    # nn.ReLU(),
-                    # )
-            # self.gamma_pool1 = nn.Sequential(
-                # nn.Conv1d(self.out_dim, self.hidden_dim, 1),
-                # nn.BatchNorm1d(self.hidden_dim),
-                # nn.ReLU(),
-                # nn.Conv1d(self.hidden_dim, self.vector_dim, 1),
-                # nn.BatchNorm1d(self.vector_dim),
-            # )
-            self.multi_reso_proj = ME.MinkowskiConvolution(self.out_dim*self.NUM_RESO, self.out_dim, kernel_size=1, dimension=3)
-            # self.multi_reso_proj = nn.Conv1d(self.out_dim*self.NUM_RESO, self.out_dim, 1)
-            # self.gamma_pool2 = nn.Sequential(
-                # nn.Conv1d(self.out_dim, self.hidden_dim, 1),
-                # nn.BatchNorm1d(self.hidden_dim),
-                # nn.ReLU(),
-                # nn.Conv1d(self.hidden_dim, self.vector_dim, 1),
-                # nn.BatchNorm1d(self.vector_dim),
-            # )
-            # self.delta_pool1 = nn.Sequential(
-                    # nn.Conv2d(3, self.hidden_dim, 1),
-                    # nn.BatchNorm2d(self.hidden_dim),
-                    # nn.ReLU(),
-                    # nn.Conv2d(self.hidden_dim, self.out_dim, 1),
-                    # nn.BatchNorm2d(self.out_dim),
-                # )
-            # self.delta_pool2 = nn.Sequential(
-                    # nn.Conv2d(3, self.hidden_dim, 1),
-                    # nn.BatchNorm2d(self.hidden_dim),
-                    # nn.ReLU(),
-                    # nn.Conv2d(self.hidden_dim, self.out_dim, 1),
-                    # nn.BatchNorm2d(self.out_dim),
-                # )
-
+        self.linear_top = nn.Sequential(
+            ME.MinkowskiConvolution(in_dim, self.hidden_dim, kernel_size=self.kernel_size, dimension=3),
+            ME.MinkowskiBatchNorm(self.hidden_dim),
+        )
+        self.linear_down = nn.Sequential(
+            ME.MinkowskiConvolution(self.out_dim, self.in_dim, kernel_size=self.kernel_size, dimension=3),
+            ME.MinkowskiBatchNorm(self.in_dim),
+        )
         # feature transformations
-        if self.SKIP_QK:
-            pass
-        elif self.DISCRETE_QK:
-            self.codebook_freedom = self.hidden_dim // 4
-            self.gen_choice = nn.Sequential(
-                    ME.MinkowskiConvolution(self.hidden_dim, self.codebook_freedom, kernel_size=1, dimension=3),
-                    )
-            self.codebook = nn.Parameter(torch.rand([self.hidden_dim, self.codebook_freedom]))
-            self.phi = None
-            self.psi = None
-        else:
-            self.phi = nn.Sequential(
-                ME.MinkowskiConvolution(self.hidden_dim, self.out_dim, kernel_size=self.kernel_size, dimension=3)
-            )
-            self.psi = nn.Sequential(
-                ME.MinkowskiConvolution(self.hidden_dim, self.out_dim, kernel_size=self.kernel_size, dimension=3)
-            )
+        self.phi = nn.Sequential(
+            ME.MinkowskiConvolution(self.hidden_dim, self.out_dim, kernel_size=self.kernel_size, dimension=3)
+        )
+        self.psi = nn.Sequential(
+            ME.MinkowskiConvolution(self.hidden_dim, self.out_dim, kernel_size=self.kernel_size, dimension=3)
+        )
 
         if self.SKIP_ATTN:
+            KERNEL_SIZE = 1
             self.alpha = nn.Sequential(
-                    nn.Conv1d(self.hidden_dim, self.hidden_dim, self.kernel_size),
-                    # nn.BatchNorm1d(self.in_dim),
-                    # nn.ReLU(),
-                    # nn.Conv1d(self.in_dim, self.hidden_dim, self.kernel_size),
+                    nn.Conv1d(self.in_dim, self.in_dim, KERNEL_SIZE),
+                    nn.BatchNorm1d(self.in_dim),
+                    nn.ReLU(),
+                    nn.Conv1d(self.in_dim, self.hidden_dim, KERNEL_SIZE),
                     nn.BatchNorm1d(self.hidden_dim),
                     nn.ReLU(),
                     )
@@ -634,212 +521,23 @@ class PTBlock(nn.Module):
                 ME.MinkowskiConvolution(self.hidden_dim, self.out_dim, kernel_size=self.kernel_size, dimension=3)
             )
 
-        if self.SKIP_QK:
-            self.gamma = nn.Sequential(
-                nn.Conv1d(3*self.n_sample, self.hidden_dim*self.n_sample, 1),
-                nn.BatchNorm1d(self.hidden_dim*self.n_sample),
-                nn.ReLU(),
-            )
-        else:
-            self.gamma = nn.Sequential(
-                # nn.Conv1d(self.out_dim, self.hidden_dim, 1),
-                # nn.BatchNorm1d(self.hidden_dim),
-                # nn.ReLU(),
-                # nn.Conv1d(self.hidden_dim, self.vector_dim, 1),
-                nn.Conv1d(self.out_dim, self.vector_dim, 1),
-                nn.BatchNorm1d(self.vector_dim),
-            )
+        self.gamma = nn.Sequential(
+            nn.Conv1d(self.out_dim, self.hidden_dim, 1),
+            nn.BatchNorm1d(self.hidden_dim),
+            nn.ReLU(),
+            nn.Conv1d(self.hidden_dim, self.vector_dim, 1),
+            nn.BatchNorm1d(self.vector_dim),
+        )
 
         self.delta = nn.Sequential(
-                    # nn.Conv2d(3, self.hidden_dim, 1),
-                    # nn.BatchNorm2d(self.hidden_dim),
-                    # nn.ReLU(),
-                    # nn.Conv2d(self.hidden_dim, self.out_dim, 1),
-                    nn.Conv2d(3, self.out_dim, 1),
+                    nn.Conv2d(3, self.hidden_dim, 1),
+                    nn.BatchNorm2d(self.hidden_dim),
+                    nn.ReLU(),
+                    nn.Conv2d(self.hidden_dim, self.out_dim, 1),
                     nn.BatchNorm2d(self.out_dim),
                 )
 
-        self.out_bn_relu = nn.Sequential(
-                ME.MinkowskiBatchNorm(self.out_dim),
-                ME.MinkowskiReLU(),
-                )
-        self.out_relu = ME.MinkowskiReLU()
-
-    # proj from the input coord to pos_enc 
-    def gen_pos_enc(self, x: ME.SparseTensor, neighbor, mask, idx_, delta, rel_xyz_only=False, register_map=False):
-        k = neighbor.shape[1]
-        try:
-            relative_xyz = neighbor - x.C[:,None,:].repeat(1,k,1) # (nvoxel, k, bxyz), we later pad it to [B, xyz, nvoxel_batch, k]
-        except:
-            import ipdb; ipdb.set_trace()
-        relative_xyz[:,0,0] = x.C[:,0] # get back the correct batch index, because we messed batch index in the subtraction above
-        relative_xyz = pad_zero(relative_xyz, mask) # [B, xyz, nvoxel_batch, k]
-
-        pose_tensor = delta(relative_xyz.float()) # (B, feat_dim, nvoxel_batch, k)
-        pose_tensor = make_position_tensor(pose_tensor, mask, idx_, x.C.shape[0]) # (nvoxel, k, feat_dim)S
-        if self.SUBSAMPLE_NEIGHBOR:
-            pose_tensor = pose_tensor[:,self.perms,:]
-        if register_map:
-            self.register_buffer('pos_map', pose_tensor.detach().cpu().data)
-        if rel_xyz_only:
-            pose_tensor = make_position_tensor(relative_xyz.float(), mask, idx_, x.C.shape[0]) # (nvoxel, k, feat_dim)
-        return pose_tensor
-
-    def gen_attn_map(self, x, neighbor, phi_fn, psi_fn, alpha_fn, gamma_fn, pose_tensor, neighbor_mask=None, register_map=False,\
-            cross_attn=False, cross_x=None, cross_neighbor=None):
-        """ Generate attention map from input tensor
-
-        Parameters
-        ----------
-        x: ME.SparseTensor
-            Input sparse tensor. When using multi-resolution, this
-            is the pooled tensor with lower resolution and larger
-            voxel size.
-
-        neighbor: torch.Tensor
-            Size: (nvoxel, k, 4). 
-            To be used with ME.SparseTensor.feature_at(). Records each
-            voxel's k neighbors' coordinates.
-
-        cross_attn: Boolean
-            Use multi-resolution cross attention or not
-        
-        cross_x: ME.SparseTensor
-            Alternative input sparse tensor for multi-resolution 
-            cross attention, has higher solution, smaller voxel
-            size.
-        
-        Return
-        ------
-        y: torch.Tensor
-            Aggregated feature according to generated attention map.
-        """
-
-        k = neighbor.shape[1]
-        if self.DISCRETE_QK:
-            # TODO: finish this logic
-            choice = self.gen_choice(x) # (nvoxel, codebook_freedom)
-            # choice.F.unsqueeze(1) has shape (nvoxel, 1, codebook_freedom)
-            # self.codebook.unsqueeze(0) has shape (1, feat_dim, codebook_freedom)
-            phi = (choice.F.unsqueeze(1)*self.codebook.unsqueeze(0)).sum(-1) # (nvoxel, feat_dim)
-            phi_ = ME.SparseTensor(features = phi, coordinate_map_key=x.coordinate_map_key, coordinate_manager=x.coordinate_manager)
-            psi = get_neighbor_feature(neighbor, phi_) # (nvoxel, k, feat_dim)
-            phi = phi.unsqueeze(1).repeat(1,k,1) # (nvoxel, k, feat_dim)
-        else:
-            phi = phi_fn(x).F
-            phi = phi[:,None,:].repeat(1,k,1) # (nvoxel, k, feat_dim)
-            psi = get_neighbor_feature(neighbor, psi_fn(x)) # (nvoxel, k, feat_dim)
-
-        if cross_attn:
-            if cross_neighbor.shape[1] != k: cross_neighbor = cross_neighbor[:,:k,:].contiguous()
-            alpha = get_neighbor_feature(cross_neighbor, alpha_fn(cross_x)) # (nvoxel, k, feat_dim)
-        else:
-            alpha = get_neighbor_feature(neighbor, alpha_fn(x)) # (nvoxel, k, feat_dim)
-        if self.SUBSAMPLE_NEIGHBOR:
-            phi = phi[:,self.perms,:]
-            psi = psi[:,self.perms,:]
-            alpha = alpha[:,self.perms,:]
-
-        # when use cross_attn, cross_x and x maynot have the same shape need to align em
-        if cross_attn:
-            assert phi.shape[1] == psi.shape[1] and phi.shape[2] == psi.shape[2]
-            N1 = cross_x.shape[0]
-            N2 = x.shape[0]
-            k = phi.shape[1]
-            dim = phi.shape[2]
-            # ~when use cross_attn, the pose_enc should align with the bigger N~
-            # we changed to interpolating pose_enc as well
-            # assert pose_tensor.shape[0] == N1
-            if N1 != N2:
-                assert N2 < N1
-                # in our case, N2 are generated with stride=2 & ks=2 AvgPool
-                # so we need to duplicate N2's feature to match N1 points
-                maps = cross_x.coordinate_manager.stride_map(cross_x.coordinate_map_key, x.coordinate_map_key)
-
-                psi_ = torch.gather(psi, dim=0, index=maps[1].reshape([-1,1,1]).repeat(1,k,dim))
-                psi_new = torch.zeros(psi_.shape, device=psi_.device)
-                psi_new.scatter_(dim=0, index=maps[0].reshape(-1,1,1).repeat(1,k,dim), src=psi_)
-                
-                phi_ = torch.gather(phi, dim=0, index=maps[1].reshape([-1,1,1]).repeat(1,k,dim))
-                phi_new = torch.zeros(phi_.shape, device=phi_.device)
-                phi_new.scatter_(dim=0, index=maps[0].reshape(-1,1,1).repeat(1,k,dim), src=psi_)
-
-                # alpha_ = torch.gather(alpha, dim=0, index=maps[1].reshape([-1,1,1]).repeat(1,k,dim))
-                # alpha_new = torch.zeros(alpha_.shape, device=alpha_.device)
-                # alpha_new.scatter_(dim=0, index=maps[0].reshape(-1,1,1).repeat(1,k,dim), src=alpha_)
-
-                pos_ = torch.gather(pose_tensor, dim=0, index=maps[1].reshape([-1,1,1]).repeat(1,k,dim))
-                pose_tensor_new = torch.zeros(pos_.shape, device=pose_tensor.device)
-                pose_tensor_new.scatter_(dim=0, index=maps[0].reshape(-1,1,1).repeat(1,k,dim), src=pos_)
-            else:
-                psi_new = psi
-                phi_new = phi
-                pose_tensor_new = pose_tensor
-        else:
-            psi_new = psi
-            phi_new = phi
-            pose_tensor_new = pose_tensor
-
-
-        '''The Self-Attn Part'''
-        assert self.use_vector_attn is True
-        '''
-        the attn_map: [vector_dim];
-        the alpha:    [out_dim]
-        attn_map = F.softmax(self.gamma(phi - psi + pos_encoding), dim=-1) # [B, in_dim, npoint, k], such as [16, 32, 4096, 16]
-        y = attn_map.repeat(1, self.out_dim // self.vector_dim,1,1)*(alpha + pos_encoding) # multiplies attention weight
-        self.out_dim and self.vector_dim are all 32 here, so y is still [16, 32, 4096, 16]
-        y = y.sum(dim=-1) # feature aggregation, y becomes [B, out_dim, npoint]
-        '''
-        if self.WITH_POSE_ENCODING:
-            # print("WITH_POSE_ENCODING = True")
-            if self.SKIP_QK:
-                attn_map = F.softmax(gamma_fn((pose_tensor_new).transpose(1,2)), dim=-1) # acquire attn-weight from raw relative_xyz
-            else:
-                attn_map = F.softmax(gamma_fn((phi_new - psi_new + pose_tensor_new).transpose(1,2)), dim=-1)
-        else:
-            # print("WITH_POSE_ENCODING = False")
-            if self.SKIP_QK:
-                # relative_xyz: [N, n_sample, 3]
-                attn_map = F.softmax(
-                        gamma_fn((pose_tensor_new.reshape([-1, 3*k]).unsqueeze(-1))).reshape([-1,k,self.out_dim]).transpose(1,2)
-                        , dim=-1) # acquire attn-weight from raw relative_xyz
-            else:
-                attn_map = F.softmax(gamma_fn((phi_new - psi_new).transpose(1,2)), dim=-1)
-        if self.WITH_POSE_ENCODING:
-            self_feat = (alpha + pose_tensor_new).permute(0,2,1) # (nvoxel, k, feat_dim) -> (nvoxel, feat_dim, k)
-        else:
-            self_feat = alpha.permute(0,2,1) # (nvoxel, k, feat_dim) -> (nvoxel, feat_dim, k)
-
-        # use aux info and mask the  attn_map
-        if neighbor_mask is not None:
-            attn_map = attn_map*(neighbor_mask.unsqueeze(1))
-        if self.GAUSSIAN_DECAY:
-            if self.DYNAMIC_GAUSSIAN:
-                if iter_ > 0.8:
-                    self.window_beta = 0
-                else:
-                    self.window_beta = 1000**(-iter_) # first close to 1, then quickly decrease
-            window = np.kaiser(2*k, beta=self.window_beta)[k:]
-            window = torch.tensor(window, device='cuda').float().reshape(1,1,-1)
-            if register_map:
-                self.register_buffer('pre_map', attn_map.detach().cpu().data) # pack it with nn parameter to save in state-dict
-            if self.GAUSSIAN_ONLY:
-                attn_map = F.softmax(window.repeat(attn_map.shape[0], attn_map.shape[1], 1), dim=-1)
-            else:
-                attn_map = attn_map*window
-
-        if register_map:
-            self.register_buffer('attn_map', attn_map.detach().cpu().data) # pack it with nn parameter to save in state-dict
-        y = attn_map.repeat(1,self.out_dim // self.vector_dim, 1) * self_feat # (nvoxel, feat_dim, k)
-        if cross_attn:
-            y = y.sum(dim=-1).view(cross_x.C.shape[0], -1) # feature aggregation, y becomes (nvoxel, feat_dim)
-        else:
-            y = y.sum(dim=-1).view(x.C.shape[0], -1) # feature aggregation, y becomes (nvoxel, feat_dim)
-        return y
-
-
-    def forward(self, x : ME.SparseTensor, aux=None, iter_=None):
+    def forward(self, x : ME.SparseTensor, aux=None):
         '''
         input_p:  B, 3, npoint
         input_x: B, in_dim, npoint
@@ -851,107 +549,124 @@ class PTBlock(nn.Module):
         if not self.use_vector_attn:
             h = self.nhead
 
-        self.cube_query = cube_query(r=self.r, k=self.k, knn=self.USE_KNN) # make sure it doesnot contain param
+        res = x
 
-        # neighbor: [B*npoint, k, bxyz]
-        # mask: [B*npoint, k]
-        # idx: [B_nq], used for scatter/gather
-        neighbor, mask, idx_ = self.cube_query.get_neighbor(x, x)
-
-        if self.MULTI_RESO:
-            x_pool1 = self.pool_1(x)
-            # x_pool2 = self.pool_2(x)
-
-            neighbor_pool1, mask_pool1, idx_pool1 = self.cube_query.get_neighbor(x_pool1, x_pool1)
-            # neighbor_pool2, mask_pool2, idx_pool2 = self.cube_query.get_neighbor(x_pool2, x_pool2)
-
-        self.register_buffer('neighbor_map', neighbor)
-        self.register_buffer('input_map', x.C)
-
-        # check for duplicate neighbor(not enough voxels within radius that fits k)
-        # CHECK_FOR_DUP_NEIGHBOR=True
-        # if CHECK_FOR_DUP_NEIGHBOR:
-            # dist_map = (neighbor - neighbor[:,0,:].unsqueeze(1))[:,1:,:].abs()
-            # num_different = (dist_map.sum(-1)>0).sum(-1) # how many out of ks are the same, of shape [nvoxel]
-            # outlier_point = (num_different < int(self.k*1/2)-1).sum()
-            # if not (outlier_point < max(npoint//10, 10)):  # sometimes npoint//100 could be 3
-                # pass
-                # logging.info('Detected Abnormal neighbors, num outlier {}, all points {}'.format(outlier_point, x.shape[0]))
-
-        # DEBUG: for encoder, input_dim == out_dim, shortcut before the linear_top
-        # as for decoder, which contain 1 linear to adjust dims, shortcut after linear_top
-        if self.in_dim == self.hidden_dim:
-            res = x
-            if not self.SKIP_TOPDOWN:
-                x = self.linear_top(x) # [B, in_dim, npoint], such as [16, 32, 4096]
-        else:
-            if not self.SKIP_TOPDOWN:
-                x = self.linear_top(x) # [B, in_dim, npoint], such as [16, 32, 4096]
-            res = x  # DEBUG: 
-
-        '''
-        illustration on dimension notations:
-        - B: batch size
-        - nvoxel: number of all voxels of the whole batch
-        - k: k neighbors
-        - feat_dim: feature dimension, or channel as others call it
-        - nvoxel_batch: the maximum voxel number of a single SparseTensor in the current batch
-        '''
-
-        '''
-        mask the neighbor when not in the same instance-class
-        '''
-        if aux is not None:
-            neighbor_mask = aux.features_at_coordinates(neighbor.reshape(-1,4).float()).reshape(-1,k) # [N, k]
-            neighbor_mask = (neighbor_mask - neighbor_mask[:,0].unsqueeze(-1) != 0).int()
-            # logging.info('Cur Mask Ratio {}'.format(neighbor_mask.sum()/neighbor_mask.nelement()))
-
-            neighbor_mask = torch.ones_like(neighbor_mask) - neighbor_mask
-        else:
-            neighbor_mask = None
-
-        '''Generate the pos_encoding'''
-        pose_tensor = self.gen_pos_enc(x, neighbor, mask, idx_, delta=self.delta, register_map=False)
-
-        if self.MULTI_RESO:
-            pose_tensor_pool1 = self.gen_pos_enc(x_pool1, neighbor_pool1, mask_pool1, idx_pool1, delta=self.delta)
-            # pose_tensor_pool2 = self.gen_pos_enc(x_pool2, neighbor_pool2, mask_pool2, idx_pool2, delta=self.delta_pool2)
-
-        if self.SKIP_ATTN:
-            assert self.MULTI_RESO is not True
-            if self.SUBSAMPLE_NEIGHBOR:
-                raise NotImplementedError
-            grouped_x = get_neighbor_feature(neighbor, x) # (nvoxel, k, feat_dim)
-            if self.WITH_POSE_ENCODING:
-                alpha = self.alpha((grouped_x + pose_tensor).transpose(1,2))
-            else:
-                alpha = self.alpha((grouped_x).transpose(1,2))
-            self.register_buffer('point_map', alpha.detach().cpu().data)
-            y = alpha.max(dim=-1)[0]
-            y = ME.SparseTensor(features = y, coordinate_map_key=x.coordinate_map_key, coordinate_manager=x.coordinate_manager)
-
-            if not self.SKIP_TOPDOWN:
-                y = self.linear_down(y)
+        if self.skip_knn:
+            # --- for debugging only ---
+            x = self.linear_top(x)
+            y = self.linear_down(x)
             return y+res
 
-        y = self.gen_attn_map(x, neighbor, self.phi, self.psi, self.alpha, self.gamma, pose_tensor, register_map=True)
-        if self.MULTI_RESO:
-            y_pool1 = self.gen_attn_map(x_pool1, neighbor_pool1, self.phi, self.psi, self.alpha, self.gamma, pose_tensor_pool1, cross_attn=True, cross_x=x, cross_neighbor=neighbor)
-            # y_pool2 = self.gen_attn_map(x_pool2, neighbor_pool2, self.phi, self.psi_pool2, self.alpha_pool2, self.gamma_pool2, pose_tensor, cross_attn=True, cross_x=x)
-            y = torch.cat([y, y_pool1],dim=-1)
-            y = ME.SparseTensor(features = y, coordinate_map_key=x.coordinate_map_key, coordinate_manager=x.coordinate_manager)
-            y = self.multi_reso_proj(y)
         else:
-            y = ME.SparseTensor(features = y, coordinate_map_key=x.coordinate_map_key, coordinate_manager=x.coordinate_manager)
+            self.cube_query = cube_query(r=self.r, k=self.k, knn=self.USE_KNN)
 
-        if not self.SKIP_TOPDOWN:
+            # neighbor: [B*npoint, k, bxyz]
+            # mask: [B*npoint, k]
+            # idx: [B_nq], used for scatter/gather
+            neighbor, mask, idx_ = self.cube_query.get_neighbor(x, x)
+
+            self.register_buffer('neighbor_map', neighbor)
+            self.register_buffer('input_map', x.C)
+
+            # check for duplicate neighbor(not enough voxels within radius that fits k)
+            # CHECK_FOR_DUP_NEIGHBOR=True
+            # if CHECK_FOR_DUP_NEIGHBOR:
+                # dist_map = (neighbor - neighbor[:,0,:].unsqueeze(1))[:,1:,:].abs()
+                # num_different = (dist_map.sum(-1)>0).sum(-1) # how many out of ks are the same, of shape [nvoxel]
+                # outlier_point = (num_different < int(self.k*1/2)-1).sum()
+                # if not (outlier_point < max(npoint//10, 10)):  # sometimes npoint//100 could be 3
+                    # pass
+                    # logging.info('Detected Abnormal neighbors, num outlier {}, all points {}'.format(outlier_point, x.shape[0]))
+
+            x = self.linear_top(x) # [B, in_dim, npoint], such as [16, 32, 4096]
+
+            '''
+            illustration on dimension notations:
+            - B: batch size
+            - nvoxel: number of all voxels of the whole batch
+            - k: k neighbors
+            - feat_dim: feature dimension, or channel as others call it
+            - nvoxel_batch: the maximum voxel number of a single SparseTensor in the current batch
+            '''
+
+            '''Gene the pos_encoding'''
+            relative_xyz = neighbor - x.C[:,None,:].repeat(1,self.k,1) # (nvoxel, k, bxyz), we later pad it to [B, xyz, nvoxel_batch, k]
+
+            '''
+            mask the neighbor when not in the same instance-class
+            '''
+            if aux is not None:
+                neighbor_mask = aux.features_at_coordinates(neighbor.reshape(-1,4).float()).reshape(-1,self.k) # [N, k]
+                neighbor_mask = (neighbor_mask - neighbor_mask[:,0].unsqueeze(-1) != 0).int()
+                # logging.info('Cur Mask Ratio {}'.format(neighbor_mask.sum()/neighbor_mask.nelement()))
+
+                neighbor_mask = torch.ones_like(neighbor_mask) - neighbor_mask
+            else:
+                neighbor_mask = None
+
+            if self.WITH_POSE_ENCODING:
+                relative_xyz[:,0,0] = x.C[:,0] # get back the correct batch index, because we messed batch index in the subtraction above
+                relative_xyz = pad_zero(relative_xyz, mask) # [B, xyz, nvoxel_batch, k]
+                pose_tensor = self.delta(relative_xyz.float()) # (B, feat_dim, nvoxel_batch, k)
+                pose_tensor = make_position_tensor(pose_tensor, mask, idx_, x.C.shape[0]) # (nvoxel, k, feat_dim)S
+
+            if self.SKIP_ATTN:
+                grouped_x = get_neighbor_feature(neighbor, x) # (nvoxel, k, feat_dim)
+                if self.WITH_POSE_ENCODING:
+                    alpha = self.alpha((grouped_x + pose_tensor).transpose(1,2))
+                else:
+                    alpha = self.alpha((grouped_x).transpose(1,2))
+                y = alpha.max(dim=-1)[0]
+                y = ME.SparseTensor(features = y, coordinate_map_key=x.coordinate_map_key, coordinate_manager=x.coordinate_manager)
+
+                y = self.linear_down(y)
+                return y+res
+
+            phi = self.phi(x).F # (nvoxel, feat_dim)
+            phi = phi[:,None,:].repeat(1,self.k,1) # (nvoxel, k, feat_dim)
+            psi = get_neighbor_feature(neighbor, self.psi(x)) # (nvoxel, k, feat_dim)
+            alpha = get_neighbor_feature(neighbor, self.alpha(x)) # (nvoxel, k, feat_dim)
+
+            '''The Self-Attn Part'''
+            if self.use_vector_attn:
+                '''
+                the attn_map: [vector_dim];
+                the alpha:    [out_dim]
+                attn_map = F.softmax(self.gamma(phi - psi + pos_encoding), dim=-1) # [B, in_dim, npoint, k], such as [16, 32, 4096, 16]
+                y = attn_map.repeat(1, self.out_dim // self.vector_dim,1,1)*(alpha + pos_encoding) # multiplies attention weight
+                self.out_dim and self.vector_dim are all 32 here, so y is still [16, 32, 4096, 16]
+                y = y.sum(dim=-1) # feature aggregation, y becomes [B, out_dim, npoint]
+                '''
+                if self.WITH_POSE_ENCODING:
+                    attn_map = F.softmax(self.gamma((phi - psi + pose_tensor).transpose(1,2)), dim=-1)
+                else:
+                    attn_map = F.softmax(self.gamma((phi - psi).transpose(1,2)), dim=-1)
+                if self.WITH_POSE_ENCODING:
+                    self_feat = (alpha + pose_tensor).permute(0,2,1) # (nvoxel, k, feat_dim) -> (nvoxel, feat_dim, k)
+                else:
+                    self_feat = (alpha).permute(0,2,1) # (nvoxel, k, feat_dim) -> (nvoxel, feat_dim, k)
+
+                # use aux info and mask the  attn_map
+                if neighbor_mask is not None:
+                    attn_map = attn_map*(neighbor_mask.unsqueeze(1))
+
+                y = attn_map.repeat(1, self.out_dim // self.vector_dim, 1, 1) * self_feat # (nvoxel, feat_dim, k)
+                y = y.sum(dim=-1).view(x.C.shape[0], -1) # feature aggregation, y becomes (nvoxel, feat_dim)
+                y = ME.SparseTensor(features = y, coordinate_map_key=x.coordinate_map_key, coordinate_manager=x.coordinate_manager)
+            else:
+                phi = phi.permute([2,1,0]) # [out_dim, k, npoint]
+                psi = psi.permute([2,0,1]) # [out_dim. npoint, k]
+                attn_map = F.softmax(torch.matmul(phi,psi), dim=0) # [out_dim, k, k]
+                alpha = (alpha+pose_tensor).permute([2,0,1])  # [out_dim, npoint, k]
+                y = torch.matmul(alpha, attn_map)  # [out_dim, npoint, k]
+                y = y.sum(-1).transpose(0,1)  # [out_dim. npoint]
+                y = ME.SparseTensor(features = y, coordinate_map_key=x.coordinate_map_key, coordinate_manager=x.coordinate_manager)
+
             y = self.linear_down(y)
 
-        y = self.out_bn_relu(y)
-        out = self.out_relu(y+res)
-        # out = self.out_relu(y)
+            self.register_buffer('attn_map', attn_map.detach().cpu().data) # pack it with nn parameter to save in state-dict
 
-        return out
+            return y+res
 
 def make_position_tensor(pose_encoding : torch.Tensor, mask : torch.Tensor, idx_: torch.Tensor, nvoxel : int):
     """
@@ -996,23 +711,12 @@ def pad_zero(tensor : torch.Tensor, mask: torch.Tensor):
     B = int(max(tensor[:,0,0]).item() + 1)
     k = tuple(tensor.shape)[1]
     '''
-
-    # DEBUG: when not enough k points, will be error
-
     B, N = mask.shape
     _, k, bxyz = tensor.shape
     result = torch.zeros([B, N, k, 4], dtype=torch.int, device=tensor.device)
     pointer = 0
-    mask_cpu = mask.cpu()
-    # DEBUG_ONLY
     for b_idx in range(B):
         nvoxel = mask.sum(-1)[b_idx]
-        # try:
-            # nvoxel_cpu = nvoxel.cpu()
-            # tensor_cpu = tensor.cpu()
-            # result_cpu = result.cpu()
-        # except
-            # import ipdb; ipdb.set_trace()
         result[b_idx, :nvoxel, :, :] = tensor[pointer:pointer+nvoxel, :, :]
         pointer += nvoxel
     result = result[:,:,:,1:] # (B, N, k, 3)
@@ -1093,6 +797,7 @@ class cube_query(object):
         self.k = k
         if knn:
             self.use_knn = True
+            self.knn = KNN(k=k, transpose_mode=True)
         else:
             self.use_knn = False
 
@@ -1102,19 +807,14 @@ class cube_query(object):
         coord = query.C # (N, 4)
         batch_info = coord[:,0]
         coord, mask, idx_ = separate_batch(coord) # (b, n, 3)
-
         b, n, _ = coord.shape
 
-        k = min(n, self.k)   # if less than k values
-
         if self.use_knn:
-            self.knn = KNN(k=k, transpose_mode=True)
             _, idx = self.knn(coord.contiguous(), coord)
             grouped_coord = grouping_operation_cuda(coord.float().transpose(1,2).contiguous(), idx.int())
             result_padded = grouped_coord.permute([0,2,3,1])
         else:
-            # TODO: support k for query_and_group
-            query_and_group_cuda = QueryAndGroup(radius=self.r, nsample=k, use_xyz=False)
+            query_and_group_cuda = QueryAndGroup(radius=self.r, nsample=self.k, use_xyz=False)
             coord = coord.float()
 
             idxs = query_and_group_cuda(
@@ -1126,13 +826,13 @@ class cube_query(object):
             result_padded = idxs
 
         # unpad result (b, n, k, 3) -> (B_nq, k, 4) by applying mask
-        result = torch.zeros([B_nq, k, 4], dtype=torch.int32, device=query.device)
+        result = torch.zeros([B_nq, self.k, 4], dtype=torch.int32, device=query.device)
         result[:,:,1:] = torch.gather(
-            result_padded.reshape(-1, k, 3),
+            result_padded.reshape(-1, self.k, 3),
             0,
-            idx_.reshape(-1, 1, 1).repeat(1, k, 3)
+            idx_.reshape(-1, 1, 1).repeat(1, self.k, 3)
         )
-        result[:,:,0] = batch_info.unsqueeze(-1).repeat(1, k)
+        result[:,:,0] = batch_info.unsqueeze(-1).repeat(1, self.k)
 
         return result, mask, idx_
 
