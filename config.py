@@ -115,12 +115,13 @@ data_arg.add_argument(
 train_arg = add_argument_group('Training')
 train_arg.add_argument('--is_train', type=str2bool, default=True)
 train_arg.add_argument('--is_export', type=str2bool, default=False)
+train_arg.add_argument('--multiprocess', type=str2bool, default=False)  # DEBUG: use the multiprocess training
 # train_arg.add_argument('--stat_freq', type=int, default=50, help='print frequency')
 train_arg.add_argument('--stat_freq', type=int, default=50, help='print frequency')
 train_arg.add_argument('--test_stat_freq', type=int, default=100, help='print frequency')
 train_arg.add_argument('--save_freq', type=int, default=2000, help='save frequency')
+# train_arg.add_argument('--val_freq', type=int, default=1000, help='validation frequency')
 train_arg.add_argument('--val_freq', type=int, default=1000, help='validation frequency')
-# train_arg.add_argument('--val_freq', type=int, default=100, help='validation frequency')
 train_arg.add_argument('--train_phase', type=str, default='train', help='Dataset for training')
 train_arg.add_argument('--val_phase', type=str, default='val', help='Dataset for validation')
 train_arg.add_argument(

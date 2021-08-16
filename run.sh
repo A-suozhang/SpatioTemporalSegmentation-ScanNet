@@ -27,6 +27,7 @@ export POINTS=${POINTS:-8192}
 
 export USE_AUX=${USE_AUX:-false}
 export DISTILL=${DISTILL:-false}
+export MP=${MP:-False}
 
 export OUTPATH=./outputs/$DATASET/$MODEL/$LOG/
 #export VERSION=$(git rev-parse HEAD)
@@ -75,6 +76,7 @@ time python -W ignore main.py \
 	--resume $RESUME \
 	--use_aux $USE_AUX \
 	--distill $DISTILL \
+	--multiprocess $MP \
 	$3 
 
 #time python -W ignore main.py \

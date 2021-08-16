@@ -3,6 +3,7 @@ import torch
 import torch.nn as nn
 
 '''
+
 # interp0 = ME.MinkowskiInterpolation()
 downsample = ME.MinkowskiSumPooling(kernel_size=1, stride=2, dimension=3)
 upsample = ME.MinkowskiPoolingTranspose(kernel_size=1, stride=2, dimension=3)
@@ -39,7 +40,8 @@ feats = torch.tensor([
 feats = nn.Parameter(feats)
 
 feats2 = torch.tensor([
-        [0., 2., 3.],
+        [1., 1., 1.],
+        # [0., 2., 3.],
         # [4., 5., 6.],
         # [7., 8., 9.],
     ])
@@ -77,6 +79,25 @@ x2 = ME.SparseTensor(coordinates=coords, features=feats2.reshape([-1,1]))
 
 x1_s2 = conv_s2(x1)
 x1_p2 = pool_s2(x1)
+
+
+'''
+Test the overwrite weight kernel to achieve substract like
+'''
+conv = ME.MinkowskiConvolution(1,1,kernel_size=2,dimension=3)
+# conv.kernel = nn.Parameter(torch.ones_like(conv.kernel))
+conv.kernel = nn.Parameter(
+        torch.arange(conv.kernel.shape[0]).reshape(-1,1,1).float()
+        )
+y1 = conv(x1)
+
+out = y1.sum()
+out.backward()
+
+print(conv.kernel.grad)
+
+import ipdb; ipdb.set_trace()
+
 
 
 '''

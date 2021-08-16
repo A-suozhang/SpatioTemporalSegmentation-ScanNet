@@ -124,6 +124,9 @@ def test(model, data_loader, config, transform_data_fn=None, has_gt=True, save_p
             else:
                 soutput = model(sinput, iter_ = iteration / max_iter)
             output = soutput.F
+            if torch.isnan(output).sum() > 0:
+                import ipdb; ipdb.set_trace()
+
             pred = get_prediction(dataset, output, target).int()
             assert sum([int(t.shape[0]) for t in unique_map_list]) == len(pred), "number of points in unique_map doesn't match predition, do not enable preprocessing"
             iter_time = iter_timer.toc(False)
@@ -160,7 +163,10 @@ def test(model, data_loader, config, transform_data_fn=None, has_gt=True, save_p
                 ious = per_class_iu(hist) * 100
 
                 prob = torch.nn.functional.softmax(output, dim=1)
-                ap = average_precision(prob.cpu().detach().numpy(), target_np)
+                try:
+                    ap = average_precision(prob.cpu().detach().numpy(), target_np)
+                except:
+                    import ipdb; ipdb.set_trace()
                 aps = np.vstack((aps, ap))
                 # Due to heavy bias in class, there exists class with no test label at all
                 with warnings.catch_warnings():

@@ -8,6 +8,7 @@ from models.resnet import ResNetBase
 from models.modules.common import ConvType, NormType, conv, conv_tr, get_norm, get_nonlinearity_fn
 from models.modules.resnet_block import BasicBlock, Bottleneck, SingleConv, TestConv, MultiConv, TRBlock
 
+import torch
 import numpy as np
 import MinkowskiEngine.MinkowskiOps as me
 
@@ -303,10 +304,16 @@ class Res16UNetBase(ResNetBase):
     out = me.cat(out, out_p1)
     out = self.block8(out)
 
+    out = self.final(out)
+
+    if torch.isnan(out.F).sum() > 0:
+        import ipdb; ipdb.set_trace()
+
+
     if save_anchor:
-        return self.final(out), self.anchors
+        return out, self.anchors
     else:
-        return self.final(out)
+        return out
 
 
 class Res16UNet14(Res16UNetBase):
@@ -401,9 +408,11 @@ class Res16UNetTest(Res16UNetBase):
 
 class Res16UNetTestA(Res16UNetTest):
   # BLOCK = [TestConv, TRBlock, TestConv, TRBlock, TestConv, TRBlock, TestConv, TRBlock]
-  BLOCK = [TestConv, TestConv, TRBlock, TRBlock, TRBlock, TRBlock, TRBlock, TRBlock]
+  # BLOCK= [MultiConv]*8
+  # BLOCK= [TestConv]*8
+  BLOCK = [TestConv, TestConv, MultiConv, MultiConv, MultiConv, MultiConv, MultiConv, MultiConv]
   LAYERS = (1, 1, 1, 1, 1, 1, 1, 1)
-  PLANES = (32, 64, 128, 256, 256, 128, 96, 96)
+  PLANES = (np.array([32, 64, 128, 256, 256, 128, 96, 96])*1.0).astype(int)
   # PLANES = (8, 16, 32, 64, 64, 32, 24, 24)
   # PLANES = (16, 32, 64, 128, 128, 64, 48, 48)
   # PLANES = (16, 16, 32, 32, 32, 32, 24, 24)

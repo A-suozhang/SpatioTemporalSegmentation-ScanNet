@@ -23,6 +23,8 @@ from knn_cuda import KNN
 import MinkowskiEngine as ME
 import MinkowskiEngine.MinkowskiOps as me
 
+import lib.utils as utils
+
 def square_distance(src, dst):
     """
     Calculate Euclid distance between each two points.
@@ -457,7 +459,7 @@ class StackedPTBlock(nn.Module):
 
 
 class PTBlock(nn.Module):
-    def __init__(self, in_dim, hidden_dim, is_firstlayer=False, n_sample=16, r=10, skip_attn=False, kernel_size=3, window_beta=None):
+    def __init__(self, in_dim, hidden_dim, is_firstlayer=False, n_sample=8, r=10, skip_attn=False, kernel_size=3, window_beta=None):
         super().__init__()
         '''
         Point Transformer Layer
@@ -480,17 +482,21 @@ class PTBlock(nn.Module):
         self.KS_1 = True
         self.USE_KNN = True
         self.use_vector_attn = True  # whether to use the vector att or the original attention
-        self.WITH_POSE_ENCODING = True
+        self.WITH_POSE_ENCODING = False
         self.GAUSSIAN_DECAY = window_beta is not None # use gaussian decay instead of hard knn for larger ks
         self.GAUSSIAN_ONLY = False
         self.DYNAMIC_GAUSSIAN = False
         # self.SKIP_ATTN=skip_attn
-        self.SKIP_ATTN = False
+        self.SKIP_ATTN = True
         self.SKIP_TOPDOWN = False
         self.CONV_TOP_DOWN = False
         self.SUBSAMPLE_NEIGHBOR = False
         self.SKIP_QK = False
-        self.DISCRETE_QK = False
+        self.DISCRETE_QK = True
+
+        self.GUMBEL_SAMPLE = True
+        self.gumbel_temperature = 1
+        self.one_hot_sample = True
 
         self.MULTI_RESO = False
         self.NUM_RESO = 2
@@ -721,10 +727,22 @@ class PTBlock(nn.Module):
             choice = self.gen_choice(x) # (nvoxel, codebook_freedom)
             # choice.F.unsqueeze(1) has shape (nvoxel, 1, codebook_freedom)
             # self.codebook.unsqueeze(0) has shape (1, feat_dim, codebook_freedom)
-            phi = (choice.F.unsqueeze(1)*self.codebook.unsqueeze(0)).sum(-1) # (nvoxel, feat_dim)
-            phi_ = ME.SparseTensor(features = phi, coordinate_map_key=x.coordinate_map_key, coordinate_manager=x.coordinate_manager)
-            psi = get_neighbor_feature(neighbor, phi_) # (nvoxel, k, feat_dim)
-            phi = phi.unsqueeze(1).repeat(1,k,1) # (nvoxel, k, feat_dim)
+            if not self.GUMBEL_SAMPLE:
+                choice_f = F.softmax(choice.F, dim=-1)
+                phi = (choice_f.unsqueeze(1)*self.codebook.unsqueeze(0)).sum(-1) # (nvoxel, feat_dim)
+                phi_ = ME.SparseTensor(features = phi, coordinate_map_key=x.coordinate_map_key, coordinate_manager=x.coordinate_manager)
+                psi = get_neighbor_feature(neighbor, phi_) # (nvoxel, k, feat_dim)
+                phi = phi.unsqueeze(1).repeat(1,k,1) # (nvoxel, k, feat_dim)
+            else:
+                # Use gumbel sample instead of directly aggregate the codebook based on choice
+                choice_f = utils.gumbel_softmax(choice.F, self.gumbel_temperature, hard=self.one_hot_sample)[0]
+                if self.one_hot_sample:
+                    choice_f = utils.straight_through(choice_f)
+                phi = (choice_f.unsqueeze(1)*self.codebook.unsqueeze(0)).sum(-1) # (nvoxel, feat_dim)
+                phi_ = ME.SparseTensor(features = phi, coordinate_map_key=x.coordinate_map_key, coordinate_manager=x.coordinate_manager)
+                psi = get_neighbor_feature(neighbor, phi_) # (nvoxel, k, feat_dim)
+                phi = phi.unsqueeze(1).repeat(1,k,1) # (nvoxel, k, feat_dim
+
         else:
             phi = phi_fn(x).F
             phi = phi[:,None,:].repeat(1,k,1) # (nvoxel, k, feat_dim)
@@ -927,12 +945,17 @@ class PTBlock(nn.Module):
             else:
                 alpha = self.alpha((grouped_x).transpose(1,2))
             self.register_buffer('point_map', alpha.detach().cpu().data)
-            y = alpha.max(dim=-1)[0]
+            # y = alpha.max(dim=-1)[0]
+            y = alpha.sum(dim=-1)
             y = ME.SparseTensor(features = y, coordinate_map_key=x.coordinate_map_key, coordinate_manager=x.coordinate_manager)
 
+            # y = self.out_bn_relu(y)
+            # y = self.out_relu(y+res)
+
             if not self.SKIP_TOPDOWN:
-                y = self.linear_down(y)
-            return y+res
+                y = self.out_relu(self.out_bn_relu(self.linear_down(y))+res)
+
+            return y
 
         y = self.gen_attn_map(x, neighbor, self.phi, self.psi, self.alpha, self.gamma, pose_tensor, register_map=True)
         if self.MULTI_RESO:

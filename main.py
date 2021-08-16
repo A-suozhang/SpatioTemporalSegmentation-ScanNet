@@ -28,6 +28,7 @@ import shutil
 
 from lib.test import test, test_points
 from lib.train import train, train_point, train_distill
+from lib.multitrain import train as train_mp
 from lib.utils import load_state_with_same_shape, get_torch_device, count_parameters
 from lib.dataset import initialize_data_loader, _init_fn
 from lib.datasets import load_dataset
@@ -107,6 +108,7 @@ def main():
 
     if config.is_cuda and not torch.cuda.is_available():
         raise Exception("No GPU found")
+    gpu_list = range(config.num_gpu)
     device = get_torch_device(config.is_cuda)
 
     # torch.set_num_threads(config.threads)
@@ -330,6 +332,11 @@ def main():
         if hasattr(config, 'distill') and config.distill:
             assert point_scannet is not True # only support whole scene for no
             train_distill(model, train_data_loader, val_data_loader, config)
+        if config.multiprocess:
+            if point_scannet:
+                raise NotImplementedError
+            else:
+                train_mp(NetClass, train_data_loader, val_data_loader, config)
         else:
             if point_scannet:
                 train_point(model, train_data_loader, val_data_loader, config)
@@ -342,6 +349,7 @@ def main():
             test(model, train_data_loader, config, save_pred=True, split='train')
             test(model, val_data_loader, config, save_pred=True, split='val')
     else:
+        assert config.multiprocess == False
         if point_scannet:
             test_points(model, val_data_loader, config)
         else:

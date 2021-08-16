@@ -6,11 +6,150 @@
 import torch.nn as nn
 import torch.nn.functional as F
 import torch
+from torch.autograd import Function
 
 import MinkowskiEngine as ME
 
 from models.modules.common import ConvType, NormType, get_norm, conv, get_nonlinearity_fn
-from models.pct_voxel_utils import separate_batch, voxel2points, points2voxel, PTBlock
+from models.pct_voxel_utils import separate_batch, voxel2points, points2voxel, PTBlock, cube_query, get_neighbor_feature, pad_zero, make_position_tensor
+
+def separate_batch(coord: torch.Tensor):
+    """
+        Input:
+            coord: (N_voxel, 4) coordinate tensor, coord=b,x,y,z
+        Return:
+            tensor: (B, N(max n-voxel cur batch), 3), batch index separated
+            mask: (B, N), 1->valid, 0->invalid
+    """
+
+    # Features donot have batch-ids
+    N_voxel = coord.shape[0]
+    B = (coord[:,0].max().item() + 1)
+
+    batch_ids = coord[:,0]
+
+    # get the splits of different i_batchA
+    splits_at = torch.stack([torch.where(batch_ids == i)[0][-1] for i in torch.unique(batch_ids)]).int() # iter at i_batch_level
+    # the returned indices of torch.where is from [0 ~ N-1], but when we use the x[start:end] style indexing, should cover [1:N]
+    # example: x[0:1] & x[:1] are the same, contain 1 element, but x[:0] is []
+    # example: x[:N] would not raise error but x[N] would
+
+    splits_at = splits_at+1
+    splits_at_leftshift_one = splits_at.roll(shifts=1)   # left shift the splits_at
+    splits_at_leftshift_one[0] = 0
+
+    len_per_batch = splits_at - splits_at_leftshift_one
+    # len_per_batch[0] = len_per_batch[0]+1 # DBEUG: dirty fix since 0~1566 has 1567 values
+    N = len_per_batch.max().int()
+
+    assert len_per_batch.sum() == N_voxel
+
+    mask = torch.zeros([B*N], device=coord.device).int()
+    new_coord = torch.zeros([B*N, 3], device=coord.device).int() # (B, N, xyz)
+
+    '''
+    new_coord: [B,N,3]
+    coord-part : [n_voxel, 3]
+    idx: [b_voxel, 3]
+    '''
+    idx_ = torch.cat([torch.arange(len_, device=coord.device)+i*N for i, len_ in enumerate(len_per_batch)])
+    idx = idx_.reshape(-1,1).repeat(1,3)
+    new_coord.scatter_(dim=0, index=idx, src=coord[:,1:])
+    mask.scatter_(dim=0, index=idx_, src=torch.ones_like(idx_, device=idx.device).int())
+    mask = mask.reshape([B,N])
+    new_coord = new_coord.reshape([B,N,3])
+
+    return new_coord, mask, idx_
+
+def voxel2points_(x_c, x_f_):
+    '''
+    pack the ME Sparse Tensor feature(batch-dim information within first col of coord)
+    [N_voxel_all_batches, dims] -> [bs, max_n_voxel_per_batch, dim]
+
+    idx are used to denote the mask
+    '''
+
+    x_c, mask, idx = separate_batch(x_c)
+    B = x_c.shape[0]
+    N = x_c.shape[1]
+    dim = x_f_.shape[1]
+    idx_ = idx.reshape(-1,1).repeat(1,dim)
+    x_f = torch.zeros(B*N, dim).cuda()
+    x_f.scatter_(dim=0, index=idx_, src=x_f_)
+    x_f = x_f.reshape([B,N,dim])
+
+    return x_c, x_f, idx
+
+def points2voxel(x, idx):
+    '''
+    revert the points into voxel's feature
+    returns the new feat
+    '''
+    # the origi_x provides the cooed_map
+    B, N, dim = list(x.shape)
+    new_x = torch.gather(x.reshape(B*N, dim), dim=0, index=idx.reshape(-1,1).repeat(1,dim))
+    return new_x
+
+def gen_pos_enc(x_c, x_f, neighbor, mask, idx_, delta, rel_xyz_only=False, register_map=False):
+    k = neighbor.shape[1]
+    try:
+        relative_xyz = neighbor - x_c[:,None,:].repeat(1,k,1) # (nvoxel, k, bxyz), we later pad it to [B, xyz, nvoxel_batch, k]
+    except:
+        import ipdb; ipdb.set_trace()
+    relative_xyz[:,0,0] = x_c[:,0] # get back the correct batch index, because we messed batch index in the subtraction above
+    relative_xyz = pad_zero(relative_xyz, mask) # [B, xyz, nvoxel_batch, k]
+
+    pose_tensor = delta(relative_xyz.float()) # (B, feat_dim, nvoxel_batch, k)
+    pose_tensor = make_position_tensor(pose_tensor, mask, idx_, x_c.shape[0]) # (nvoxel, k, feat_dim)S
+    # if self.SUBSAMPLE_NEIGHBOR:
+        # pose_tensor = pose_tensor[:,self.perms,:]
+    # if register_map:
+        # self.register_buffer('pos_map', pose_tensor.detach().cpu().data)
+    if rel_xyz_only:
+        pose_tensor = make_position_tensor(relative_xyz.float(), mask, idx_, x_c.shape[0]) # (nvoxel, k, feat_dim)
+    return pose_tensor
+
+
+def get_sparse_neighbor(k, x, kernel_size=3, stride=1, additional_xf=None):
+
+    if additional_xf is not None:
+        x_f = additional_xf
+    else:
+        x_f = x.F
+    N, dim = x_f.shape
+    neis = torch.zeros(N,k,dim, device=x_f.device)
+    rel_xyz = torch.zeros(N,k,3, device=x.C.device)
+    neis_d = x.coordinate_manager.get_kernel_map(x.coordinate_map_key, x.coordinate_map_key,kernel_size=kernel_size, stride=stride)
+    for k_ in range(k):
+        # TODO: possible that no value 
+        if not k_ in neis_d.keys():
+            continue
+        # tmp_neis = torch.zeros(N,dim, device=x.F.device)
+        neis_ = torch.gather(x_f, dim=0, index=neis_d[k_][1].reshape(-1,1).repeat(1,dim).long())
+        neis[:,k_,:] = torch.scatter(neis[:,k_,:], dim=0, index=neis_d[k_][0].reshape(-1,1).repeat(1,dim).long(), src=neis_)
+        rel_xyz_ = torch.gather(x.C[:,1:].float(), dim=0, index=neis_d[k_][1].reshape(-1,1).repeat(1,3).long())
+        rel_xyz[:,k_,:] = torch.scatter(rel_xyz[:,k_,:], dim=0, index=neis_d[k_][0].reshape(-1,1).repeat(1,3).long(), src=rel_xyz_)
+
+    # if additional_xf is not None:
+        # neis = neis.permute(0,2,1).squeeze(2)
+
+    # N, dim
+    return neis, rel_xyz
+
+class apply_choice(Function):
+    @staticmethod
+    def forward(ctx, out, choice):
+        ctx.save_for_backward(out, choice)
+        return out*choice
+
+    @staticmethod
+    def backward(ctx, g):
+        out, choice = ctx.saved_tensors
+        g_out = g*torch.ones_like(out, device=out.device) # skip grad of choice on out
+        g_choice = (g*out).sum(1).unsqueeze(2)
+        return g_out, g_choice
+
+''' ================================ The defined conv ops =================================== '''
 
 
 class ParameterizedConv(nn.Module):
@@ -104,21 +243,22 @@ class MultiConv(nn.Module):
         self.planes = planes
 
         # === CodeBook Defs  ===
-        self.K = 4 # the codebook size
+        self.M = 4 # the codebook size
+        self.k = 27
         self.squeeze = 4 # the squeeze dim of the sub-conv
 
-        self.attn_gen_type = "cbam"
-        assert self.attn_gen_type in ['map_pool', 'cbam']
+        self.attn_gen_type = "naive"
+        assert self.attn_gen_type in ['map_pool', 'cbam','naive','debug']
         if self.attn_gen_type == 'map_pool':
             self.linear_map = nn.Sequential(
-                    ME.MinkowskiConvolution(self.inplanes, self.K, kernel_size=1, dimension=3),
-                    ME.MinkowskiBatchNorm(self.K)
+                    ME.MinkowskiConvolution(self.inplanes, self.M, kernel_size=1, dimension=3),
+                    ME.MinkowskiBatchNorm(self.M)
                     )
             self.avg_pool = nn.Sequential(
                     ME.MinkowskiGlobalAvgPooling(),
                     )
         elif self.attn_gen_type == 'cbam':
-            cbam_reduction = 2
+            cbam_reduction = 1
             self.single_conv = conv(inplanes, planes, kernel_size=3, stride=stride, dilation=dilation, conv_type=conv_type, D=D)
             self.mlp_c = nn.Sequential(
                     nn.Linear(planes, planes // cbam_reduction),
@@ -130,17 +270,22 @@ class MultiConv(nn.Module):
                     conv(2, 1, kernel_size=5, stride=stride, dilation=dilation, conv_type=conv_type, D=D),
                     ME.MinkowskiBatchNorm(1)
                     )
+        elif self.attn_gen_type == 'naive':
+            pass
+        elif self.attn_gen_type == 'debug':
+            pass
 
         # === Single Conv Definition ===
 
         self.sample = None
 
-        self.aggregation_type = 'cbam'
-        assert self.aggregation_type in ['conv_list','cbam']
+        self.aggregation_type = 'discrete_attn'
+        # self.aggregation_type = 'naive_sa'
+        assert self.aggregation_type in ['conv_list','cbam','naive_linear', 'naive_sa','debug', 'discrete_attn']
 
         if self.aggregation_type == 'conv_list':
             self.codebook = nn.ModuleList([])
-            for i_ in range(self.K):
+            for i_ in range(self.M):
                 self.codebook.append(
                         nn.Sequential(
                             conv(inplanes, planes, kernel_size=3, stride=stride, dilation=dilation, conv_type=conv_type, D=D),
@@ -150,6 +295,116 @@ class MultiConv(nn.Module):
         elif self.aggregation_type == 'cbam':
             self.skip_spatial = True
             pass
+        elif self.aggregation_type == 'naive_linear':
+            self.conv = nn.Sequential(
+                        nn.Conv2d(inplanes, planes, kernel_size=[self.k,1]),
+                        nn.BatchNorm2d(planes),
+                    )
+            self.pos_enc = True
+            if self.pos_enc:
+                self.gen_pos = nn.Sequential(
+                        nn.Conv2d(3, inplanes, 1),
+                        nn.BatchNorm2d(inplanes),
+                    )
+            self.neighbor_type = 'sparse_query'
+            self.out_bn_relu = nn.Sequential(
+                    ME.MinkowskiBatchNorm(planes),
+                    ME.MinkowskiReLU(),
+                    )
+        elif self.aggregation_type == 'discrete_attn':
+            self.temp = 5
+            self.neighbor_type = 'sparse_query'
+            k = 27
+            self.param_choice = False
+            if self.param_choice:
+                self.choice = nn.Parameter(torch.rand(1,self.M))
+            else:
+                self.gen_choice = nn.Sequential(
+                        nn.Conv2d(inplanes, self.M, kernel_size=[k,1]),
+                        nn.BatchNorm2d(self.M),
+                        )
+            self.codebook = nn.ModuleList([])
+            for i_ in range(self.M):
+                self.codebook.append(
+                    nn.Sequential(
+                        nn.Conv2d(inplanes, planes, kernel_size=[k,1]),
+                        nn.BatchNorm2d(planes),
+                        nn.ReLU(),
+                        )
+                    )
+            self.out_bn_relu = nn.Sequential(
+                    ME.MinkowskiBatchNorm(planes),
+                    ME.MinkowskiReLU(),
+                    )
+        elif self.aggregation_type == 'naive_sa':
+            self.neighbor_type = 'sparse_query'
+            self.vec_dim = planes // 4
+            self.discrete_qk = True
+            if self.discrete_qk:
+                self.M = planes // 8
+                # for each point [M, dim]
+                # choice shape [NPoint, M]
+                self.codebook = nn.Parameter(torch.rand(self.M, planes))
+                self.gen_choice = nn.Sequential(
+                    ME.MinkowskiConvolution(inplanes, self.M, kernel_size=3, dimension=3), # aggregate neighbor feature when gen_choice
+                    ME.MinkowskiBatchNorm(self.M),
+                    ME.MinkowskiReLU(),
+                        )
+            self.q = nn.Sequential(
+                    ME.MinkowskiConvolution(inplanes, planes, kernel_size=1, dimension=3),
+                    ME.MinkowskiBatchNorm(planes),
+                    ME.MinkowskiReLU(),
+
+                    # nn.Conv2d(inplanes, planes, kernel_size=1),
+                    # nn.BatchNorm2d(planes),
+                    # nn.ReLU(),
+                    )
+            self.v = nn.Sequential(
+                    ME.MinkowskiConvolution(inplanes, planes, kernel_size=1, dimension=3),
+                    # ME.MinkowskiConvolution(inplanes, planes, kernel_size=3, dimension=3),
+                    ME.MinkowskiBatchNorm(planes),
+                    ME.MinkowskiReLU(),
+
+                    ME.MinkowskiConvolution(planes, planes, kernel_size=1, dimension=3),
+                    ME.MinkowskiBatchNorm(planes),
+                    ME.MinkowskiReLU(),
+
+                    # nn.Conv2d(inplanes, planes, kernel_size=1),
+                    # nn.BatchNorm2d(planes),
+                    # nn.ReLU(),
+                    )
+            self.pos_enc = nn.Sequential(
+                    # ME.MinkowskiConvolution(3, planes, kernel_size=1, dimension=3),
+                    # ME.MinkowskiBatchNorm(planes),
+                    # ME.MinkowskiReLU(),
+                    nn.Conv2d(3, planes, kernel_size=1),
+                    nn.BatchNorm2d(planes),
+                    nn.ReLU(),
+                    )
+            self.attn = nn.Sequential(
+                    # ME.MinkowskiConvolution(inplanes, planes, kernel_size=1, dimension=3),
+                    # ME.MinkowskiBatchNorm(planes),
+                    # ME.MinkowskiReLU(),
+
+                    nn.Conv2d(planes, self.vec_dim, kernel_size=1),
+                    nn.BatchNorm2d(self.vec_dim),
+                    nn.ReLU(),
+                    nn.Conv2d(self.vec_dim, self.vec_dim, kernel_size=1),
+                    nn.BatchNorm2d(self.vec_dim),
+                    nn.ReLU(),
+
+                    )
+            self.out_bn_relu = nn.Sequential(
+                    ME.MinkowskiBatchNorm(planes),
+                    ME.MinkowskiReLU(),
+                    )
+        elif self.aggregation_type == 'debug':
+            self.test_bn = nn.BatchNorm1d(inplanes)
+            self.op = nn.Sequential(
+                            conv(inplanes, planes, kernel_size=3, stride=stride, dilation=dilation, conv_type=conv_type, D=D),
+                            ME.MinkowskiBatchNorm(planes),
+                            )
+
 
         # === Other Conv Block Defs ===
         self.norm = get_norm(self.NORM_TYPE, planes, D, bn_momentum=bn_momentum)
@@ -201,6 +456,11 @@ class MultiConv(nn.Module):
 
             # return a tuple of attn_weight, which is a special case
             attn_weight = attn_weight_c, attn_weight_s
+        elif type_ == 'naive':
+            attn_weight = None
+            # the ops are in the aggregation func
+        elif type_ == 'debug':
+            attn_weight = None
 
         # sometimes x will change within this func
         return x, attn_weight
@@ -212,7 +472,7 @@ class MultiConv(nn.Module):
         if type_ == 'conv_list':
 
             out = None
-            for i in range(self.K):
+            for i in range(self.M):
 
                 conv_out = self.codebook[i](x)
                 x_c, x_f, idx = voxel2points(conv_out)
@@ -239,6 +499,136 @@ class MultiConv(nn.Module):
                 pass
             out = points2voxel(x_f, idx)
             out = ME.SparseTensor(features=out, coordinate_map_key=x.coordinate_map_key, coordinate_manager=x.coordinate_manager)
+
+        elif 'naive' in type_ or 'attn' in type_:
+
+            npoint, in_dim = tuple(x.F.size())
+            if self.neighbor_type == 'sparse_query':
+
+                # gather from sparse_tensor stride_map
+                self.stride = 1
+                self.kernel_size = 3
+                k = self.kernel_size**3
+
+                x_f, neighbor = get_sparse_neighbor(k, x, kernel_size=self.kernel_size, stride=self.stride)
+
+            elif self.neighbor_type == 'knn':
+                k = 16
+                k = min(k, npoint)
+
+                self.r = 16
+                self.USE_KNN = True
+                self.cube_query = cube_query(r=self.r, k=k, knn=self.USE_KNN) # make sure it doesnot contain param
+                neighbor, mask, idx_ = self.cube_query.get_neighbor(x, x)
+                x_f = get_neighbor_feature(neighbor, x)
+                x_f_bak = x_f
+
+                if self.pos_enc:
+                    pose_tensor = gen_pos_enc(x.C, x_f, neighbor, mask, idx_, delta=self.gen_pos, register_map=False)
+                    x_f = x_f + pose_tensor
+
+            x_c, x_f, idx = voxel2points_(x.C, x_f.reshape(npoint, k*in_dim))
+            B, npoint_per_batch, _ = x_f.shape
+
+            # x_f = x_f.reshape([B, npoint_per_batch, self.K, in_dim])
+            # x_tmp = []
+            # for i in range(self.K):
+                # x_tmp.append(self.codebook[i](
+                    # x_f[:,:,0,:].permute(0,2,1).unsqueeze(-1)
+                    # )
+                # )
+            # out_ = torch.cat(x_tmp, dim=-1).max(-1)[0].permute(0,2,1)
+
+            x_f = x_f.reshape([B, npoint_per_batch, k, in_dim]).permute(0,3,2,1)
+
+
+            # x_f: [N_voxel, neis_k, dim]
+            if type_== 'naive_linear':
+                out_ = self.conv(x_f).squeeze(2).permute(0,2,1)
+                out_ = points2voxel(out_, idx)
+
+            elif type_ == 'discrete_attn':
+                if not self.param_choice:
+                    choice = self.gen_choice(x_f)
+                    choice = F.softmax(choice/self.temp, dim=1)
+                    # choice = F.softmax(choice.sum(-1).sum(-1)/self.temp, dim=-1) # global sum
+                else:
+                    choice = F.softmax(self.choice/self.temp, dim=-1) # global sum
+                # choice = choice.unsqueeze(-1).unsqueeze(-1) # [bs, self.M, 1, 1]
+                outs = []
+                for _ in range(self.M):
+                    # TODO: disable grad for the choice on conv_out
+                    out_ = self.codebook[_](x_f)
+                    # out_ = out_* choice[:,_,:,:].unsqueeze(-1)
+                    out_ = apply_choice.apply(out_, choice[:,_,:,:].unsqueeze(1))
+                    outs.append(out_)
+                out_ = torch.stack(outs).sum(0)
+                out_ = out_.sum(2).permute(0,2,1)
+                out_ = points2voxel(out_, idx)
+
+            elif type_== 'naive_sa':
+
+                if self.discrete_qk:
+                    choice = self.gen_choice(x)
+                    q_ = torch.matmul(choice.F, self.codebook)
+                else:
+                    q_ = self.q(x)
+                    q_ = q_.F
+
+                # _, x_f0, _= voxel2points(x)
+                # x_f0 = x_f0.permute(0,2,1).unsqueeze(2)
+                # neis, neighbor = get_sparse_neighbor(k, x, kernel_size=self.kernel_size, stride=self.stride, additional_xf=x_f0)
+
+                v_ = self.v(x)
+
+                q_nei, neighbor = get_sparse_neighbor(k, x, kernel_size=self.kernel_size, stride=self.stride, additional_xf=q_)
+                q_ = (q_nei - q_.unsqueeze(1)).permute(2,0,1).unsqueeze(0)
+                attn_map = F.softmax(self.attn(q_),dim=-1) # [1, N_voxel, K, dim]
+                v_nei, neighbor = get_sparse_neighbor(k, x, kernel_size=self.kernel_size, stride=self.stride, additional_xf=v_.F)
+                v_nei = v_nei.permute(2,0,1).unsqueeze(0)
+
+                neighbor_mask = (neighbor.sum(-1)!=0).float().unsqueeze(-1)
+
+                neighbor = (neighbor - x.C[:,1:].unsqueeze(1))*neighbor_mask
+                attn_map = attn_map*(neighbor_mask.permute(2,0,1).unsqueeze(0))
+                v_nei = v_nei*(neighbor_mask.permute(2,0,1).unsqueeze(0))
+
+                pos_enc = self.pos_enc(neighbor.permute(2,0,1).unsqueeze(0))
+                self.register_buffer('pos_map', pos_enc.mean(1))
+                self.register_buffer('attn_map', attn_map.mean(1))
+                attn_map = attn_map.repeat(1, self.planes // self.vec_dim, 1, 1)
+                out_ = (attn_map)*(pos_enc + v_nei)
+                out_ = out_.sum(-1).squeeze(0).permute(1,0)
+
+                # if (torch.isnan(q_).sum() > 0):
+                    # import ipdb; ipdb.set_trace()
+
+                # num_nonzero = (x_f.sum(1)>0).sum(1) # how many out of 27 is nonzero, div the sum out to avoid large difference
+
+                # out_ = (q_*v_)*(1 / (num_nonzero.unsqueeze(1).unsqueeze(1) + 1e-3)) # [bs, 1, 1, npoint]
+                # out_ = self.out_bn_relu(out_).sum(dim=2).permute(0,2,1)
+
+                if (torch.isnan(out_).sum() > 0):
+                    import ipdb; ipdb.set_trace()
+
+
+            '''
+            q = self.q(x_f)
+            k = self.gen_attn(q - gather_neighbor(q))
+            v = gather(selF.v(x_f))
+
+            out = k*v.sum(dim-k)
+            '''
+
+            out = ME.SparseTensor(features=out_, coordinate_map_key=x.coordinate_map_key, coordinate_manager=x.coordinate_manager)
+            out = self.out_bn_relu(out)
+
+        elif type_ == 'debug':
+            x_c, x_f, idx = voxel2points(x)
+            x_f = self.test_bn(x_f.permute(0,2,1)).permute(0,2,1)
+            out = points2voxel(x_f, idx)
+            out = ME.SparseTensor(features=out, coordinate_map_key=x.coordinate_map_key, coordinate_manager=x.coordinate_manager)
+            out = self.op(out)
 
         return out
 

@@ -12,6 +12,8 @@ import time
 
 import numpy as np
 import torch
+from torch.autograd import Variable
+import torch.nn.functional as F
 
 
 def elementwise_multiplication(x, y, n):
@@ -72,8 +74,8 @@ def checkpoint(model, optimizer, epoch, iteration, config, best_val=None, best_v
     torch.save(state, checkpoint_file)
     logging.info(f"Checkpoint saved to {checkpoint_file}")
     # Delete symlink if it exists
-    if os.path.exists(f'{config.log_dir}/weights.pth'):
-        os.remove(f'{config.log_dir}/weights.pth')
+    if os.path.exists(f'{config.log_dir}weights.pth'):
+        os.remove(f'{config.log_dir}weights.pth')
     # Create symlink
     os.system(f'cd {config.log_dir}; ln -s {filename} weights.pth')
 
@@ -300,3 +302,44 @@ def count_parameters(model):
 
 def get_torch_device(is_cuda):
     return torch.device('cuda' if is_cuda else 'cpu')
+
+# gumbel softmax
+def sample_gumbel(shape, device, eps=1e-20):
+    uniform_rand = torch.rand(shape).to(device)
+    return Variable(-torch.log(-torch.log(uniform_rand + eps) + eps))
+
+def gumbel_softmax_sample(logits, temperature, eps=None):
+    if eps is None:
+        eps = sample_gumbel(logits.size(), logits.device)
+    y = logits + eps
+    return F.softmax(y / temperature, dim=-1), eps
+
+def gumbel_softmax(logits, temperature, eps=None, hard=True):
+    """
+    input: [*, n_class]
+    return: [*, n_class] an one-hot vector
+    """
+    y, eps = gumbel_softmax_sample(logits, temperature, eps)
+    if hard:
+        y = straight_through(y)
+    return y, eps
+
+# bernoulli sample
+def relaxed_bernoulli_sample(logits, temperature):
+    relaxed_bernoulli = torch.distributions.relaxed_bernoulli.RelaxedBernoulli(temperature, logits=logits)
+    y = relaxed_bernoulli.rsample()
+    return y
+
+def straight_through(y):
+    shape = y.size()
+    _, ind = y.max(dim=-1)
+    y_hard = torch.zeros_like(y).view(-1, shape[-1])
+    y_hard.scatter_(1, ind.view(-1, 1), 1)
+    y_hard = y_hard.view(*shape)
+    return (y_hard - y).detach() + y
+
+def mask2d(batch_size, dim, keep_prob, device):
+    mask = torch.floor(torch.rand(batch_size, dim, device=device) + keep_prob) / keep_prob
+    return mask
+
+

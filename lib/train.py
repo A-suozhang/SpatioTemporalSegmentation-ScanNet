@@ -177,6 +177,7 @@ def train(model, data_loader, val_data_loader, config, transform_data_fn=None):
                         len(data_loader) // config.iter_size, losses.avg, lrs)
                 debug_str += "Score {:.3f}\tData time: {:.4f}, Iter time: {:.4f}".format(
                         scores.avg, data_time_avg.avg, iter_time_avg.avg)
+                # print(debug_str)
                 logging.info(debug_str)
                 # Reset timers
                 data_time_avg.reset()
@@ -201,6 +202,7 @@ def train(model, data_loader, val_data_loader, config, transform_data_fn=None):
                     checkpoint(model, optimizer, epoch, curr_iter, config, best_val_miou, best_val_iter,
                                          "best_val", save_inter=True)
                 logging.info("Current best mIoU: {:.3f} at iter {}".format(best_val_miou, best_val_iter))
+                # print("Current best mIoU: {:.3f} at iter {}".format(best_val_miou, best_val_iter))
 
                 # Recover back
                 model.train()
