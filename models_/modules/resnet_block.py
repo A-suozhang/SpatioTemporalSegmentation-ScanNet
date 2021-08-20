@@ -121,7 +121,6 @@ def get_sparse_neighbor(k, x, kernel_size=3, stride=1, additional_xf=None):
     rel_xyz = torch.zeros(N,k,3, device=x.C.device)
     neis_d = x.coordinate_manager.get_kernel_map(x.coordinate_map_key, x.coordinate_map_key,kernel_size=kernel_size, stride=stride)
     for k_ in range(k):
-        # TODO: possible that no value 
         if not k_ in neis_d.keys():
             continue
         # tmp_neis = torch.zeros(N,dim, device=x.F.device)
@@ -180,7 +179,6 @@ class ParameterizedConv(nn.Module):
         rel_xyz = torch.zeros(N,k,3, device=x.C.device)
         neis_d = x.coordinate_manager.get_kernel_map(x.coordinate_map_key, x.coordinate_map_key,kernel_size=self.kernel_size, stride=self.stride)
         for k_ in range(k):
-            # TODO: possible that no value 
             if not k_ in neis_d.keys():
                 continue
             # tmp_neis = torch.zeros(N,dim, device=x.F.device)
@@ -188,9 +186,6 @@ class ParameterizedConv(nn.Module):
             neis[:,k_,:] = torch.scatter(neis[:,k_,:], dim=0, index=neis_d[k_][0].reshape(-1,1).repeat(1,dim).long(), src=neis_)
             rel_xyz_ = torch.gather(x.C[:,1:].float(), dim=0, index=neis_d[k_][1].reshape(-1,1).repeat(1,3).long())
             rel_xyz[:,k_,:] = torch.scatter(rel_xyz[:,k_,:], dim=0, index=neis_d[k_][0].reshape(-1,1).repeat(1,3).long(), src=rel_xyz_)
-
-        # if self.planes != self.inplanes:
-            # import ipdb; ipdb.set_trace()
 
         weights = self.linear(rel_xyz).reshape([N, k, self.inplanes, self.planes])
         out_ = (weights*neis.unsqueeze(-1)).sum(dim=1).sum(dim=1) # [N, {K, in_dim,} out_dim]
@@ -213,7 +208,6 @@ class TRBlock(PTBlock):
 
         if not inplanes == planes:
             pass
-            # import ipdb; ipdb.set_trace()
 
         super(TRBlock, self).__init__(
                 in_dim = inplanes,
@@ -221,8 +215,18 @@ class TRBlock(PTBlock):
                 )
 
 
-# MultiConv
-class MultiConv(nn.Module):
+
+
+def MinkoskiConvBNReLU(inplanes, planes, kernel_size=1):
+    return nn.Sequential(
+            ME.MinkowskiConvolution(inplanes, planes, kernel_size=kernel_size, dimension=3),
+            ME.MinkowskiBatchNorm(planes),
+            ME.MinkowskiReLU(),
+            )
+
+
+
+class TestConv(nn.Module):
     expansion = 1
     NORM_TYPE = NormType.BATCH_NORM
     def __init__(self,
@@ -236,7 +240,7 @@ class MultiConv(nn.Module):
                bn_momentum=0.1,
                D=3):
 
-        super(MultiConv, self).__init__()
+        super(TestConv, self).__init__()
 
 
         self.inplanes = inplanes
@@ -312,30 +316,79 @@ class MultiConv(nn.Module):
                     ME.MinkowskiReLU(),
                     )
         elif self.aggregation_type == 'discrete_attn':
-            self.temp = 5
+            '''
+            TODO:
+            the main dev here
+            within each codebook element is a conv
+            the conv weight [dim, K] dot product with the qk,
+            to gen the attn_weight for certanin point
+            ------------------
+            qk_type:
+                - conv
+                - substration
+            conv_v: use conv or linear for gen value
+            vec_dim: the attn_map feature dim
+            M - codebook size
+            temp - the softmax temperature
+            '''
+
+            self.M = 4
+            # self.M = 1
+            self.qk_type = 'conv'
+            self.conv_v = False
+            self.vec_dim = 1
+            # self.vec_dim = planes // 16
+            # self.vec_dim = 8
+            self.temp = 10
+            self.one_hot_choice = False # if one-hot choice, temp is not used
             self.neighbor_type = 'sparse_query'
+            self.skip_choice = False # only_used in debug mode
             k = 27
-            self.param_choice = False
-            if self.param_choice:
-                self.choice = nn.Parameter(torch.rand(1,self.M))
+
+            # self.param_choice = False
+            # if self.param_choice:
+                # self.choice = nn.Parameter(torch.rand(1,self.M))
+            # else:
+                # self.gen_choice = nn.Sequential(
+                        # nn.Conv2d(inplanes, self.M, kernel_size=[k,1]),
+                        # nn.BatchNorm2d(self.M),
+                        # )
+            if self.inplanes != self.planes:
+                self.linear_top = MinkoskiConvBNReLU(inplanes, planes, kernel_size=1)
+                # self.downsample = MinkoskiConvBNReLU(inplanes, planes, kernel_size=1)
+                self.downsample = ME.MinkowskiConvolution(inplanes, planes, kernel_size=1, dimension=3)
+
+            if self.qk_type == 'conv':
+                # since conv already contains the neighbor info, so no pos_enc
+                self.q = MinkoskiConvBNReLU(planes, self.vec_dim, kernel_size=3)
+            elif self.qk_type == 'sub':
+                self.q = MinkoskiConvBNReLU(planes, self.vec_dim, kernel_size=1)
             else:
-                self.gen_choice = nn.Sequential(
-                        nn.Conv2d(inplanes, self.M, kernel_size=[k,1]),
-                        nn.BatchNorm2d(self.M),
-                        )
+                raise NotImplementedError
+
+            if self.conv_v == True:
+                self.v = MinkoskiConvBNReLU(planes, planes, kernel_size=3)
+            else:
+                self.v = MinkoskiConvBNReLU(planes, planes, kernel_size=1)
+
             self.codebook = nn.ModuleList([])
             for i_ in range(self.M):
                 self.codebook.append(
                     nn.Sequential(
-                        nn.Conv2d(inplanes, planes, kernel_size=[k,1]),
-                        nn.BatchNorm2d(planes),
-                        nn.ReLU(),
+                        # ME.MinkowskiConvolution(planes, planes, kernel_size=3, dimension=3),
+                        ME.MinkowskiChannelwiseConvolution(planes, kernel_size=3, dimension=3),
+                        ME.MinkowskiBatchNorm(planes),
+                        ME.MinkowskiReLU(),
+                        # nn.Conv2d(inplanes, planes, kernel_size=[k,1]),
+                        # nn.BatchNorm2d(planes),
+                        # nn.ReLU(),
                         )
                     )
             self.out_bn_relu = nn.Sequential(
-                    ME.MinkowskiBatchNorm(planes),
+                    # ME.MinkowskiBatchNorm(planes),
                     ME.MinkowskiReLU(),
                     )
+
         elif self.aggregation_type == 'naive_sa':
             self.neighbor_type = 'sparse_query'
             self.vec_dim = planes // 4
@@ -395,7 +448,7 @@ class MultiConv(nn.Module):
 
                     )
             self.out_bn_relu = nn.Sequential(
-                    ME.MinkowskiBatchNorm(planes),
+                    # ME.MinkowskiBatchNorm(planes),
                     ME.MinkowskiReLU(),
                     )
         elif self.aggregation_type == 'debug':
@@ -412,6 +465,14 @@ class MultiConv(nn.Module):
         if self.downsample is not None:
             self.downsample = conv(inplanes, planes, kernel_size=1, stride=stride, dilation=dilation, conv_type=conv_type, D=D)
         self.nonlinearity_type = nonlinearity_type
+
+    def schedule_update(self, iter_=None):
+        '''
+        some schedulable params
+        '''
+        # self.temp = self.temp*(0.01)**(iter_)
+        pass
+
 
     def gen_attn(self, x, type_=None):
 
@@ -548,23 +609,128 @@ class MultiConv(nn.Module):
                 out_ = points2voxel(out_, idx)
 
             elif type_ == 'discrete_attn':
-                if not self.param_choice:
-                    choice = self.gen_choice(x_f)
-                    choice = F.softmax(choice/self.temp, dim=1)
-                    # choice = F.softmax(choice.sum(-1).sum(-1)/self.temp, dim=-1) # global sum
+
+                '''
+                TODO:
+                1st do qk projection: [N, dim, k]
+                        - conv: directly use conv neighbor aggregation(extra params), output: [N, vec_dim]
+                        - substract: use linear mapping, then gather neighbor & substract. output: [N, vec_dim, k] -> [N, vec_dim] (requires extra transform, memory-hungry)
+                2nd: q_ do dot product with M set of conv weights(apply conv): [N, dim, M] -> [N, dim, M], the apply softmax
+                    - (q may be vec_dim instead of dim, broadcast to dims)
+                3rd: use attn_map: [N, M] to aggregate M convs for each point
+                '''
+
+
+                # res = x.F
+
+                if self.planes != self.inplanes:
+                    res = self.downsample(x).F
+                    x = self.linear_top(x)
                 else:
-                    choice = F.softmax(self.choice/self.temp, dim=-1) # global sum
-                # choice = choice.unsqueeze(-1).unsqueeze(-1) # [bs, self.M, 1, 1]
-                outs = []
+                    res = x.F
+
+
+                if self.qk_type == 'conv':
+                    q_ = self.q(x)
+
+                v_ = self.v(x)
+
+
+                # DEBUG: the dim issue, 384 -> 256, if use the output
+                # maybe just add a linear_top? to solve all of em
+                # making the TR Part same input & same output
+
+                # possible broadcast for filling the vec_dim
+                q_f = q_.F.repeat(1, self.planes // self.vec_dim)
+                q_= ME.SparseTensor(features=q_f, coordinate_map_key=q_.coordinate_map_key, coordinate_manager=q_.coordinate_manager) # [N, dim]
+
+                # get dot-product of conv-weight & q_
+
+                # DEBUG ONLY
+                # v_= ME.SparseTensor(features=torch.ones_like(q_f), coordinate_map_key=q_.coordinate_map_key, coordinate_manager=q_.coordinate_manager) # [N, dim]
+
+                choice = []
+                out = []
                 for _ in range(self.M):
-                    # TODO: disable grad for the choice on conv_out
-                    out_ = self.codebook[_](x_f)
-                    # out_ = out_* choice[:,_,:,:].unsqueeze(-1)
-                    out_ = apply_choice.apply(out_, choice[:,_,:,:].unsqueeze(1))
-                    outs.append(out_)
-                out_ = torch.stack(outs).sum(0)
-                out_ = out_.sum(2).permute(0,2,1)
-                out_ = points2voxel(out_, idx)
+                    self.codebook[_][0].kernel.requires_grad = False
+                    choice_ = self.codebook[_](q_)
+                    # DEBUG: whether the grad should attach to the conv weight here?
+                    choice.append(choice_.F.reshape(
+                        [choice_.shape[0], self.vec_dim, self.planes // self.vec_dim]
+                            ).sum(-1)
+                        )
+
+                choice = torch.stack(choice, dim=-1)
+                if self.M > 1:
+                    # apply softmax will result in 0 grad
+                    choice = F.softmax(choice / self.temp, dim=-1) # [N, vec_dim, M] 
+                else:
+                    pass
+                choice = choice.repeat(1,self.planes // self.vec_dim,1)
+                self.register_buffer('choice_map', choice[:100,:,:])
+
+                # out = choice.sum()
+                # x.F.retain_grad()
+                # out.backward()
+                # print(x.F.grad)
+                # print(x.F[0,0])
+                # import ipdb; ipdb.set_trace()
+
+                if self.one_hot_choice:
+                    N, dim = v_.shape
+                    out = torch.zeros([N,dim], device=x.device)
+                    for _ in range(self.M):
+                        # DEV: split points for different choice
+                        # however, if choice has the channle freedom
+                        # could not handle
+                        assert self.vec_dim == 1 # same point use the same choice 
+                        choice_one_hot = torch.argmax(choice, dim=-1)[:,0]  # shape [N]
+                        choice_idx = torch.where(choice_one_hot == _)[0]
+                        # cur_v_ = v_.features_at_coordinates(v_.C[choice_idx,:].float())
+                        if len(choice_idx) > 1:
+                            cur_v_ = ME.SparseTensor(
+                                    features=v_.F[choice_idx,:],
+                                    coordinates=v_.C[choice_idx,:],
+                                    coordinate_map_key=x.coordinate_map_key,
+                                    coordinate_manager=x.coordinate_manager
+                                    )
+                            self.codebook[_][0].kernel.requires_grad = True
+                            try:
+                                cur_out_ = self.codebook[_](cur_v_)
+                            except:
+                                import ipdb; ipdb.set_trace()
+                            out.scatter_(src=cur_out_.F, index=choice_idx.unsqueeze(-1).repeat(1,dim), dim=0)
+                        else:
+                            pass
+                else:
+                    out = []
+                    for _ in range(self.M):
+                            self.codebook[_][0].kernel.requires_grad = True
+                            out_ = self.codebook[_](v_)
+                            out.append(out_.F)
+                    out = torch.stack(out, dim=-1)
+
+                if self.skip_choice:
+                    out_ = out.sum(-1)
+                else:
+                    if self.one_hot_choice:
+                        # depreacated, if former is [N,dim,choice]
+                        # choice_idx = choice.argmax(-1).unsqueeze(-1)
+                        # out_ = torch.gather(input=out, index=choice_idx, dim=2).squeeze(-1)
+
+                        out_ = out
+                    else:
+                        out_ = (out*choice).sum(-1)
+
+                # '''debug grad'''
+                # out = out_.sum()
+                # x.F.retain_grad()
+                # out.backward()
+                # print(self.codebook[0][0].kernel.grad[0])
+                # # print(x.F.grad[0][:10])
+                # import ipdb; ipdb.set_trace()
+
+                out_ = out_ + res
 
             elif type_== 'naive_sa':
 
@@ -634,32 +800,10 @@ class MultiConv(nn.Module):
 
     def forward(self, x, iter_=None):
         # K - the code book size 
-        '''
-        # === debug mode ===
-        residual = x
-        out = None
-        for i in range(self.K):
 
-            out_ = self.codebook[i](x)
-            # out_ = ME.SparseTensor(features=out_, coordinate_map_key=x.coordinate_map_key, coordinate_manager=x.coordinate_manager)
-            if out is not None:
-                out = ME.sum(out, out_)
-            else:
-                out = out_
-
-        # other conv block stuff
-        out = self.norm(out)
-        if (torch.isnan(out.F).sum() > 0):
-            import ipdb; ipdb.set_trace()
-        out = get_nonlinearity_fn(self.nonlinearity_type, out)
-
-        if self.downsample is not None:
-          residual = self.downsample(x)
-
-        out += residual
-        out = get_nonlinearity_fn(self.nonlinearity_type, out)
-
+        out = self.aggregation(x, None, type_=self.aggregation_type)
         return out
+        
         '''
 
         # if want to distinguish train and eval mode
@@ -709,9 +853,10 @@ class MultiConv(nn.Module):
             import ipdb; ipdb.set_trace()
 
         return out
+        '''
 
 
-class TestConv(nn.Module):
+class SingleConv(nn.Module):
   expansion = 1
   NORM_TYPE = NormType.BATCH_NORM
 
@@ -725,7 +870,7 @@ class TestConv(nn.Module):
                nonlinearity_type='ReLU',
                bn_momentum=0.1,
                D=3):
-    super(TestConv, self).__init__()
+    super(SingleConv, self).__init__()
 
     self.inplanes = inplanes
     self.planes = planes
@@ -753,6 +898,121 @@ class TestConv(nn.Module):
     out = get_nonlinearity_fn(self.nonlinearity_type, out)
 
     return out
+
+class MultiConv(nn.Module):
+  expansion = 1
+  NORM_TYPE = NormType.BATCH_NORM
+
+  def __init__(self,
+               inplanes,
+               planes,
+               stride=1,
+               dilation=1,
+               downsample=None,
+               conv_type=ConvType.HYPERCUBE,
+               nonlinearity_type='ReLU',
+               bn_momentum=0.1,
+               D=3):
+    super(MultiConv, self).__init__()
+
+    self.inplanes = inplanes
+    self.planes = planes
+
+    if inplanes != planes:
+        self.linear_top = ME.MinkowskiConvolution(inplanes, planes, kernel_size=1, dimension=3)
+
+    self.conv = nn.ModuleList([])
+    self.M = 4
+    for _ in range(self.M):
+        self.conv.append(
+                MinkoskiConvBNReLU(planes, planes, kernel_size=3)
+                )
+
+    self.trainable_weight = True
+    if self.trainable_weight:
+        self.choice = nn.Parameter(torch.rand([self.M]))
+
+    # self.out_bn_relu = nn.Sequential(
+            # ME.MinkowskiBatchNorm(planes),
+            # ME.MinkowskiReLU(),
+            # )
+
+    self.downsample = downsample
+    if self.downsample is not None:
+        self.downsample = conv(inplanes, planes, kernel_size=1, stride=stride, dilation=dilation, conv_type=conv_type, D=D)
+
+    self.nonlinearity_type = nonlinearity_type
+
+  def forward(self, x, iter_=None):
+
+    if self.inplanes != self.planes:
+        residual = self.downsample(x)
+        x = self.linear_top(x)
+    else:
+        residual = x
+
+    out = []
+    for _ in range(self.M):
+        out_ = self.conv[_](x)
+        out_ = out_*self.choice[_]
+        out.append(out_.F)
+    out = torch.stack(out, dim=-1).sum(-1)
+    out = ME.SparseTensor(features=out, coordinate_map_key=x.coordinate_map_key, coordinate_manager=x.coordinate_manager)
+
+    out += residual
+    out = get_nonlinearity_fn(self.nonlinearity_type, out)
+
+    return out
+
+
+class SingleChannelConv(nn.Module):
+  expansion = 1
+  NORM_TYPE = NormType.BATCH_NORM
+
+  def __init__(self,
+               inplanes,
+               planes,
+               stride=1,
+               dilation=1,
+               downsample=None,
+               conv_type=ConvType.HYPERCUBE,
+               nonlinearity_type='ReLU',
+               bn_momentum=0.1,
+               D=3):
+    super(SingleChannelConv, self).__init__()
+
+    self.inplanes = inplanes
+    self.planes = planes
+
+    # self.conv = ParameterizedConv(
+    # self.conv = conv(
+        # inplanes, planes, kernel_size=3, stride=stride, dilation=dilation, conv_type=conv_type, D=D)
+    self.conv = nn.Sequential(
+            MinkoskiConvBNReLU(inplanes, planes, kernel_size=1),
+            ME.MinkowskiChannelwiseConvolution(planes, kernel_size=3, dimension=3),
+            )
+    self.norm = get_norm(self.NORM_TYPE, planes, D, bn_momentum=bn_momentum)
+    self.downsample = downsample
+    if self.downsample is not None:
+        self.downsample = conv(inplanes, planes, kernel_size=1, stride=stride, dilation=dilation, conv_type=conv_type, D=D)
+    self.nonlinearity_type = nonlinearity_type
+
+  def forward(self, x, iter_=None):
+    residual = x
+    
+    out = self.conv(x)
+    out = self.norm(out)
+    out = get_nonlinearity_fn(self.nonlinearity_type, out)
+
+    if self.downsample is not None:
+      residual = self.downsample(x)
+
+    out += residual
+    out = get_nonlinearity_fn(self.nonlinearity_type, out)
+
+    return out
+
+
 
 class ConvBase(nn.Module):
   expansion = 1
@@ -792,8 +1052,8 @@ class ConvBase(nn.Module):
 
     return out
 
-class SingleConv(ConvBase):
-    NORM_TYPE = NormType.BATCH_NORM
+# class SingleConv(ConvBase):
+    # NORM_TYPE = NormType.BATCH_NORM
 
 class BasicBlockBase(nn.Module):
   expansion = 1

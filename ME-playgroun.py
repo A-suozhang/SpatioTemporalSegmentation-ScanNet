@@ -33,10 +33,10 @@ y1 = upsample(y0)
 '''
 
 feats = torch.tensor([
-        [1., 2., 3.],
-        # [4., 5., 6.],
-        # [7., 8., 9.],
-    ])
+            [1., 2., 3.],
+            # [4., 5., 6.],
+            # [7., 8., 9.],
+            ])
 feats = nn.Parameter(feats)
 
 feats2 = torch.tensor([
@@ -84,21 +84,37 @@ x1_p2 = pool_s2(x1)
 '''
 Test the overwrite weight kernel to achieve substract like
 '''
-conv = ME.MinkowskiConvolution(1,1,kernel_size=2,dimension=3)
-# conv.kernel = nn.Parameter(torch.ones_like(conv.kernel))
-conv.kernel = nn.Parameter(
-        torch.arange(conv.kernel.shape[0]).reshape(-1,1,1).float()
-        )
-y1 = conv(x1)
 
-out = y1.sum()
+x = ME.SparseTensor(coordinates=coords, features=feats.reshape([-1,1]))\
+
+conv = ME.MinkowskiConvolution(1,1,kernel_size=1,dimension=3)
+conv.kernel = nn.Parameter(torch.ones_like(conv.kernel)*2)
+# conv.kernel = nn.Parameter(
+        # torch.arange(conv.kernel.shape[0]).reshape(-1,1,1).float()
+        # )
+conv.kernel.requires_grad = False
+y1 = conv(x)
+
+conv.kernel.requires_grad = True
+y2 = conv(y1)
+
+out = y2.F.sum()
 out.backward()
 
 print(conv.kernel.grad)
+print(feats.grad)
 
-import ipdb; ipdb.set_trace()
 
+'''
+Test Channel-Wise Conv
+'''
+x = ME.SparseTensor(coordinates=coords, features=feats.reshape([-1,1]).repeat(1,16))
+conv = ME.MinkowskiChannelwiseConvolution(16,kernel_size=1,dimension=3)
+conv_ = ME.MinkowskiConvolution(16,16,kernel_size=1,dimension=3)
+conv.kernel = nn.Parameter(torch.ones_like(conv.kernel)*2)
+y0 = conv(x)
 
+print(conv.kernel.shape, conv_.kernel.shape)
 
 '''
 Illustration of the coordinate manager in MinkEngine

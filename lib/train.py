@@ -697,7 +697,7 @@ def train_distill(model, data_loader, val_data_loader, config, transform_data_fn
 
             if curr_iter % config.stat_freq == 0 or curr_iter == 1:
                 lrs = ', '.join(['{:.3e}'.format(x) for x in scheduler.get_lr()])
-                debug_str = "===> Epoch[{}]({}/{}): Loss {:.4f}\tLR: {}\t".format(
+                debug_str = "[{}] ===> Epoch[{}]({}/{}): Loss {:.4f}\tLR: {}\t".format(config.log_dir,
                         epoch, curr_iter,
                         len(data_loader) // config.iter_size, losses.avg, lrs)
                 debug_str += "Score {:.3f}\tData time: {:.4f}, Iter time: {:.4f}".format(

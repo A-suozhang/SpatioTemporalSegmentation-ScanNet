@@ -24,6 +24,8 @@ export MAX_ITER=${MAX_ITER:-60000}
 export RESUME=${RESUME:-none}
 # export RESUME=${RESUME:-True}
 export POINTS=${POINTS:-8192}
+export VOXEL_SIZE=${VOXEL_SIZE:-0.1}
+
 
 export USE_AUX=${USE_AUX:-false}
 export DISTILL=${DISTILL:-false}
@@ -47,6 +49,7 @@ echo "
     --batch_size $BATCH_SIZE \
     --scheduler $SCHEDULER \
     --max_iter $MAX_ITER \
+	--voxel_size $VOXEL_SIZE
     $3" 
 
 echo Logging output to "$LOG"
@@ -77,6 +80,7 @@ time python -W ignore main.py \
 	--use_aux $USE_AUX \
 	--distill $DISTILL \
 	--multiprocess $MP \
+	--voxel_size $VOXEL_SIZE \
 	$3 
 
 #time python -W ignore main.py \

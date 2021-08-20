@@ -3,7 +3,7 @@ export OMP_NUM_THREADS=1
 #export BATCH_SIZE=16
 #export BATCH_SIZE=6
 #export BATCH_SIZE=8
-export BATCH_SIZE=4
+export BATCH_SIZE=8
 #export MODEL=MinkowskiTransformerNet
 #export MODEL=Res16UNet34C
 #export MODEL=Res16UNet18A
@@ -28,7 +28,9 @@ export LR=1e-1
 #export LR=1e-1
 #export MP=True
 
-#export WEIGHT_DECAY=5E-4
+export VOXEL_SIZE=0.1
+
+export WEIGHT_DECAY=0
 
 export LOG=$1
 

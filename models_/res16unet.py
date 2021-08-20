@@ -6,7 +6,7 @@
 
 from models.resnet import ResNetBase
 from models.modules.common import ConvType, NormType, conv, conv_tr, get_norm, get_nonlinearity_fn
-from models.modules.resnet_block import BasicBlock, Bottleneck, SingleConv, TestConv, MultiConv, TRBlock
+from models.modules.resnet_block import BasicBlock, Bottleneck, SingleConv, TestConv, TRBlock, SingleChannelConv, MultiConv
 
 import torch
 import numpy as np
@@ -223,6 +223,12 @@ class Res16UNetBase(ResNetBase):
     self.final = conv(self.PLANES[7], out_channels, kernel_size=1, stride=1, bias=True, D=D)
 
   def forward(self, x, save_anchor=False, iter_=None):
+
+    for n, m in self.named_modules():
+        if 'block' in n:
+            if hasattr(m, "schedule_update"):
+                m.schedule_update(iter_)
+
     if save_anchor:
         self.anchors = []
     # mapped to transformer.stem1
@@ -408,9 +414,10 @@ class Res16UNetTest(Res16UNetBase):
 
 class Res16UNetTestA(Res16UNetTest):
   # BLOCK = [TestConv, TRBlock, TestConv, TRBlock, TestConv, TRBlock, TestConv, TRBlock]
-  # BLOCK= [MultiConv]*8
-  # BLOCK= [TestConv]*8
-  BLOCK = [TestConv, TestConv, MultiConv, MultiConv, MultiConv, MultiConv, MultiConv, MultiConv]
+  BLOCK= [TestConv]*8
+  # BLOCK[0] = SingleConv
+  # BLOCK[1] = SingleConv
+
   LAYERS = (1, 1, 1, 1, 1, 1, 1, 1)
   PLANES = (np.array([32, 64, 128, 256, 256, 128, 96, 96])*1.0).astype(int)
   # PLANES = (8, 16, 32, 64, 64, 32, 24, 24)
@@ -419,6 +426,20 @@ class Res16UNetTestA(Res16UNetTest):
   # PLANES = (16, 16, 16, 16, 16, 16, 24, 24)
   # PLANES = (16, 32, 32, 32, 64, 32, 24, 24)
   # PLANES = (4, 4, 4, 4, 4, 4, 4, 4)
+
+class Res16UNet(Res16UNetBase):
+  # BLOCK = [TestConv, TRBlock, TestConv, TRBlock, TestConv, TRBlock, TestConv, TRBlock]
+  BLOCK= [SingleChannelConv]*8
+  # BLOCK= [MultiConv]*8
+
+  LAYERS = (1, 1, 1, 1, 1, 1, 1, 1)
+  PLANES = (np.array([32, 64, 128, 256, 256, 128, 96, 96])*1.5).astype(int)
+
+
+
+
+
+
 
 
 
