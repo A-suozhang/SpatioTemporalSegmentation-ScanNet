@@ -80,6 +80,21 @@ x2 = ME.SparseTensor(coordinates=coords, features=feats2.reshape([-1,1]))
 x1_s2 = conv_s2(x1)
 x1_p2 = pool_s2(x1)
 
+'''
+check grad for gen from part of a SparseTensor
+'''
+new_x1 = ME.SparseTensor(
+        features=x1.F[:2,:],
+        coordinates=x1.C[:2,:],
+        coordinate_manager=x1.coordinate_manager,
+        coordinate_map_key=x1.coordinate_map_key,
+        )
+out1 = conv1(new_x1)
+out = out1.F.sum()
+out.backward()
+print(feats.grad)
+import ipdb; ipdb.set_trace()
+
 
 '''
 Test the overwrite weight kernel to achieve substract like

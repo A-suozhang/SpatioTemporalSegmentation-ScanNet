@@ -375,8 +375,8 @@ class TestConv(nn.Module):
             for i_ in range(self.M):
                 self.codebook.append(
                     nn.Sequential(
-                        # ME.MinkowskiConvolution(planes, planes, kernel_size=3, dimension=3),
-                        ME.MinkowskiChannelwiseConvolution(planes, kernel_size=3, dimension=3),
+                        ME.MinkowskiConvolution(planes, planes, kernel_size=3, dimension=3),
+                        # ME.MinkowskiChannelwiseConvolution(planes, kernel_size=3, dimension=3),
                         ME.MinkowskiBatchNorm(planes),
                         ME.MinkowskiReLU(),
                         # nn.Conv2d(inplanes, planes, kernel_size=[k,1]),
