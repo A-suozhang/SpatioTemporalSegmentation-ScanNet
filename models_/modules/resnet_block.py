@@ -918,24 +918,36 @@ class MultiConv(nn.Module):
     self.inplanes = inplanes
     self.planes = planes
 
-    if inplanes != planes:
-        self.linear_top = ME.MinkowskiConvolution(inplanes, planes, kernel_size=1, dimension=3)
+    # if inplanes != planes:
+        # self.linear_top = ME.MinkowskiConvolution(inplanes, planes, kernel_size=1, dimension=3)
 
     self.conv = nn.ModuleList([])
     self.M = 4
     for _ in range(self.M):
+        if inplanes != planes:
+            cur_conv = nn.Sequential(
+                    MinkoskiConvBNReLU(inplanes, planes, kernel_size=1),
+                    ME.MinkowskiConvolution(planes, planes, kernel_size=1, dimension=3),
+                    ME.MinkowskiChannelwiseConvolution(planes, kernel_size=3, dimension=3),
+                    )
+        else:
+            cur_conv = nn.Sequential(
+                    MinkoskiConvBNReLU(planes, planes, kernel_size=1),
+                    ME.MinkowskiChannelwiseConvolution(planes, kernel_size=3, dimension=3),
+                    )
+
         self.conv.append(
-                MinkoskiConvBNReLU(planes, planes, kernel_size=3)
+                cur_conv
                 )
 
-    self.trainable_weight = True
+    self.trainable_weight = False
     if self.trainable_weight:
         self.choice = nn.Parameter(torch.rand([self.M]))
 
-    # self.out_bn_relu = nn.Sequential(
-            # ME.MinkowskiBatchNorm(planes),
-            # ME.MinkowskiReLU(),
-            # )
+    self.out_bn_relu = nn.Sequential(
+            ME.MinkowskiBatchNorm(planes),
+            ME.MinkowskiReLU(),
+            )
 
     self.downsample = downsample
     if self.downsample is not None:
@@ -947,17 +959,20 @@ class MultiConv(nn.Module):
 
     if self.inplanes != self.planes:
         residual = self.downsample(x)
-        x = self.linear_top(x)
+        # x = self.linear_top(x)
     else:
         residual = x
 
     out = []
     for _ in range(self.M):
         out_ = self.conv[_](x)
-        out_ = out_*self.choice[_]
+        if self.trainable_weight:
+            out_ = out_*self.choice[_]
         out.append(out_.F)
     out = torch.stack(out, dim=-1).sum(-1)
     out = ME.SparseTensor(features=out, coordinate_map_key=x.coordinate_map_key, coordinate_manager=x.coordinate_manager)
+
+    out = self.out_bn_relu(out)
 
     out += residual
     out = get_nonlinearity_fn(self.nonlinearity_type, out)
@@ -987,10 +1002,19 @@ class SingleChannelConv(nn.Module):
     # self.conv = ParameterizedConv(
     # self.conv = conv(
         # inplanes, planes, kernel_size=3, stride=stride, dilation=dilation, conv_type=conv_type, D=D)
-    self.conv = nn.Sequential(
-            MinkoskiConvBNReLU(inplanes, planes, kernel_size=1),
-            ME.MinkowskiChannelwiseConvolution(planes, kernel_size=3, dimension=3),
-            )
+    if inplanes != planes:
+        self.conv = nn.Sequential(
+                MinkoskiConvBNReLU(inplanes, planes, kernel_size=1),
+                ME.MinkowskiConvolution(planes, planes, kernel_size=1, dimension=3),
+                ME.MinkowskiChannelwiseConvolution(planes, kernel_size=3, dimension=3),
+                )
+    else:
+        self.conv = nn.Sequential(
+                MinkoskiConvBNReLU(planes, planes, kernel_size=1),
+                ME.MinkowskiChannelwiseConvolution(planes, kernel_size=3, dimension=3),
+                )
+
+
     self.norm = get_norm(self.NORM_TYPE, planes, D, bn_momentum=bn_momentum)
     self.downsample = downsample
     if self.downsample is not None:

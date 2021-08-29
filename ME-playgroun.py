@@ -83,53 +83,65 @@ x1_p2 = pool_s2(x1)
 '''
 check grad for gen from part of a SparseTensor
 '''
-new_x1 = ME.SparseTensor(
-        features=x1.F[:2,:],
-        coordinates=x1.C[:2,:],
-        coordinate_manager=x1.coordinate_manager,
-        coordinate_map_key=x1.coordinate_map_key,
-        )
-out1 = conv1(new_x1)
-out = out1.F.sum()
-out.backward()
-print(feats.grad)
-import ipdb; ipdb.set_trace()
+# new_x1 = ME.SparseTensor(
+        # features=x1.F[:2,:],
+        # coordinates=x1.C[:2,:],
+        # coordinate_manager=x1.coordinate_manager,
+        # coordinate_map_key=x1.coordinate_map_key,
+        # )
+# out1 = conv1(new_x1)
+# out = out1.F.sum()
+# out.backward()
+# print(feats.grad)
+# import ipdb; ipdb.set_trace()
 
+'''
+check clone 2 convs
+'''
+conv2 = ME.MinkowskiConvolution(1,1,kernel_size=1,dimension=3)
+conv2.kernel = nn.Parameter(conv1.kernel.clone())
+# out1 = conv1(x1)
+out2 = conv2(x2)
+# out1.F.sum().backward()
+out2.F.sum().backward()
+
+print(conv1.kernel.grad, conv2.kernel.grad)
+import ipdb; ipdb.set_trace()
 
 '''
 Test the overwrite weight kernel to achieve substract like
 '''
 
-x = ME.SparseTensor(coordinates=coords, features=feats.reshape([-1,1]))\
+# x = ME.SparseTensor(coordinates=coords, features=feats.reshape([-1,1]))\
 
-conv = ME.MinkowskiConvolution(1,1,kernel_size=1,dimension=3)
-conv.kernel = nn.Parameter(torch.ones_like(conv.kernel)*2)
-# conv.kernel = nn.Parameter(
-        # torch.arange(conv.kernel.shape[0]).reshape(-1,1,1).float()
-        # )
-conv.kernel.requires_grad = False
-y1 = conv(x)
+# conv = ME.MinkowskiConvolution(1,1,kernel_size=1,dimension=3)
+# conv.kernel = nn.Parameter(torch.ones_like(conv.kernel)*2)
+# # conv.kernel = nn.Parameter(
+        # # torch.arange(conv.kernel.shape[0]).reshape(-1,1,1).float()
+        # # )
+# conv.kernel.requires_grad = False
+# y1 = conv(x)
 
-conv.kernel.requires_grad = True
-y2 = conv(y1)
+# conv.kernel.requires_grad = True
+# y2 = conv(y1)
 
-out = y2.F.sum()
-out.backward()
+# out = y2.F.sum()
+# out.backward()
 
-print(conv.kernel.grad)
-print(feats.grad)
+# print(conv.kernel.grad)
+# print(feats.grad)
 
 
 '''
 Test Channel-Wise Conv
 '''
-x = ME.SparseTensor(coordinates=coords, features=feats.reshape([-1,1]).repeat(1,16))
-conv = ME.MinkowskiChannelwiseConvolution(16,kernel_size=1,dimension=3)
-conv_ = ME.MinkowskiConvolution(16,16,kernel_size=1,dimension=3)
-conv.kernel = nn.Parameter(torch.ones_like(conv.kernel)*2)
-y0 = conv(x)
+# x = ME.SparseTensor(coordinates=coords, features=feats.reshape([-1,1]).repeat(1,16))
+# conv = ME.MinkowskiChannelwiseConvolution(16,kernel_size=1,dimension=3)
+# conv_ = ME.MinkowskiConvolution(16,16,kernel_size=1,dimension=3)
+# conv.kernel = nn.Parameter(torch.ones_like(conv.kernel)*2)
+# y0 = conv(x)
 
-print(conv.kernel.shape, conv_.kernel.shape)
+# print(conv.kernel.shape, conv_.kernel.shape)
 
 '''
 Illustration of the coordinate manager in MinkEngine

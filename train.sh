@@ -12,8 +12,8 @@ export MODEL=Res16UNetTestA
 #export MODEL=PointTransformer
 #export MODEL=MinkowskiVoxelTransformer
 
-export OPTIMIZER=SGD
-#export OPTIMIZER=Adam
+#export OPTIMIZER=SGD
+export OPTIMIZER=Adam
 
 #export DATASET=ScannetDataset
 export DATASET=ScannetSparseVoxelizationDataset
@@ -23,14 +23,13 @@ export MAX_ITER=24000
 #export MAX_ITER=48000
 #export POINTS=4096
 #export LR=7.5e-2
-#export LR=3e-3
-export LR=1e-1
+export LR=1e-3
 #export LR=1e-1
 #export MP=True
 
-export VOXEL_SIZE=0.075
+export VOXEL_SIZE=0.1
 
-export WEIGHT_DECAY=0
+export WEIGHT_DECAY=1.e-4
 
 export LOG=$1
 

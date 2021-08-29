@@ -430,11 +430,15 @@ class Res16UNetTestA(Res16UNetTest):
 
 class Res16UNet(Res16UNetBase):
   # BLOCK = [TestConv, TRBlock, TestConv, TRBlock, TestConv, TRBlock, TestConv, TRBlock]
-  BLOCK= [SingleChannelConv]*8
-  # BLOCK= [MultiConv]*8
+  # BLOCK= [SingleChannelConv]*8
+  BLOCK= [MultiConv]*8
 
   LAYERS = (1, 1, 1, 1, 1, 1, 1, 1)
   PLANES = (np.array([32, 64, 128, 256, 256, 128, 96, 96])).astype(int)
+
+class Res34UNet(Res16UNetBase):
+  BLOCK= [SingleConv]*8
+  LAYERS = (2, 3, 4, 6, 2, 2, 2, 2)
 
 
 
