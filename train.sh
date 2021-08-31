@@ -27,7 +27,7 @@ export LR=1e-3
 #export LR=1e-1
 #export MP=True
 
-export VOXEL_SIZE=0.1
+export VOXEL_SIZE=0.075
 
 export WEIGHT_DECAY=1.e-4
 

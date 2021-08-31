@@ -141,6 +141,18 @@ def train(model, data_loader, val_data_loader, config, transform_data_fn=None):
 
                 loss = criterion(soutput.F, target.long())
 
+
+                # ====== other loss regs =====
+                if hasattr(model, 'block1'):
+                    if hasattr(model.block1[0],'vq_loss'):
+                        if model.block1[0].vq_loss is not None:
+                            vq_loss = 0
+                            for n, m in model.named_children():
+                                if 'block' in n:
+                                    vq_loss += m[0].vq_loss # m is the nn.Sequential obj, m[0] is the TRBlock
+                            loss += vq_loss
+
+
                 # Compute and accumulate gradient
                 loss /= config.iter_size
                 batch_loss += loss.item()
