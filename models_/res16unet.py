@@ -31,10 +31,11 @@ class Res16UNetBase(ResNetBase):
   def __init__(self, in_channels, out_channels, config, D=3, **kwargs):
     super(Res16UNetBase, self).__init__(in_channels, out_channels, config, D)
 
-    if not isinstance(self.BLOCK, list): # if single type
-        self.BLOCK - [self.BLOCK]*len(self.PLANES)
-
   def network_initialization(self, in_channels, out_channels, config, D):
+
+    if not isinstance(self.BLOCK, list): # if single type
+        self.BLOCK = [self.BLOCK]*len(self.PLANES)
+
     # Setup net_metadata
     dilations = self.DILATIONS
     bn_momentum = config.bn_momentum
@@ -225,10 +226,10 @@ class Res16UNetBase(ResNetBase):
 
   def forward(self, x, save_anchor=False, iter_=None):
 
-    for n, m in self.named_modules():
-        if 'block' in n:
-            if hasattr(m, "schedule_update"):
-                m.schedule_update(iter_)
+    # for n, m in self.named_modules():
+        # if 'block' in n:
+            # if hasattr(m, "schedule_update"):
+                # m.schedule_update(iter_)
 
     if save_anchor:
         self.anchors = []
@@ -430,7 +431,8 @@ class Res16UNetTestA(Res16UNetTest):
 
 class Res16UNet(Res16UNetBase):
   # BLOCK = [TestConv, TRBlock, TestConv, TRBlock, TestConv, TRBlock, TestConv, TRBlock]
-  BLOCK= [SingleConv]*8
+  # BLOCK= [SingleConv]*8
+  BLOCK= [BasicBlock]*8
   # BLOCK= [MultiConv]*8
 
   LAYERS = (1, 1, 1, 1, 1, 1, 1, 1)

@@ -94,19 +94,54 @@ check grad for gen from part of a SparseTensor
 # out.backward()
 # print(feats.grad)
 # import ipdb; ipdb.set_trace()
+'''
+check the behavior of the channel wise conv
+and the correctness of the neighbor_map
+'''
+
+dim = 1
+x1 = ME.SparseTensor(coordinates=coords, features=feats.reshape([-1,1]).repeat(1,dim))
+debug_channel_conv = ME.MinkowskiChannelwiseConvolution(dim, kernel_size=2, dimension=3)
+debug_conv = ME.MinkowskiConvolution(dim,dim,kernel_size=2, dimension=3)
+debug_channel_conv.kernel = nn.Parameter(torch.ones_like(debug_channel_conv.kernel))
+debug_conv.kernel = nn.Parameter(torch.ones_like(debug_conv.kernel))
+
+neis_d = x1.coordinate_manager.get_kernel_map(
+        x1.coordinate_map_key,
+        x1.coordinate_map_key,
+        kernel_size=2,
+        stride=1,
+        )
+k = 8
+N, dim = x1.F.shape
+out = torch.zeros([N, dim], device=x1.device)
+for k_ in range(k):
+
+    if not k_ in neis_d.keys():
+        continue
+    neis_ = torch.gather(x1.F, dim=0, index=neis_d[k_][0].reshape(-1,1).repeat(1,dim).long())
+    neis = torch.zeros([N, dim], device=x1.device)
+    neis = torch.scatter(neis, dim=0, index=neis_d[k_][1].reshape(-1,1).repeat(1,dim).long(),src=neis_)
+    out += neis
+
+out_ = debug_channel_conv(x1)
+out_conv = debug_conv(x1)
+
+print(out, '\n',out_.F)
+import ipdb; ipdb.set_trace()
 
 '''
 check clone 2 convs
 '''
-conv2 = ME.MinkowskiConvolution(1,1,kernel_size=1,dimension=3)
-conv2.kernel = nn.Parameter(conv1.kernel.clone())
-# out1 = conv1(x1)
-out2 = conv2(x2)
-# out1.F.sum().backward()
-out2.F.sum().backward()
+# conv2 = ME.MinkowskiConvolution(1,1,kernel_size=1,dimension=3)
+# conv2.kernel = nn.Parameter(conv1.kernel.clone())
+# # out1 = conv1(x1)
+# out2 = conv2(x2)
+# # out1.F.sum().backward()
+# out2.F.sum().backward()
 
-print(conv1.kernel.grad, conv2.kernel.grad)
-import ipdb; ipdb.set_trace()
+# print(conv1.kernel.grad, conv2.kernel.grad)
+# import ipdb; ipdb.set_trace()
 
 '''
 Test the overwrite weight kernel to achieve substract like
