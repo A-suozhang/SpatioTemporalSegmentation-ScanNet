@@ -6,9 +6,11 @@
 from .scannet import ScannetSparseVoxelizationDataset, \
     ScannetSparseVoxelization2cmDataset
 from .point_scannet import ScannetDatasetWholeScene, ScannetDataset, ScannetDatasetWholeScene_evaluation
+from .semantic_kitti import SemanticKITTI
 
 DATASETS = [
-    ScannetSparseVoxelizationDataset, ScannetSparseVoxelization2cmDataset, ScannetDatasetWholeScene, ScannetDataset, ScannetDatasetWholeScene_evaluation
+    ScannetSparseVoxelizationDataset, ScannetSparseVoxelization2cmDataset, ScannetDatasetWholeScene, ScannetDataset, ScannetDatasetWholeScene_evaluation,
+    SemanticKITTI
 ]
 
 

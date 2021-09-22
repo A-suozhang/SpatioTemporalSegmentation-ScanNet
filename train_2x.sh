@@ -1,9 +1,9 @@
 export OMP_NUM_THREADS=1
-
+export CUDA_LAUNCH_BLOCKING=1
 #export BATCH_SIZE=16
 #export BATCH_SIZE=6
 #export BATCH_SIZE=8
-export BATCH_SIZE=4
+export BATCH_SIZE=2
 #export MODEL=MinkowskiTransformerNet
 #export MODEL=Res16UNet34C
 #export MODEL=Res16UNet18A
@@ -12,7 +12,8 @@ export BATCH_SIZE=4
 export MODEL=MinkowskiVoxelTransformer
 
 #export DATASET=ScannetDataset
-export DATASET=ScannetSparseVoxelizationDataset
+#export DATASET=ScannetSparseVoxelizationDataset
+export DATASET=SemanticKITTI
 
 #export MAX_ITER=12000
 export MAX_ITER=24000

@@ -7,7 +7,7 @@
 from models.resnet import ResNetBase
 from models.modules.common import ConvType, NormType, conv, conv_tr, get_norm, get_nonlinearity_fn
 from models.modules.resnet_block import BasicBlock, Bottleneck, SingleConv, TestConv, TRBlock, SingleChannelConv, MultiConv
-from models.modules.tr_block import TRBlock 
+from models.modules.tr_block import *
 
 import torch
 import numpy as np
@@ -417,6 +417,8 @@ class Res16UNetTest(Res16UNetBase):
 class Res16UNetTestA(Res16UNetTest):
   # BLOCK = [TestConv, TRBlock, TestConv, TRBlock, TestConv, TRBlock, TestConv, TRBlock]
   BLOCK= [TRBlock]*8
+  # BLOCK= [DiscreteQKTRBlock]*8
+  # BLOCK= [SingleConv]*8
   # BLOCK[0] = SingleConv
   # BLOCK[1] = SingleConv
 
@@ -431,8 +433,8 @@ class Res16UNetTestA(Res16UNetTest):
 
 class Res16UNet(Res16UNetBase):
   # BLOCK = [TestConv, TRBlock, TestConv, TRBlock, TestConv, TRBlock, TestConv, TRBlock]
-  # BLOCK= [SingleConv]*8
-  BLOCK= [BasicBlock]*8
+  BLOCK= [SingleConv]*8
+  # BLOCK= [BasicBlock]*8
   # BLOCK= [MultiConv]*8
 
   LAYERS = (1, 1, 1, 1, 1, 1, 1, 1)

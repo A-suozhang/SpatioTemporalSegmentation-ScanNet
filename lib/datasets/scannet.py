@@ -69,6 +69,7 @@ class ScannetSparseVoxelizationDataset(SparseVoxelizationDataset):
   # Voxelization arguments
   CLIP_BOUND = None
   TEST_CLIP_BOUND = None
+  
   VOXEL_SIZE = 0.05
 
   # Augmentation arguments

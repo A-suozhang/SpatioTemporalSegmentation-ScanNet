@@ -32,6 +32,7 @@ from lib.multitrain import train as train_mp
 from lib.utils import load_state_with_same_shape, get_torch_device, count_parameters
 from lib.dataset import initialize_data_loader, _init_fn
 from lib.datasets import load_dataset
+from lib.datasets.semantic_kitti import SemanticKITTI
 from lib.dataloader import InfSampler
 import lib.transforms as t
 
@@ -125,6 +126,15 @@ def main():
     logging.info('===> Initializing dataloader')
 
     setup_seed(2021)
+
+
+    """
+    ---- Setting up train, val, test dataloaders ----
+    Supported datasets:
+    - ScannetSparseVoxelizationDataset
+    - ScannetDataset
+    - SemanticKITTI
+    """
     if config.is_train:
 
         if config.dataset == 'ScannetSparseVoxelizationDataset':
@@ -189,9 +199,34 @@ def main():
                 num_workers=0,  # for loading big pth file, should use single-thread
                 batch_size=config.val_batch_size,
                 # collate_fn=collate_fn, # input points, should not have collate-fn 
-                worker_init_fn=_init_fn,
+                worker_init_fn=_init_fn
             )
 
+        elif config.dataset == "SemanticKITTI":
+            point_scannet = False
+            dataset = SemanticKITTI(root=config.semantic_kitti_path,
+                                   num_points = None,
+                                   voxel_size=config.voxel_size,
+                                   submit=False)
+            train_data_loader = torch.utils.data.DataLoader(
+                dataset['train'],
+                batch_size=config.batch_size,
+                sampler=InfSampler(dataset['train'], shuffle=True), # shuffle=true, repeat=true
+                num_workers=config.threads,
+                pin_memory=True,
+                collate_fn=t.cfl_collate_fn_factory(config.train_limit_numpoints)
+            )
+
+            val_data_loader = torch.utils.data.DataLoader( # shuffle=false, repeat=false
+                dataset['test'], 
+                batch_size=config.batch_size,
+                num_workers=config.val_threads,
+                pin_memory=True,
+                collate_fn=t.cfl_collate_fn_factory(False) 
+            )
+
+
+        # Setting up num_in_channel and num_labels
         if train_data_loader.dataset.NUM_IN_CHANNEL is not None:
             num_in_channel = train_data_loader.dataset.NUM_IN_CHANNEL
         else:
@@ -204,7 +239,7 @@ def main():
             # data = it.__next__()
             # print(data)
 
-    else:
+    else: # not config.is_train
 
         val_DatasetClass = load_dataset('ScannetDatasetWholeScene_evaluation')
 
@@ -278,6 +313,20 @@ def main():
 
             num_labels = val_data_loader.dataset.NUM_LABELS
             num_in_channel = 3
+        
+        elif config.dataset == "SemanticKITTI":
+            point_scannet = False
+            dataset = SemanticKITTI(root=config.semantic_kitti_path,
+                                   num_points = None,
+                                   voxel_size=config.voxel_size,
+                                   submit=False)
+            val_data_loader = torch.utils.data.DataLoader( # shuffle=false, repeat=false
+                dataset['test'], 
+                batch_size=config.batch_size,
+                num_workers=config.val_threads,
+                pin_memory=True,
+                collate_fn=t.cfl_collate_fn_factory(False) 
+            ) 
 
     logging.info('===> Building model')
 

@@ -25,6 +25,7 @@ from models import load_model
 from models.pct_voxel_utils import separate_batch, voxel2points
 
 
+
 def validate(model, val_data_loader, writer, curr_iter, config, transform_data_fn=None):
     v_loss, v_score, v_mAP, v_mIoU = test(model, val_data_loader, config)
     writer.add_scalar('validation/mIoU', v_mIoU, curr_iter)
@@ -85,7 +86,10 @@ def train(model, data_loader, val_data_loader, config, transform_data_fn=None):
     data_iter = data_loader.__iter__()
     while is_training:
 
-        num_class = 20
+        if config.dataset == "SemanticKITTI":
+            num_class = 19
+        else:
+            num_class = 20
         total_correct_class = torch.zeros(num_class, device=device)
         total_iou_deno_class = torch.zeros(num_class, device=device)
 
@@ -106,6 +110,7 @@ def train(model, data_loader, val_data_loader, config, transform_data_fn=None):
                     assert target.shape[1] == 2
                     aux = target[:,1]
                     target = target[:,0]
+                    import ipdb; ipdb.set_trace()
                 else:
                     aux = None
 
@@ -120,7 +125,6 @@ def train(model, data_loader, val_data_loader, config, transform_data_fn=None):
                 # cat xyz into the rgb feature
                 if config.xyz_input:
                     input = torch.cat([coords_norm, input], dim=1)
-
                 sinput = SparseTensor(input, coords, device=device)
 
                 # d = {}
@@ -131,16 +135,17 @@ def train(model, data_loader, val_data_loader, config, transform_data_fn=None):
 
                 data_time += data_timer.toc(False)
                 # model.initialize_coords(*init_args)
+
+                # with torch.autograd.profiler.profile(enabled=True, use_cuda=True, record_shapes=False, profile_memory=True) as prof0:
+
                 if aux is not None:
                     soutput = model(sinput, aux)
                 else:
                     soutput = model(sinput, iter_= curr_iter / config.max_iter)  # feed in the progress of training for annealing inside the model
-                    # soutput = model(sinput)
+
                 # The output of the network is not sorted
                 target = target.view(-1).long().to(device)
-
                 loss = criterion(soutput.F, target.long())
-
 
                 # ====== other loss regs =====
                 if hasattr(model, 'block1'):
@@ -150,13 +155,15 @@ def train(model, data_loader, val_data_loader, config, transform_data_fn=None):
                             for n, m in model.named_children():
                                 if 'block' in n:
                                     vq_loss += m[0].vq_loss # m is the nn.Sequential obj, m[0] is the TRBlock
+                            logging.info('Cur Loss: {}, Cur vq_loss: {}'.format(loss, vq_loss))
                             loss += vq_loss
-
 
                 # Compute and accumulate gradient
                 loss /= config.iter_size
                 batch_loss += loss.item()
                 loss.backward()
+
+                    # soutput = model(sinput)
 
             # Update number of steps
             optimizer.step()

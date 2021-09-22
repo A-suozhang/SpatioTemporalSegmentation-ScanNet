@@ -1026,7 +1026,7 @@ def pad_zero(tensor : torch.Tensor, mask: torch.Tensor):
     _, k, bxyz = tensor.shape
     result = torch.zeros([B, N, k, 4], dtype=torch.int, device=tensor.device)
     pointer = 0
-    mask_cpu = mask.cpu()
+    # mask_cpu = mask.cpu()
     # DEBUG_ONLY
     for b_idx in range(B):
         nvoxel = mask.sum(-1)[b_idx]
