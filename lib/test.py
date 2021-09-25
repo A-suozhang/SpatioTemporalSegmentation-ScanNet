@@ -176,7 +176,11 @@ def test(model, data_loader, config, transform_data_fn=None, has_gt=True, save_p
             if iteration % config.test_stat_freq == 0 and iteration > 0:
                 reordered_ious = dataset.reorder_result(ious)
                 reordered_ap_class = dataset.reorder_result(ap_class)
-                class_names = dataset.get_classnames()
+                # dirty fix for semnaticcKITTI has no getclassnames
+                if hasattr(dataset, "class_names"):
+                    class_names = dataset.get_classnames()
+                else: # semnantic KITTI
+                    class_names = None
                 print_info(
                         iteration,
                         max_iter_unique,
@@ -205,7 +209,10 @@ def test(model, data_loader, config, transform_data_fn=None, has_gt=True, save_p
 
     reordered_ious = dataset.reorder_result(ious)
     reordered_ap_class = dataset.reorder_result(ap_class)
-    class_names = dataset.get_classnames()
+    if hasattr(dataset, "class_names"):
+        class_names = dataset.get_classnames()
+    else:
+        class_names = None
     print_info(
             iteration,
             max_iter_unique,
