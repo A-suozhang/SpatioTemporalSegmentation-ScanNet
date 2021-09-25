@@ -192,29 +192,27 @@ class ParameterizedConv(nn.Module):
         out = ME.SparseTensor(features=out_, coordinate_map_key=x.coordinate_map_key, coordinate_manager=x.coordinate_manager)
         return out
 
-class TRBlock(PTBlock):
-    # the stride and so on are not actually used, just in coord with the conv interface
-    expansion = 1
-    def __init__(self,
-               inplanes,
-               planes,
-               stride=1,
-               dilation=1,
-               downsample=None,
-               conv_type=ConvType.HYPERCUBE,
-               nonlinearity_type='ReLU',
-               bn_momentum=0.1,
-               D=3):
+# class TRBlock(PTBlock):
+    # # the stride and so on are not actually used, just in coord with the conv interface
+    # expansion = 1
+    # def __init__(self,
+               # inplanes,
+               # planes,
+               # stride=1,
+               # dilation=1,
+               # downsample=None,
+               # conv_type=ConvType.HYPERCUBE,
+               # nonlinearity_type='ReLU',
+               # bn_momentum=0.1,
+               # D=3):
 
-        if not inplanes == planes:
-            pass
+        # if not inplanes == planes:
+            # pass
 
-        super(TRBlock, self).__init__(
-                in_dim = inplanes,
-                hidden_dim = planes,
-                )
-
-
+        # super(TRBlock, self).__init__(
+                # in_dim = inplanes,
+                # hidden_dim = planes,
+                # )
 
 
 def MinkoskiConvBNReLU(inplanes, planes, kernel_size=1):

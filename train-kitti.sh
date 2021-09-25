@@ -9,8 +9,12 @@ export BATCH_SIZE=2
 #export MODEL=Res16UNet18A
 #export MODEL=MixedTransformer
 #export MODEL=PointTransformer
-export MODEL=MinkowskiVoxelTransformer
+#export MODEL=MinkowskiVoxelTransformer
 
+#export MODEL=Res16UNetTestA
+export MODEL=Res16UNet
+
+export OPTIMIZER=Adam
 #export DATASET=ScannetDataset
 #export DATASET=ScannetSparseVoxelizationDataset
 export DATASET=SemanticKITTI
@@ -19,8 +23,11 @@ export DATASET=SemanticKITTI
 export MAX_ITER=24000
 #export POINTS=4096
 #export LR=7.5e-2
-export LR=5e-2
-#export LR=1e-1
+export LR=1e-3
+#export MP=True
+export VOXEL_SIZE=0.075
+export WEIGHT_DECAY=1.e-4
+
 export LOG=$1
 
 #export USE_AUX=True
