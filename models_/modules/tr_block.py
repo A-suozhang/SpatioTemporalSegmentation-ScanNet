@@ -85,10 +85,12 @@ class TRBlock(nn.Module):
         self.inplanes = inplanes
         self.planes = planes
         self.k = 27
+        self.h = 1
 
         # === Single Conv Definition ===
         self.sample = None
         self.type = 'attn'
+        self.with_pose_enc = True
         # self.type = 'debug'
         assert self.type in ['attn','debug']
 
@@ -96,6 +98,8 @@ class TRBlock(nn.Module):
 
             self.vec_dim = planes // 8
             # self.vec_dim = 1
+            if self.with_pose_enc:
+                self.pos_enc = ME.MinkowskiConvolution(3, self.vec_dim, kernel_size=1, dimension=3)
 
             # self.vq = True # use vector quantization 
             # self.vq_loss_commit_beta = 1.
@@ -213,10 +217,20 @@ class TRBlock(nn.Module):
                 if not k_ in neis_d.keys():
                     continue
 
-                neis_v_ = torch.gather(v_.F, dim=0, index=neis_d[k_][0].reshape(-1,1).repeat(1,dim).long())
+                if self.with_pose_enc:
+                    x_c = ME.SparseTensor(features=v_.C[:,1:].float(), coordinate_map_key=v_.coordinate_map_key, coordinate_manager=v_.coordinate_manager)
+                    pos_enc = self.pos_enc(x_c)
+                    pos_enc = self.expand_vec_dim(pos_enc.F)
+                    self.register_buffer("pos_enc_map", pos_enc.mean(-1))
+                    v_f = v_.F + pos_enc
+                else:
+                    v_f = v_.F
+
+                neis_v_ = torch.gather(v_.F, dim=0, index=neis_d[k_][0].reshape(-1,1).expand(-1,dim).long())
                 neis_v = torch.zeros(N,dim, device=q_.F.device)  # DEBUG: not sure if needs decalre every time
-                neis_v = torch.scatter(neis_v, dim=0, index=neis_d[k_][1].reshape(-1,1).repeat(1,dim).long(), src=neis_v_)
+                neis_v = torch.scatter(neis_v, dim=0, index=neis_d[k_][1].reshape(-1,1).expand(-1,dim).long(), src=neis_v_)
                 sparse_mask_cur_k_v = sparse_masks[k_]
+
                 neis_v = neis_v*sparse_mask_cur_k_v.unsqueeze(-1).expand(N, self.planes)   # [N, dim]
                 out_cur_k = neis_v*neis_l[:,:,k_].unsqueeze(-1).expand(-1,-1,self.planes//self.vec_dim).reshape(-1,self.planes) # [N. dims]
 
@@ -283,11 +297,12 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
         '''
 
         self.h = 2 # the num-head, noted that since all heads are parallel, could view as expansion
-        self.M = 2
-        self.qk_type = 'sub'
-        # self.qk_type = 'conv'
+        self.M = 4
+        # self.qk_type = 'sub'
+        self.qk_type = 'conv'
         self.conv_v = False
         self.vec_dim = 1
+        # self.vec_dim = self.planes // 8
         self.temp = 1
         self.top_k_choice = False
         # self.neighbor_type = 'sparse_query'
@@ -297,6 +312,8 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
         self.skip_choice = False # only_used in debug mode, notice that this mode contains unused params, so could not support ddp for now
         self.gradual_split = False
         self.smooth_choice = False
+        self.diverse_reg = False
+        self.diverse_lambda = -(1.e-2)
 
         if self.inplanes != self.planes:
             self.linear_top = MinkoskiConvBNReLU(inplanes, planes, kernel_size=1)
@@ -370,6 +387,16 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
         # self.vq_loss = (diff1 + self.vq_loss_commit_beta*diff2 ) / N # normalize by N points
         # self.vq_loss = self.vq_loss*self.vq_lambda # apply vq_lambda
 
+    def get_diveristy_reg(self):
+        self.diverse_loss = 0.
+        codebook_weight = torch.stack([self.codebook[_][0].kernel for _ in range(self.M)])
+        for m_ in range(self.M):
+            for m_2 in range(self.M):
+                if m_2 < m_:
+                    self.diverse_loss += ((torch.matmul(codebook_weight[m_], codebook_weight[m_2].T) - torch.eye(self.k, device=codebook_weight.device))**2).sum()
+
+        self.diverse_loss = self.diverse_lambda*self.diverse_loss
+
     def schedule_update(self, iter_=None):
         '''
         some schedulable params
@@ -424,6 +451,8 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
         3rd: use attn_map: [N, M] to aggregate M convs for each point
         '''
 
+        self.register_buffer('coord_map', x.C[:100,:])
+
         if self.planes != self.inplanes:
             res = self.downsample(x)
             x = self.linear_top(x)
@@ -432,10 +461,16 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
 
         v_ = self.v(x)
 
+        if self.diverse_reg:
+            self.get_diveristy_reg()
+
         if self.qk_type == 'conv':
+
+
             q_ = self.q(x)
             q_f = self.expand_vec_dim(q_.F)
             q_= ME.SparseTensor(features=q_f, coordinate_map_key=q_.coordinate_map_key, coordinate_manager=q_.coordinate_manager) # [N, dim]
+            N, dim = q_.F.shape
 
             # get dot-product of conv-weight & q_
             choice = []
@@ -444,7 +479,7 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
                 self.codebook[_][0].kernel.requires_grad = False
                 choice_ = self.codebook[_](q_)
                 choice.append(choice_.F.reshape(
-                    [choice_.shape[0], self.vec_dim, self.planes // self.vec_dim]
+                    [choice_.shape[0], self.vec_dim, self.planes*self.h // self.vec_dim]
                         ).sum(-1)
                     )
 
@@ -453,6 +488,8 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
                 choice = F.softmax(choice / self.temp, dim=-1) # [N, vec_dim, M] 
             else:
                 pass
+            attn_map = torch.stack([self.codebook[_][0].kernel.mean(-1) for _ in range(self.M) ], dim=0) # [M. K]
+            self.register_buffer('attn_map', attn_map)
             self.register_buffer('choice_map', choice[:100,:,:])
 
         elif self.qk_type == 'sub':

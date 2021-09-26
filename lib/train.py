@@ -9,8 +9,6 @@ import os.path as osp
 import torch
 from torch import nn
 
-from tensorboardX import SummaryWriter
-
 from lib.test import test, test_points
 from lib.utils import checkpoint, precision_at_one, \
         Timer, AverageMeter, get_prediction, get_torch_device
@@ -28,9 +26,6 @@ from models.pct_voxel_utils import separate_batch, voxel2points
 
 def validate(model, val_data_loader, writer, curr_iter, config, transform_data_fn=None):
     v_loss, v_score, v_mAP, v_mIoU = test(model, val_data_loader, config)
-    writer.add_scalar('validation/mIoU', v_mIoU, curr_iter)
-    writer.add_scalar('validation/loss', v_loss, curr_iter)
-    writer.add_scalar('validation/precision_at_1', v_score, curr_iter)
     return v_mIoU
 
 def train(model, data_loader, val_data_loader, config, transform_data_fn=None):
@@ -40,7 +35,6 @@ def train(model, data_loader, val_data_loader, config, transform_data_fn=None):
     model.train()
 
     # Configuration
-    writer = SummaryWriter(log_dir=config.log_dir)
     data_timer, iter_timer = Timer(), Timer()
     data_time_avg, iter_time_avg = AverageMeter(), AverageMeter()
     losses, scores = AverageMeter(), AverageMeter()
@@ -48,8 +42,6 @@ def train(model, data_loader, val_data_loader, config, transform_data_fn=None):
     optimizer = initialize_optimizer(model.parameters(), config)
     scheduler = initialize_scheduler(optimizer, config)
     criterion = nn.CrossEntropyLoss(ignore_index=config.ignore_label)
-
-    writer = SummaryWriter(log_dir=config.log_dir)
 
     # Train the network
     logging.info('===> Start training')
@@ -149,14 +141,24 @@ def train(model, data_loader, val_data_loader, config, transform_data_fn=None):
 
                 # ====== other loss regs =====
                 if hasattr(model, 'block1'):
+
                     if hasattr(model.block1[0],'vq_loss'):
                         if model.block1[0].vq_loss is not None:
-                            vq_loss = 0
+                            cur_loss = 0
                             for n, m in model.named_children():
                                 if 'block' in n:
-                                    vq_loss += m[0].vq_loss # m is the nn.Sequential obj, m[0] is the TRBlock
-                            logging.info('Cur Loss: {}, Cur vq_loss: {}'.format(loss, vq_loss))
-                            loss += vq_loss
+                                    cur_loss += m[0].vq_loss # m is the nn.Sequential obj, m[0] is the TRBlock
+                            logging.info('Cur Loss: {}, Cur vq_loss: {}'.format(loss, cur_loss))
+                            loss += cur_loss
+
+                    if hasattr(model.block1[0],'diverse_loss'):
+                        if model.block1[0].diverse_loss is not None:
+                            cur_loss = 0
+                            for n, m in model.named_children():
+                                if 'block' in n:
+                                    cur_loss += m[0].diverse_loss # m is the nn.Sequential obj, m[0] is the TRBlock
+                            # logging.info('Cur Loss: {}, Cur diverse _loss: {}'.format(loss, cur_loss))
+                            loss += cur_loss
 
                 # Compute and accumulate gradient
                 loss /= config.iter_size
@@ -210,9 +212,6 @@ def train(model, data_loader, val_data_loader, config, transform_data_fn=None):
                 data_time_avg.reset()
                 iter_time_avg.reset()
                 # Write logs
-                writer.add_scalar('training/loss', losses.avg, curr_iter)
-                writer.add_scalar('training/precision_at_1', scores.avg, curr_iter)
-                writer.add_scalar('training/learning_rate', scheduler.get_lr()[0], curr_iter)
                 losses.reset()
                 scores.reset()
 
@@ -222,7 +221,7 @@ def train(model, data_loader, val_data_loader, config, transform_data_fn=None):
 
             # Validation
             if curr_iter % config.val_freq == 0:
-                val_miou = validate(model, val_data_loader, writer, curr_iter, config, transform_data_fn)
+                val_miou = validate(model, val_data_loader, None, curr_iter, config, transform_data_fn)
                 if val_miou > best_val_miou:
                     best_val_miou = val_miou
                     best_val_iter = curr_iter
@@ -263,7 +262,6 @@ def train_point(model, data_loader, val_data_loader, config, transform_data_fn=N
     model.train()
 
     # Configuration
-    writer = SummaryWriter(log_dir=config.log_dir)
     data_timer, iter_timer = Timer(), Timer()
     data_time_avg, iter_time_avg = AverageMeter(), AverageMeter()
     losses, scores = AverageMeter(), AverageMeter()
@@ -271,8 +269,6 @@ def train_point(model, data_loader, val_data_loader, config, transform_data_fn=N
     optimizer = initialize_optimizer(model.parameters(), config)
     scheduler = initialize_scheduler(optimizer, config)
     criterion = nn.CrossEntropyLoss(ignore_index=-1)
-
-    writer = SummaryWriter(log_dir=config.log_dir)
 
     # Train the network
     logging.info('===> Start training')
@@ -441,9 +437,6 @@ def train_point(model, data_loader, val_data_loader, config, transform_data_fn=N
                 data_time_avg.reset()
                 iter_time_avg.reset()
                 # Write logs
-                writer.add_scalar('training/loss', losses.avg, curr_iter)
-                writer.add_scalar('training/precision_at_1', scores.avg, curr_iter)
-                writer.add_scalar('training/learning_rate', scheduler.get_lr()[0], curr_iter)
                 losses.reset()
                 scores.reset()
 
@@ -454,7 +447,7 @@ def train_point(model, data_loader, val_data_loader, config, transform_data_fn=N
             # Validation:
             # for point-based should use alternate dataloader for eval
             # if curr_iter % config.val_freq == 0:
-                # val_miou = test_points(model, val_data_loader, writer, curr_iter, config, transform_data_fn)
+                # val_miou = test_points(model, val_data_loader, None, curr_iter, config, transform_data_fn)
                 # if val_miou > best_val_miou:
                     # best_val_miou = val_miou
                     # best_val_iter = curr_iter
@@ -540,7 +533,6 @@ def train_distill(model, data_loader, val_data_loader, config, transform_data_fn
     model.train()
 
     # Configuration
-    writer = SummaryWriter(log_dir=config.log_dir)
     data_timer, iter_timer = Timer(), Timer()
     data_time_avg, iter_time_avg = AverageMeter(), AverageMeter()
     losses, scores = AverageMeter(), AverageMeter()
@@ -548,8 +540,6 @@ def train_distill(model, data_loader, val_data_loader, config, transform_data_fn
     optimizer = initialize_optimizer(model.parameters(), config)
     scheduler = initialize_scheduler(optimizer, config)
     criterion = nn.CrossEntropyLoss(ignore_index=config.ignore_label)
-
-    writer = SummaryWriter(log_dir=config.log_dir)
 
     # Train the network
     logging.info('===> Start training')
@@ -735,10 +725,6 @@ def train_distill(model, data_loader, val_data_loader, config, transform_data_fn
                 # Reset timers
                 data_time_avg.reset()
                 iter_time_avg.reset()
-                # Write logs
-                # writer.add_scalar('training/loss', losses.avg, curr_iter)
-                # writer.add_scalar('training/precision_at_1', scores.avg, curr_iter)
-                # writer.add_scalar('training/learning_rate', scheduler.get_lr()[0], curr_iter)
                 losses.reset()
                 scores.reset()
 
@@ -748,7 +734,7 @@ def train_distill(model, data_loader, val_data_loader, config, transform_data_fn
 
             # Validation
             if curr_iter % config.val_freq == 0:
-                val_miou = validate(model, val_data_loader, writer, curr_iter, config, transform_data_fn)
+                val_miou = validate(model, val_data_loader, None, curr_iter, config, transform_data_fn)
                 if val_miou > best_val_miou:
                     best_val_miou = val_miou
                     best_val_iter = curr_iter
