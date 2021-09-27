@@ -11,6 +11,16 @@ from models.model import Model, NetworkType
 from models.modules.common import ConvType, NormType, get_norm, conv, sum_pool
 from models.modules.resnet_block import BasicBlock, Bottleneck, SingleConv
 
+class mySequential(nn.Sequential):
+    def forward(self, inputs, *args):
+        for module in self._modules.values():
+            if len(args) == 1:
+                pass
+            # if type(inputs) == tuple:
+                # inputs = module(*inputs)
+            # else:
+            inputs = module(inputs, *args)
+        return inputs
 
 class ResNetBase(Model):
   BLOCK = None
@@ -141,7 +151,7 @@ class ResNetBase(Model):
               nonlinearity_type=nonlinearity_type,
               D=self.D))
 
-    return nn.Sequential(*layers)
+    return mySequential(*layers)
 
   def forward(self, x):
     x = self.conv1(x)

@@ -58,7 +58,7 @@ def train_worker(gpu, num_devices, NetClass, data_loader, val_data_loader, confi
         print("Use GPU: {} for training".format(gpu))
         rank = gpu
     # addr = np.random.randint(10000,50000)
-    addr = 23459
+    addr = 23460
     dist.init_process_group(
         backend="nccl",
         init_method="tcp://127.0.0.1:{}".format(addr),

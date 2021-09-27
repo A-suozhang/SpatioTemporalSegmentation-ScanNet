@@ -158,7 +158,7 @@ class TRBlock(nn.Module):
 
         return x
 
-    def forward(self, x, iter_=None):
+    def forward(self, x, iter_=None, aux=None):
 
         if self.type == 'attn':
 
@@ -212,6 +212,7 @@ class TRBlock(nn.Module):
             neis_l = F.softmax(neis_l, dim=-1)
 
             out = torch.zeros([N, dim], device=q_.F.device)
+            pose_enc2save = []
             for k_ in range(self.k):
 
                 if not k_ in neis_d.keys():
@@ -221,8 +222,8 @@ class TRBlock(nn.Module):
                     x_c = ME.SparseTensor(features=v_.C[:,1:].float(), coordinate_map_key=v_.coordinate_map_key, coordinate_manager=v_.coordinate_manager)
                     pos_enc = self.pos_enc(x_c)
                     pos_enc = self.expand_vec_dim(pos_enc.F)
-                    self.register_buffer("pos_enc_map", pos_enc.mean(-1))
                     v_f = v_.F + pos_enc
+                    pose_enc2save.append(pos_enc.mean(-1))
                 else:
                     v_f = v_.F
 
@@ -235,6 +236,9 @@ class TRBlock(nn.Module):
                 out_cur_k = neis_v*neis_l[:,:,k_].unsqueeze(-1).expand(-1,-1,self.planes//self.vec_dim).reshape(-1,self.planes) # [N. dims]
 
                 out += out_cur_k
+
+            pose_enc2save = torch.stack(pose_enc2save)
+            self.register_buffer("pos_enc_map", pose_enc2save)
 
             out = ME.SparseTensor(features=out, coordinate_map_key=x.coordinate_map_key, coordinate_manager=x.coordinate_manager)
             out = self.out_bn_relu(out)
@@ -297,7 +301,7 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
         '''
 
         self.h = 2 # the num-head, noted that since all heads are parallel, could view as expansion
-        self.M = 4
+        self.M = 2
         # self.qk_type = 'sub'
         self.qk_type = 'conv'
         self.conv_v = False
@@ -314,6 +318,12 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
         self.smooth_choice = False
         self.diverse_reg = False
         self.diverse_lambda = -(1.e-2)
+        self.with_label_embedding = True
+        self.label_reg_lambda = -(1.e-4)
+
+        if self.with_label_embedding:
+            num_class = 21
+            self.label_embedding = nn.Parameter(torch.rand(num_class, planes))
 
         if self.inplanes != self.planes:
             self.linear_top = MinkoskiConvBNReLU(inplanes, planes, kernel_size=1)
@@ -397,6 +407,18 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
 
         self.diverse_loss = self.diverse_lambda*self.diverse_loss
 
+    def get_label_embedding(self, x, aux):
+        if self.with_label_embedding:
+            if aux is not None:
+                aux = aux.features_at_coordinates(x.C.float())
+                aux_ = torch.gather(self.label_embedding, dim=0, index=(aux+1).long().expand(-1,self.planes)) # to avoid -1
+                self.label_reg = ((x.F.mean(-1))*(aux_.mean(-1))).sum()
+                self.label_reg = self.label_reg*self.label_reg_lambda
+            else:
+                self.label_reg = 0.
+
+
+
     def schedule_update(self, iter_=None):
         '''
         some schedulable params
@@ -440,7 +462,7 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
 
         # self.temp = self.temp0*(0.01)**(iter_)
 
-    def forward(self, x, iter_=None):
+    def forward(self, x, iter_=None, aux=None):
         '''
         TODO
         1st do qk projection: [N, dim, k]
@@ -450,7 +472,6 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
             - (q may be vec_dim instead of dim, broadcast to dims)
         3rd: use attn_map: [N, M] to aggregate M convs for each point
         '''
-
         self.register_buffer('coord_map', x.C[:100,:])
 
         if self.planes != self.inplanes:
@@ -465,7 +486,6 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
             self.get_diveristy_reg()
 
         if self.qk_type == 'conv':
-
 
             q_ = self.q(x)
             q_f = self.expand_vec_dim(q_.F)
@@ -597,6 +617,9 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
         out = ME.SparseTensor(features=out, coordinate_map_key=x.coordinate_map_key, coordinate_manager=x.coordinate_manager)
         out = self.out_bn_relu(out)
         out = out + res
+
+        if self.with_label_embedding:
+            self.get_label_embedding(out, aux)
 
         return out
 

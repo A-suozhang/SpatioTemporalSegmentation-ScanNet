@@ -118,6 +118,7 @@ def train(model, data_loader, val_data_loader, config, transform_data_fn=None):
                 if config.xyz_input:
                     input = torch.cat([coords_norm, input], dim=1)
                 sinput = SparseTensor(input, coords, device=device)
+                starget = SparseTensor(target.unsqueeze(-1).float(), coords, device=device)
 
                 # d = {}
                 # d['coord'] = sinput.C
@@ -129,11 +130,11 @@ def train(model, data_loader, val_data_loader, config, transform_data_fn=None):
                 # model.initialize_coords(*init_args)
 
                 # with torch.autograd.profiler.profile(enabled=True, use_cuda=True, record_shapes=False, profile_memory=True) as prof0:
-
                 if aux is not None:
                     soutput = model(sinput, aux)
                 else:
-                    soutput = model(sinput, iter_= curr_iter / config.max_iter)  # feed in the progress of training for annealing inside the model
+                    # label-aux, feed it in as additional reg
+                    soutput = model(sinput, iter_= curr_iter / config.max_iter, aux=starget)  # feed in the progress of training for annealing inside the model
 
                 # The output of the network is not sorted
                 target = target.view(-1).long().to(device)
@@ -159,6 +160,16 @@ def train(model, data_loader, val_data_loader, config, transform_data_fn=None):
                                     cur_loss += m[0].diverse_loss # m is the nn.Sequential obj, m[0] is the TRBlock
                             # logging.info('Cur Loss: {}, Cur diverse _loss: {}'.format(loss, cur_loss))
                             loss += cur_loss
+
+                    if hasattr(model.block1[0],'label_reg'):
+                        if model.block1[0].label_reg is not None:
+                            cur_loss = 0
+                            for n, m in model.named_children():
+                                if 'block' in n:
+                                    cur_loss += m[0].label_reg # m is the nn.Sequential obj, m[0] is the TRBlock
+                            # logging.info('Cur Loss: {}, Cur diverse _loss: {}'.format(loss, cur_loss))
+                            loss += cur_loss
+
 
                 # Compute and accumulate gradient
                 loss /= config.iter_size

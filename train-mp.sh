@@ -19,8 +19,8 @@ export OPTIMIZER=Adam
 export DATASET=ScannetSparseVoxelizationDataset
 
 #export MAX_ITER=12000
-export MAX_ITER=24000
-#export MAX_ITER=48000
+#export MAX_ITER=24000
+export MAX_ITER=48000
 #export POINTS=4096
 #export LR=7.5e-2
 #export LR=3e-3
