@@ -22,8 +22,6 @@ import numpy as np
 from models import load_model
 from models.pct_voxel_utils import separate_batch, voxel2points
 
-
-
 def validate(model, val_data_loader, writer, curr_iter, config, transform_data_fn=None):
     v_loss, v_score, v_mAP, v_mIoU = test(model, val_data_loader, config)
     return v_mIoU
@@ -158,7 +156,7 @@ def train(model, data_loader, val_data_loader, config, transform_data_fn=None):
                             for n, m in model.named_children():
                                 if 'block' in n:
                                     cur_loss += m[0].diverse_loss # m is the nn.Sequential obj, m[0] is the TRBlock
-                            # logging.info('Cur Loss: {}, Cur diverse _loss: {}'.format(loss, cur_loss))
+                            logging.info('Cur Loss: {}, Cur diverse _loss: {}'.format(loss, cur_loss))
                             loss += cur_loss
 
                     if hasattr(model.block1[0],'label_reg'):

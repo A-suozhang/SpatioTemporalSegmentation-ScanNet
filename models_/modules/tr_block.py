@@ -91,6 +91,8 @@ class TRBlock(nn.Module):
         self.sample = None
         self.type = 'attn'
         self.with_pose_enc = True
+        self.with_diverse_reg = True
+        self.diverse_lambda = 1.
         # self.type = 'debug'
         assert self.type in ['attn','debug']
 
@@ -158,6 +160,12 @@ class TRBlock(nn.Module):
 
         return x
 
+    def get_diversity_reg(self, x):
+        # x: [N, vec_dim, K]
+        x_ = x.mean(0).mean(0) # [K]
+        self.diverse_loss = ((torch.matmul(x_, x_.T) - torch.eye(self.k, device=x.device))**2).sum()
+        self.diverse_loss = self.diverse_lambda*self.diverse_loss
+
     def forward(self, x, iter_=None, aux=None):
 
         if self.type == 'attn':
@@ -210,6 +218,9 @@ class TRBlock(nn.Module):
 
             neis_l = torch.stack(neis_l, dim=-1) # [N, vec_dim, K]
             neis_l = F.softmax(neis_l, dim=-1)
+
+            if self.with_diverse_reg:
+                self.get_diversity_reg(neis_l)
 
             out = torch.zeros([N, dim], device=q_.F.device)
             pose_enc2save = []
@@ -318,7 +329,7 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
         self.smooth_choice = False
         self.diverse_reg = False
         self.diverse_lambda = -(1.e-2)
-        self.with_label_embedding = True
+        self.with_label_embedding = False
         self.label_reg_lambda = -(1.e-4)
 
         if self.with_label_embedding:
@@ -397,7 +408,7 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
         # self.vq_loss = (diff1 + self.vq_loss_commit_beta*diff2 ) / N # normalize by N points
         # self.vq_loss = self.vq_loss*self.vq_lambda # apply vq_lambda
 
-    def get_diveristy_reg(self):
+    def get_diversity_reg(self):
         self.diverse_loss = 0.
         codebook_weight = torch.stack([self.codebook[_][0].kernel for _ in range(self.M)])
         for m_ in range(self.M):
@@ -412,12 +423,10 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
             if aux is not None:
                 aux = aux.features_at_coordinates(x.C.float())
                 aux_ = torch.gather(self.label_embedding, dim=0, index=(aux+1).long().expand(-1,self.planes)) # to avoid -1
-                self.label_reg = ((x.F.mean(-1))*(aux_.mean(-1))).sum()
+                self.label_reg = ((x.F.mean(-1))*(aux_.mean(-1))).mean() / (x.F.abs().mean()*aux_.abs().mean())
                 self.label_reg = self.label_reg*self.label_reg_lambda
             else:
                 self.label_reg = 0.
-
-
 
     def schedule_update(self, iter_=None):
         '''
@@ -483,7 +492,7 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
         v_ = self.v(x)
 
         if self.diverse_reg:
-            self.get_diveristy_reg()
+            self.get_diversity_reg()
 
         if self.qk_type == 'conv':
 

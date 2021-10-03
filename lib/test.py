@@ -108,8 +108,8 @@ def test(model, data_loader, config, transform_data_fn=None, has_gt=True, save_p
             iter_timer.tic()
 
             if config.normalize_color:
-                    input[:, :3] = input[:, :3] / 255. - 0.5
-                    coords_norm = coords[:,1:] / coords[:,1:].max() - 0.5
+                input[:, :3] = input[:, :3] / 255. - 0.5
+                coords_norm = coords[:,1:] / coords[:,1:].max() - 0.5
 
             XYZ_INPUT = config.xyz_input
             # cat xyz into the rgb feature
@@ -132,7 +132,7 @@ def test(model, data_loader, config, transform_data_fn=None, has_gt=True, save_p
             iter_time = iter_timer.toc(False)
 
             if config.save_pred:
-
+                # troublesome processing for splitting each batch's data, and export
                 batch_ids = sinput.C[:,0]
                 splits_at = torch.stack([torch.where(batch_ids == i)[0][-1] for i in torch.unique(batch_ids)]).int()
                 splits_at = splits_at + 1
@@ -151,10 +151,29 @@ def test(model, data_loader, config, transform_data_fn=None, has_gt=True, save_p
                     batch_id += 1
                 assert len_sum == len(pred)
 
+            # Unpack it to original length
+            REVERT_WHOLE_POINTCLOUD = False
+            if REVERT_WHOLE_POINTCLOUD:
+                whole_pred = []
+                whole_target = []
+                for batch_ in range(config.val_batch_size):
+                    batch_mask_ = (soutput.C[:,0] == batch_).cpu().numpy()
+                    whole_pred_ = soutput.F[batch_mask_][inverse_map_list[batch_]]
+                    whole_target_ = target[batch_mask_][inverse_map_list[batch_]]
+                    whole_pred.append(whole_pred_)
+                    whole_target.append(whole_target_)
+                whole_pred = torch.cat(whole_pred, dim=0)
+                whole_target = torch.cat(whole_target, dim=0)
+
+                pred = get_prediction(dataset, whole_pred, whole_target).int()
+                output = whole_pred
+                target = whole_target
+
             if has_gt:
                 target_np = target.numpy()
                 num_sample = target_np.shape[0]
                 target = target.to(device)
+                output = output.to(device)
 
                 cross_ent = criterion(output, target.long())
                 losses.update(float(cross_ent), num_sample)
@@ -163,10 +182,8 @@ def test(model, data_loader, config, transform_data_fn=None, has_gt=True, save_p
                 ious = per_class_iu(hist) * 100
 
                 prob = torch.nn.functional.softmax(output, dim=1)
-                try:
-                    ap = average_precision(prob.cpu().detach().numpy(), target_np)
-                except:
-                    import ipdb; ipdb.set_trace()
+
+                ap = average_precision(prob.cpu().detach().numpy(), target_np)
                 aps = np.vstack((aps, ap))
                 # Due to heavy bias in class, there exists class with no test label at all
                 with warnings.catch_warnings():

@@ -68,6 +68,8 @@ def main():
         json_config = json.load(open(config.test_config, 'r'))
         json_config['is_train'] = False
         json_config['weights'] = config.weights
+        json_config['multiprocess'] = False
+        json_config['log_dir'] = config.log_dir
         config = edict(json_config)
 
         config.val_batch_size = val_bs
@@ -365,7 +367,14 @@ def main():
         logging.info('===> Loading weights: ' + config.weights)
         state = torch.load(config.weights)
         # delete the keys containing the 'attn' since it raises size mismatch
-        d = {k:v for k,v in state['state_dict'].items() if 'map' not in k }
+        d_ = {k:v for k,v in state['state_dict'].items() if '_map' not in k } # debug: sometiems model conmtains 'map_qk' which is not right for naming a module, since 'map' are always buffers
+        d = {}
+        for k in d_.keys():
+            if 'module.' in k:
+                d[k.replace('module.','')] = d_[k]
+            else:
+                d[k] = d_[k]
+        # del d_
 
         if config.weights_for_inner_model:
             model.model.load_state_dict(d)

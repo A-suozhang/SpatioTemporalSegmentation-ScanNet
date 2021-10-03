@@ -416,9 +416,9 @@ class Res16UNetTest(Res16UNetBase):
 
 class Res16UNetTestA(Res16UNetTest):
   # BLOCK = [TestConv, TRBlock, TestConv, TRBlock, TestConv, TRBlock, TestConv, TRBlock]
-  # BLOCK= [TRBlock]*8
+  BLOCK= [TRBlock]*8
   # BLOCK= [DiscreteQKTRBlock]*8
-  BLOCK= [DiscreteAttnTRBlock]*8
+  # BLOCK= [DiscreteAttnTRBlock]*8
   # BLOCK= [SingleConv]*8
 
   LAYERS = (1, 1, 1, 1, 1, 1, 1, 1)
