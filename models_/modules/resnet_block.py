@@ -882,7 +882,7 @@ class SingleConv(nn.Module):
         self.downsample = conv(inplanes, planes, kernel_size=1, stride=stride, dilation=dilation, conv_type=conv_type, D=D)
     self.nonlinearity_type = nonlinearity_type
 
-  def forward(self, x, iter_=None):
+  def forward(self, x, iter_=None, aux=None):
     residual = x
     
     out = self.conv(x)
@@ -1109,7 +1109,7 @@ class BasicBlockBase(nn.Module):
     self.downsample = downsample
     self.nonlinearity_type = nonlinearity_type
 
-  def forward(self, x, iter_=None):
+  def forward(self, x, iter_=None, aux=None):
     residual = x
 
     out = self.conv1(x)

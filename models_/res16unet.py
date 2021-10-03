@@ -243,7 +243,8 @@ class Res16UNetBase(ResNetBase):
     out = get_nonlinearity_fn(self.config.nonlinearity, out)
 
     # mapped to transformer.PTBlock1
-    out_b1p2 = self.block1(out, iter_, aux)
+    # out_b1p2 = self.block1(out, iter_, aux)
+    out_b1p2 = self.block1(out)
     if save_anchor:
         self.anchors.append(out_b1p2)
 
@@ -280,6 +281,7 @@ class Res16UNetBase(ResNetBase):
     out = get_nonlinearity_fn(self.config.nonlinearity, out)
     out = me.cat(out, out_b3p8)
     out = self.block5(out, iter_, aux)
+    # out = self.block5(out)
     # if save_anchor:
       # self.anchors.append(out)
 
@@ -299,7 +301,7 @@ class Res16UNetBase(ResNetBase):
     out = self.bntr6(out)
     out = get_nonlinearity_fn(self.config.nonlinearity, out)
     out = me.cat(out, out_b1p2)
-    out = self.block7(out, iter_, aux)
+    out = self.block7(out)
     if save_anchor:
       self.anchors.append(out)
 
@@ -416,9 +418,9 @@ class Res16UNetTest(Res16UNetBase):
 
 class Res16UNetTestA(Res16UNetTest):
   # BLOCK = [TestConv, TRBlock, TestConv, TRBlock, TestConv, TRBlock, TestConv, TRBlock]
-  BLOCK= [TRBlock]*8
+  # BLOCK= [TRBlock]*8
+  BLOCK= [DiscreteAttnTRBlock]*8
   # BLOCK= [DiscreteQKTRBlock]*8
-  # BLOCK= [DiscreteAttnTRBlock]*8
   # BLOCK= [SingleConv]*8
 
   LAYERS = (1, 1, 1, 1, 1, 1, 1, 1)
@@ -428,7 +430,16 @@ class Res16UNetTestA(Res16UNetTest):
   # PLANES = (16, 16, 32, 32, 32, 32, 24, 24)
   # PLANES = (16, 16, 16, 16, 16, 16, 24, 24)
   # PLANES = (16, 32, 32, 32, 64, 32, 24, 24)
-  # PLANES = (4, 4, 4, 4, 4, 4, 4, 4)
+
+class Res18UNet(Res16UNetTest):
+  # BLOCK= [TRBlock]*8
+  # BLOCK= [DiscreteQKTRBlock]*8
+  # BLOCK= [DiscreteAttnTRBlock]*8
+  BLOCK= [SingleConv]*8
+
+  LAYERS = (2, 2, 2, 2, 2, 2, 2, 2)
+  PLANES = (np.array([32, 64, 128, 256, 256, 128, 96, 96])*1.0).astype(int)
+
 
 class Res16UNet(Res16UNetBase):
   # BLOCK = [TestConv, TRBlock, TestConv, TRBlock, TestConv, TRBlock, TestConv, TRBlock]

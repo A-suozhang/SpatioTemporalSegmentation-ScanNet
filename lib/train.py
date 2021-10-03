@@ -35,7 +35,7 @@ def train(model, data_loader, val_data_loader, config, transform_data_fn=None):
     # Configuration
     data_timer, iter_timer = Timer(), Timer()
     data_time_avg, iter_time_avg = AverageMeter(), AverageMeter()
-    losses, scores = AverageMeter(), AverageMeter()
+    regs, losses, scores = AverageMeter(), AverageMeter(), AverageMeter()
 
     optimizer = initialize_optimizer(model.parameters(), config)
     scheduler = initialize_scheduler(optimizer, config)
@@ -140,10 +140,11 @@ def train(model, data_loader, val_data_loader, config, transform_data_fn=None):
 
                 # ====== other loss regs =====
                 if hasattr(model, 'block1'):
+                    cur_loss = torch.tensor([0.], device=device)
 
                     if hasattr(model.block1[0],'vq_loss'):
                         if model.block1[0].vq_loss is not None:
-                            cur_loss = 0
+                            cur_loss = torch.tensor([0.], device=device)
                             for n, m in model.named_children():
                                 if 'block' in n:
                                     cur_loss += m[0].vq_loss # m is the nn.Sequential obj, m[0] is the TRBlock
@@ -152,7 +153,7 @@ def train(model, data_loader, val_data_loader, config, transform_data_fn=None):
 
                     if hasattr(model.block1[0],'diverse_loss'):
                         if model.block1[0].diverse_loss is not None:
-                            cur_loss = 0
+                            cur_loss = torch.tensor([0.], device=device)
                             for n, m in model.named_children():
                                 if 'block' in n:
                                     cur_loss += m[0].diverse_loss # m is the nn.Sequential obj, m[0] is the TRBlock
@@ -161,13 +162,12 @@ def train(model, data_loader, val_data_loader, config, transform_data_fn=None):
 
                     if hasattr(model.block1[0],'label_reg'):
                         if model.block1[0].label_reg is not None:
-                            cur_loss = 0
+                            cur_loss = torch.tensor([0.], device=device)
                             for n, m in model.named_children():
                                 if 'block' in n:
                                     cur_loss += m[0].label_reg # m is the nn.Sequential obj, m[0] is the TRBlock
                             # logging.info('Cur Loss: {}, Cur diverse _loss: {}'.format(loss, cur_loss))
                             loss += cur_loss
-
 
                 # Compute and accumulate gradient
                 loss /= config.iter_size
@@ -195,6 +195,8 @@ def train(model, data_loader, val_data_loader, config, transform_data_fn=None):
 
             pred = get_prediction(data_loader.dataset, soutput.F, target)
             score = precision_at_one(pred, target, ignore_label=-1)
+
+            regs.update(cur_loss.item(), target.size(0))
             losses.update(batch_loss, target.size(0))
             scores.update(score, target.size(0))
 
@@ -215,6 +217,7 @@ def train(model, data_loader, val_data_loader, config, transform_data_fn=None):
                         len(data_loader) // config.iter_size, losses.avg, lrs)
                 debug_str += "Score {:.3f}\tData time: {:.4f}, Iter time: {:.4f}".format(
                         scores.avg, data_time_avg.avg, iter_time_avg.avg)
+                debug_str += "\nReg Loss {:.3f}".format(regs.avg)
                 # print(debug_str)
                 logging.info(debug_str)
                 # Reset timers

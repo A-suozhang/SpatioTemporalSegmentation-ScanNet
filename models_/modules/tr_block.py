@@ -91,7 +91,7 @@ class TRBlock(nn.Module):
         self.sample = None
         self.type = 'attn'
         self.with_pose_enc = True
-        self.with_diverse_reg = True
+        self.with_diverse_reg = False
         self.diverse_lambda = 1.
         # self.type = 'debug'
         assert self.type in ['attn','debug']
@@ -327,13 +327,18 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
         self.skip_choice = False # only_used in debug mode, notice that this mode contains unused params, so could not support ddp for now
         self.gradual_split = False
         self.smooth_choice = False
+
         self.diverse_reg = False
-        self.diverse_lambda = -(1.e-2)
+        self.diverse_lambda = (1.e-4)
+
+        num_class = 21
         self.with_label_embedding = False
-        self.label_reg_lambda = -(1.e-4)
+        if self.with_label_embedding:
+            self.label_reg_lambda = (5.e-5)
+            self.aux_head = ME.MinkowskiConvolution(self.planes, num_class, kernel_size=1, dimension=3)
+            self.aux_criterion = nn.CrossEntropyLoss(ignore_index=-1)
 
         if self.with_label_embedding:
-            num_class = 21
             self.label_embedding = nn.Parameter(torch.rand(num_class, planes))
 
         if self.inplanes != self.planes:
@@ -410,7 +415,7 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
 
     def get_diversity_reg(self):
         self.diverse_loss = 0.
-        codebook_weight = torch.stack([self.codebook[_][0].kernel for _ in range(self.M)])
+        codebook_weight = torch.stack([torch.sqrt(F.softmax(self.codebook[_][0].kernel, dim=0)) for _ in range(self.M)])   # apply sqrt on the reg term
         for m_ in range(self.M):
             for m_2 in range(self.M):
                 if m_2 < m_:
@@ -420,11 +425,14 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
 
     def get_label_embedding(self, x, aux):
         if self.with_label_embedding:
+            self.label_reg = 0.
             if aux is not None:
                 aux = aux.features_at_coordinates(x.C.float())
-                aux_ = torch.gather(self.label_embedding, dim=0, index=(aux+1).long().expand(-1,self.planes)) # to avoid -1
-                self.label_reg = ((x.F.mean(-1))*(aux_.mean(-1))).mean() / (x.F.abs().mean()*aux_.abs().mean())
-                self.label_reg = self.label_reg*self.label_reg_lambda
+                aux_pred = self.aux_head(x)
+                self.label_reg = self.aux_criterion(aux_pred.F, aux.squeeze(-1).long())
+                # aux_ = torch.gather(self.label_embedding, dim=0, index=(aux+1).long().expand(-1,self.planes)) # to avoid -1
+                # self.label_reg = ((x.F.mean(-1))*(aux_.mean(-1))).sum()
+                # self.label_reg = self.label_reg*self.label_reg_lambda
             else:
                 self.label_reg = 0.
 
@@ -517,7 +525,7 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
                 choice = F.softmax(choice / self.temp, dim=-1) # [N, vec_dim, M] 
             else:
                 pass
-            attn_map = torch.stack([self.codebook[_][0].kernel.mean(-1) for _ in range(self.M) ], dim=0) # [M. K]
+            attn_map = torch.stack([self.codebook[_][0].kernel for _ in range(self.M) ], dim=0) # [M. K]
             self.register_buffer('attn_map', attn_map)
             self.register_buffer('choice_map', choice[:100,:,:])
 

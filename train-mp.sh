@@ -3,14 +3,9 @@ export OMP_NUM_THREADS=1
 #export BATCH_SIZE=16
 #export BATCH_SIZE=6
 export BATCH_SIZE=8
-#export BATCH_SIZE=4
-#export MODEL=MinkowskiTransformerNet
-#export MODEL=Res16UNet34C
-export MODEL=Res16UNetTestA
-#export MODEL=Res16UNet
-#export MODEL=MixedTransformer
-#export MODEL=PointTransformer
-#export MODEL=MinkowskiVoxelTransformer
+
+#export MODEL=Res16UNetTestA
+export MODEL=Res18UNet
 
 #export OPTIMIZER=SGD
 export OPTIMIZER=Adam
