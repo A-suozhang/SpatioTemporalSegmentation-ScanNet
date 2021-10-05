@@ -241,6 +241,8 @@ class cfl_collate_fn_factory:
     for batch_id, _ in enumerate(coords):
       num_points = coords[batch_id].shape[0]
       batch_num_points += num_points
+
+      # DEBUG: stupid dropping batch while exceeding limit-points, fix it with random sample(hard, keep old)
       if self.limit_numpoints and batch_num_points > self.limit_numpoints:
         num_full_points = sum(len(c) for c in coords)
         num_full_batch_size = len(coords)
@@ -256,6 +258,7 @@ class cfl_collate_fn_factory:
 
     # Concatenate all lists
     coords_batch, feats_batch, labels_batch = ME.utils.sparse_collate(coords_batch, feats_batch, labels_batch)
+
     return coords_batch, feats_batch, labels_batch, unique_map, inverse_map
 
 

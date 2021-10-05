@@ -1,5 +1,6 @@
 import os
 import os.path
+import torch
 
 import numpy as np
 
@@ -184,6 +185,15 @@ class SemanticKITTIInternal:
             ignore_label=-1
         )
 
+        # self.split = 'val'
+        # outs = self.__getitem__(0)
+        # d1 = {}
+        # d1['coords'] = outs[0]
+        # d1['feats'] = outs[1]
+        # d1['target'] = outs[2]
+        # torch.save(d1, '/home/zhaotianchen/project/point-transformer/SpatioTemporalSegmentation-ScanNet/plot/kitti-my.pth')
+        # import ipdb; ipdb.set_trace()
+
     def set_angle(self, angle):
         self.angle = angle
 
@@ -230,10 +240,14 @@ class SemanticKITTIInternal:
 
         if 'train' in self.split:
             if self.num_points is not None and len(inds) > self.num_points:
+                print('exceed num-points, subsampling...')
                 inds = np.random.choice(inds, self.num_points, replace=False)
+        new_c = block[:,:3] - (block[:,:3]).min(0)
+        # new_c = np.round(pc_[:,:3]*self.voxel_size)
 
         outs = self.sparse_voxelizer.voxelize(
-            block[:,:3],
+            new_c, # debug, not sure
+            # pc_[:,:3],
             feat_,
             labels_,
             center=None,

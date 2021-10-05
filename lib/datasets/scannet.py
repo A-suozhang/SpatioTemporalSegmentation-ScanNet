@@ -121,6 +121,14 @@ class ScannetSparseVoxelizationDataset(SparseVoxelizationDataset):
         config=config,
         phase=phase)
 
+    # npoint = []
+    # for _ in range(len(self)):
+        # npoint.append(self.__getitem__(_)[0].shape[0])
+        # print(npoint[-1])
+    # npoint = torch.tensor(npoint)
+    # npoint = torch.sort(npoint, descending=True)[0]
+    # print(npoint[:100])
+
   def get_output_id(self, iteration):
     return '_'.join(Path(self.data_paths[iteration]).stem.split('_')[:2])
 

@@ -26,8 +26,8 @@ import torch
 from config import get_config
 import shutil
 
-from lib.test import test, test_points
-from lib.train import train, train_point, train_distill
+from lib.test import test
+from lib.train import train
 from lib.multitrain import train as train_mp
 from lib.utils import load_state_with_same_shape, get_torch_device, count_parameters
 from lib.dataset import initialize_data_loader, _init_fn
@@ -62,7 +62,7 @@ def main():
 
     if config.test_config:
         # When using the test_config, reload and overwrite it, so should keep some configs 
-        val_bs = config.val_batch_size
+        val_bs = config.batch_size
         is_export = config.is_export
 
         json_config = json.load(open(config.test_config, 'r'))
@@ -315,7 +315,7 @@ def main():
 
             num_labels = val_data_loader.dataset.NUM_LABELS
             num_in_channel = 3
-        
+
         elif config.dataset == "SemanticKITTI":
             point_scannet = False
             dataset = SemanticKITTI(root=config.semantic_kitti_path,
@@ -323,12 +323,14 @@ def main():
                                    voxel_size=config.voxel_size,
                                    submit=False)
             val_data_loader = torch.utils.data.DataLoader( # shuffle=false, repeat=false
-                dataset['test'], 
+                dataset['test'],
                 batch_size=config.batch_size,
                 num_workers=config.val_threads,
                 pin_memory=True,
-                collate_fn=t.cfl_collate_fn_factory(False) 
-            ) 
+                collate_fn=t.cfl_collate_fn_factory(False)
+            )
+            num_in_channel = 4
+            num_labels = 19
 
     logging.info('===> Building model')
 

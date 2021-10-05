@@ -126,7 +126,8 @@ def initialize_optimizer(params, config):
         params,
         lr=config.lr,
         momentum=config.sgd_momentum,
-        dampening=config.sgd_dampening,
+        dampening=0.,
+        nesterov=True,
         weight_decay=config.weight_decay)
   if config.optimizer == 'SGDLars':
     return SGDLars(

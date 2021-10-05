@@ -52,7 +52,7 @@ class GetCodebookWeightStraightThroughQK(Function):
 
 
         choice = torch.stack(choice, dim=-1) # [N,M]
-        self.register_buffer('choice_map', choice[:100,:])
+        self.register_buffer('choice_map', choice)
         # self.register_buffer('coord_map', x.C[:100,:])
 
         return discrete_q
@@ -489,7 +489,7 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
             - (q may be vec_dim instead of dim, broadcast to dims)
         3rd: use attn_map: [N, M] to aggregate M convs for each point
         '''
-        self.register_buffer('coord_map', x.C[:100,:])
+        self.register_buffer('coord_map', x.C)
 
         if self.planes != self.inplanes:
             res = self.downsample(x)
@@ -527,7 +527,7 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
                 pass
             attn_map = torch.stack([self.codebook[_][0].kernel for _ in range(self.M) ], dim=0) # [M. K]
             self.register_buffer('attn_map', attn_map)
-            self.register_buffer('choice_map', choice[:100,:,:])
+            self.register_buffer('choice_map', choice)
 
         elif self.qk_type == 'sub':
             q_ = self.q(x)
@@ -574,8 +574,8 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
                 choice = self.smooth_conv(choice).F
 
             choice = choice.unsqueeze(1).expand(-1, dim, -1) # [N, dim, M]
-            self.register_buffer('choice_map', choice[:100,:,:])
-            self.register_buffer('coord_map', x.C[:100,:])
+            self.register_buffer('choice_map')
+            self.register_buffer('coord_map')
 
         if self.skip_choice:
             N, dim = v_.shape

@@ -20,6 +20,8 @@ export BATCH_SIZE=${BATCH_SIZE:-12}
 export WEIGHT_DECAY=${WEIGHT_DECAY:-1E-4}
 export SCHEDULER=${SCHEDULER:-SquaredLR}
 export MAX_ITER=${MAX_ITER:-60000}
+export MAX_POINTS=${MAX_POINTS:-120000}
+#export EPOCHS=${EPOCHS:-200}
 
 export RESUME=${RESUME:-none}
 # export RESUME=${RESUME:-True}
@@ -42,7 +44,7 @@ echo "
     --log_dir $OUTPATH \
     --dataset $DATASET \
     --model $MODEL \
-    --train_limit_numpoints 1200000 \
+	--train_limit_numpoints 1200000 \
     --lr $LR \
     --optimizer $OPTIMIZER \
 	--weight_decay $WEIGHT_DECAY \
@@ -68,7 +70,7 @@ time python -W ignore main.py \
 	--log_dir $OUTPATH \
 	--dataset $DATASET \
 	--model $MODEL \
-	--train_limit_numpoints 1200000 \
+	--train_limit_numpoints $MAX_POINTS \
 	--lr $LR \
 	--optimizer $OPTIMIZER \
 	--weight_decay $WEIGHT_DECAY \

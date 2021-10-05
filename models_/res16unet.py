@@ -51,6 +51,8 @@ class Res16UNetBase(ResNetBase):
     if config.xyz_input is not None:
         if config.xyz_input:
             in_channels = in_channels + 3
+    if config.dataset == 'SemanticKITTI':
+        in_channels = 4
 
     # Output of the first conv concated to conv6
     self.inplanes = self.INIT_DIM
@@ -423,8 +425,8 @@ class Res16UNetTestA(Res16UNetTest):
   # BLOCK= [DiscreteQKTRBlock]*8
   # BLOCK= [SingleConv]*8
 
-  LAYERS = (1, 1, 1, 1, 1, 1, 1, 1)
-  PLANES = (np.array([32, 64, 128, 256, 256, 128, 96, 96])*1.0).astype(int)
+  LAYERS = (np.array([1, 1, 1, 1, 1, 1, 1, 1])*2).astype(int)
+  PLANES = (np.array([32, 64, 128, 256, 256, 128, 96, 96])*0.5).astype(int)
   # PLANES = (8, 16, 32, 64, 64, 32, 24, 24)
   # PLANES = (16, 32, 64, 128, 128, 64, 48, 48)
   # PLANES = (16, 16, 32, 32, 32, 32, 24, 24)
@@ -443,12 +445,13 @@ class Res18UNet(Res16UNetTest):
 
 class Res16UNet(Res16UNetBase):
   # BLOCK = [TestConv, TRBlock, TestConv, TRBlock, TestConv, TRBlock, TestConv, TRBlock]
-  BLOCK= [SingleConv]*8
-  # BLOCK= [BasicBlock]*8
+  # BLOCK= [SingleConv]*8
+  BLOCK= [BasicBlock]*8
   # BLOCK= [MultiConv]*8
 
-  LAYERS = (1, 1, 1, 1, 1, 1, 1, 1)
-  PLANES = (np.array([32, 64, 128, 256, 256, 128, 96, 96])).astype(int)
+  LAYERS = (2, 2, 2, 2, 2, 2, 2, 2)
+  # LAYERS = (1, 1, 1, 1, 1, 1, 1, 1)
+  PLANES = (np.array([32, 64, 128, 256, 256, 128, 96, 96])*0.5).astype(int)
 
 class Res34UNet(Res16UNetBase):
   BLOCK= [SingleConv]*8

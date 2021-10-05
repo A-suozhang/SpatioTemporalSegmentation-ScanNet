@@ -14,18 +14,21 @@ export BATCH_SIZE=2
 #export MODEL=Res16UNetTestA
 export MODEL=Res16UNet
 
-export OPTIMIZER=Adam
+export OPTIMIZER=SGD
 #export DATASET=ScannetDataset
 #export DATASET=ScannetSparseVoxelizationDataset
 export DATASET=SemanticKITTI
 
 #export MAX_ITER=12000
-export MAX_ITER=24000
+export MAX_ITER=30000
+export MAX_POINTS=2400000
 #export POINTS=4096
 #export LR=7.5e-2
-export LR=1e-3
+export LR=2e-2
+
 #export MP=True
-export VOXEL_SIZE=0.075
+
+export VOXEL_SIZE=0.05
 export WEIGHT_DECAY=1.e-4
 
 export LOG=$1
