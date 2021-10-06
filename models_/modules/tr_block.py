@@ -331,6 +331,10 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
         self.diverse_reg = False
         self.diverse_lambda = (1.e-4)
 
+        self.codebook_prior = True
+        self.hard_mask = False
+        # some more configs about the sparse
+
         num_class = 21
         self.with_label_embedding = False
         if self.with_label_embedding:
@@ -369,6 +373,27 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
                     # ME.MinkowskiReLU(),
                     )
                 )
+
+        # specify some of the Priors
+        mask_empty = torch.zeros_like(self.codebook[0][0].kernel)
+        masks = []
+
+        for _ in range(len(self.codebook)):
+            mask_ = mask_empty.clone()
+            mask_[:10,:].fill_(1)
+            masks.append(mask_)
+
+        for _ in range(len(self.codebook)):
+            new_kernel = self.codebook[_][0].kernel
+            if _ == 0:
+                new_kernel = new_kernel[:9,:].fill_(new_kernel.max())
+            elif _ == 1:
+                new_kernel = new_kernel[10:18].fill_(new_kernel.max())
+            self.codebook[_][0].kernel = nn.Parameter(self.codebook[_][0].kernel)
+
+        codebook_weight = torch.stack([m[0].kernel for m in self.codebook])
+        # torch.save(codebook_weight, '/home/zhaotianchen/project/point-transformer/SpatioTemporalSegmentation-ScanNet/plot/codebook_weight.pth')
+
         self.out_bn_relu = nn.Sequential(
                 ME.MinkowskiConvolution(planes*self.h, planes, kernel_size=1, dimension=3),
                 ME.MinkowskiBatchNorm(planes),
