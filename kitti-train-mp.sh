@@ -1,13 +1,11 @@
 export OMP_NUM_THREADS=1
 export CUDA_LAUNCH_BLOCKING=1
-#export BATCH_SIZE=16
-#export BATCH_SIZE=6
-#export BATCH_SIZE=8
 
-export BATCH_SIZE=4
+#export BATCH_SIZE=4
+export BATCH_SIZE=2
 
-#export MODEL=Res16UNetTestA
-export MODEL=Res16UNet
+export MODEL=Res16UNetTestA
+#export MODEL=Res16UNet
 
 export OPTIMIZER=SGD
 #export DATASET=ScannetDataset
@@ -21,8 +19,8 @@ export MAX_POINTS=2400000
 #export POINTS=4096
 #export LR=7.5e-2
 
-export LR=2e-1
-#export LR=1e-1
+#export LR=2e-1
+export LR=1e-1
 
 export MP=True
 
