@@ -178,7 +178,7 @@ def train(model, data_loader, val_data_loader, config, transform_data_fn=None):
             if config.lr_warmup is None:
                 scheduler.step()
             else:
-                if iteration >= config.lr_warmup:
+                if curr_iter >= config.lr_warmup:
                     scheduler.step()
                 for g in optimizer.param_groups:
                     g['lr'] = config.lr*(iteration+1)/config.lr_warmup
