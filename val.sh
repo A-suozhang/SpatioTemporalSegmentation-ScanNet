@@ -1,5 +1,5 @@
 export BATCH_SIZE=2
-export OMP_NUM_THREADS=1
+export OMP_NUM_THREADS=16
 
 #export MODEL=Res16UNet34C
 #export MODEL=Res16UNet18A

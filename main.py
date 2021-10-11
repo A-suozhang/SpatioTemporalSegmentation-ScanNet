@@ -29,6 +29,7 @@ import shutil
 from lib.test import test
 from lib.train import train
 from lib.multitrain import train as train_mp
+from lib.check_data import check_data
 from lib.utils import load_state_with_same_shape, get_torch_device, count_parameters
 from lib.dataset import initialize_data_loader, _init_fn
 from lib.datasets import load_dataset
@@ -128,7 +129,6 @@ def main():
     logging.info('===> Initializing dataloader')
 
     setup_seed(2021)
-
 
     """
     ---- Setting up train, val, test dataloaders ----
@@ -388,7 +388,11 @@ def main():
                 model.load_state_dict(model_dict)
             else:
                 model.load_state_dict(d, strict=True)
-    if config.is_train:
+
+    if config.is_debug:
+        check_data(model, train_data_loader, val_data_loader, config)
+        return None
+    elif config.is_train:
         if hasattr(config, 'distill') and config.distill:
             assert point_scannet is not True # only support whole scene for no
             train_distill(model, train_data_loader, val_data_loader, config)

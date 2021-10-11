@@ -36,6 +36,8 @@ export MP=${MP:-False}
 export OUTPATH=./outputs/$DATASET/$MODEL/$LOG/
 #export VERSION=$(git rev-parse HEAD)
 
+export IS_DEBUG=${IS_DEBUG:-none}
+
 # Save the experiment detail and dir to the common log file
 mkdir -p $OUTPATH
 
@@ -83,6 +85,7 @@ time python -W ignore main.py \
 	--distill $DISTILL \
 	--multiprocess $MP \
 	--voxel_size $VOXEL_SIZE \
+	--is_debug $IS_DEBUG \
 	$3 
 
 #time python -W ignore main.py \

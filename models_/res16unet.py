@@ -245,8 +245,7 @@ class Res16UNetBase(ResNetBase):
     out = get_nonlinearity_fn(self.config.nonlinearity, out)
 
     # mapped to transformer.PTBlock1
-    # out_b1p2 = self.block1(out, iter_, aux)
-    out_b1p2 = self.block1(out)
+    out_b1p2 = self.block1(out, iter_, aux)
     if save_anchor:
         self.anchors.append(out_b1p2)
 
@@ -254,7 +253,7 @@ class Res16UNetBase(ResNetBase):
     out = self.conv2p2s2(out_b1p2)
     out = self.bn2(out)
     out = get_nonlinearity_fn(self.config.nonlinearity, out)
-    out_b2p4 = self.block2(out)
+    out_b2p4 = self.block2(out, iter_, aux)
     if save_anchor:
         self.anchors.append(out_b2p4)
 
@@ -271,7 +270,7 @@ class Res16UNetBase(ResNetBase):
     out = self.conv4p8s2(out_b3p8)
     out = self.bn4(out)
     out = get_nonlinearity_fn(self.config.nonlinearity, out)
-    out = self.block4(out)
+    out = self.block4(out, iter_, aux)
     # if save_anchor:
         # self.anchors.append(out)
 
@@ -293,7 +292,7 @@ class Res16UNetBase(ResNetBase):
     out = self.bntr5(out)
     out = get_nonlinearity_fn(self.config.nonlinearity, out)
     out = me.cat(out, out_b2p4)
-    out = self.block6(out)
+    out = self.block6(out, iter_, aux)
     if save_anchor:
       self.anchors.append(out)
 
@@ -303,7 +302,7 @@ class Res16UNetBase(ResNetBase):
     out = self.bntr6(out)
     out = get_nonlinearity_fn(self.config.nonlinearity, out)
     out = me.cat(out, out_b1p2)
-    out = self.block7(out)
+    out = self.block7(out, iter_, aux)
     if save_anchor:
       self.anchors.append(out)
 
@@ -314,13 +313,12 @@ class Res16UNetBase(ResNetBase):
     out = get_nonlinearity_fn(self.config.nonlinearity, out)
 
     out = me.cat(out, out_p1)
-    out = self.block8(out)
+    out = self.block8(out, iter_, aux)
 
     out = self.final(out)
 
     if torch.isnan(out.F).sum() > 0:
         import ipdb; ipdb.set_trace()
-
 
     if save_anchor:
         return out, self.anchors
@@ -448,13 +446,13 @@ class Res18UNet(Res16UNetTest):
 
 class Res16UNet(Res16UNetBase):
   # BLOCK = [TestConv, TRBlock, TestConv, TRBlock, TestConv, TRBlock, TestConv, TRBlock]
-  # BLOCK= [SingleConv]*8
-  BLOCK= [BasicBlock]*8
+  BLOCK= [SingleConv]*8
+  # BLOCK= [BasicBlock]*8
   # BLOCK= [MultiConv]*8
 
-  LAYERS = (2, 2, 2, 2, 2, 2, 2, 2)
-  # LAYERS = (1, 1, 1, 1, 1, 1, 1, 1)
-  PLANES = (np.array([32, 64, 128, 256, 256, 128, 96, 96])*0.5).astype(int)
+  # LAYERS = (2, 2, 2, 2, 2, 2, 2, 2)
+  LAYERS = (1, 1, 1, 1, 1, 1, 1, 1)
+  PLANES = (np.array([32, 64, 128, 256, 256, 128, 96, 96])).astype(int)
 
 class Res34UNet(Res16UNetBase):
   BLOCK= [SingleConv]*8

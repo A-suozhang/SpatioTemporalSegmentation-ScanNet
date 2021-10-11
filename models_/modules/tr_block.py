@@ -331,9 +331,8 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
         self.diverse_reg = False
         self.diverse_lambda = (1.e-4)
 
-        self.codebook_prior = True
+        self.codebook_prior = False
         self.hard_mask = False
-        # some more configs about the sparse
 
         num_class = 21
         self.with_label_embedding = False
@@ -364,35 +363,66 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
             self.v = MinkoskiConvBNReLU(planes, planes*self.h, kernel_size=1)
 
         self.codebook = nn.ModuleList([])
+
+        # ro0 = torch.tensor(
+                    # [[3,3,-2],
+                    # [1,3,2]]
+                # ).int()
+        kgargs0 = {
+            "kernel_size": 3,
+            "stride": 1,
+            "dilation": 2,
+            "region_type":ME.RegionType.HYPER_CROSS,
+            # "region_type": ME.RegionType.CUSTOM,
+            # "region_offsets": ro0,
+            "dimension": 3,
+            }
+        kgargs1 = {
+            "kernel_size": 3,
+            "stride": 1,
+            "dilation": 1,
+            "region_type":ME.RegionType.HYPER_CROSS,
+            # "region_type": ME.RegionType.CUSTOM,
+            # "region_offsets": ro0,
+            "dimension": 3,
+            }
+        kg0 = ME.KernelGenerator(
+                **kgargs0
+                )
+        kg1 = ME.KernelGenerator(
+                **kgargs1
+                )
+        kgs = [kg0, kg1]
         for i_ in range(self.M):
             self.codebook.append(
                 nn.Sequential(
                     # ME.MinkowskiConvolution(planes, planes, kernel_size=3, dimension=3),
-                    ME.MinkowskiChannelwiseConvolution(planes*self.h, kernel_size=3, dimension=3),
+                    ME.MinkowskiChannelwiseConvolution(planes*self.h, kernel_size=3, dimension=3, kernel_generator=kgs[i_]),
                     # ME.MinkowskiBatchNorm(planes),
                     # ME.MinkowskiReLU(),
                     )
                 )
-
         # specify some of the Priors
-        mask_empty = torch.zeros_like(self.codebook[0][0].kernel)
-        masks = []
+        if self.codebook_prior:
 
-        for _ in range(len(self.codebook)):
-            mask_ = mask_empty.clone()
-            mask_[:10,:].fill_(1)
-            masks.append(mask_)
+            mask_empty = torch.zeros_like(self.codebook[0][0].kernel)
+            masks = []
 
-        for _ in range(len(self.codebook)):
-            new_kernel = self.codebook[_][0].kernel
-            if _ == 0:
-                new_kernel = new_kernel[:9,:].fill_(new_kernel.max())
-            elif _ == 1:
-                new_kernel = new_kernel[10:18].fill_(new_kernel.max())
-            self.codebook[_][0].kernel = nn.Parameter(self.codebook[_][0].kernel)
+            for _ in range(len(self.codebook)):
+                mask_ = mask_empty.clone()
+                mask_[:10,:].fill_(1)
+                masks.append(mask_)
 
-        codebook_weight = torch.stack([m[0].kernel for m in self.codebook])
-        # torch.save(codebook_weight, '/home/zhaotianchen/project/point-transformer/SpatioTemporalSegmentation-ScanNet/plot/codebook_weight.pth')
+            for _ in range(len(self.codebook)):
+                new_kernel = self.codebook[_][0].kernel
+                if _ == 0:
+                    new_kernel = new_kernel[:9,:].fill_(new_kernel.max())
+                elif _ == 1:
+                    new_kernel = new_kernel[10:18].fill_(new_kernel.max())
+                self.codebook[_][0].kernel = nn.Parameter(self.codebook[_][0].kernel)
+
+            codebook_weight = torch.stack([m[0].kernel for m in self.codebook])
+            # torch.save(codebook_weight, '/home/zhaotianchen/project/point-transformer/SpatioTemporalSegmentation-ScanNet/plot/codebook_weight.pth')
 
         self.out_bn_relu = nn.Sequential(
                 ME.MinkowskiConvolution(planes*self.h, planes, kernel_size=1, dimension=3),
@@ -418,7 +448,6 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
             x = x.unsqueeze(2).expand(-1,-1,self.planes*self.h//self.vec_dim, -1).reshape(-1,self.planes*self.h,M)
 
         return x
-
 
     def get_vq_loss(self, neis_l):
         pass
@@ -521,6 +550,44 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
             x = self.linear_top(x)
         else:
             res = x
+
+        # ===== some code for saving the coord-data and calc the sprase "hit-rate"
+        # d = {}
+        # neis_d = x.coordinate_manager.get_kernel_map(x.coordinate_map_key,
+                                                            # x.coordinate_map_key,
+                                                            # kernel_size=3,
+                                                            # stride=1,
+                                                            # )
+        # d['all_c'] = x.C[:,1:]
+        # N = x.C.shape[0]
+        # all_neis = []
+        # for k_ in range(self.k):
+
+            # if not k_ in neis_d.keys():
+                    # continue
+
+            # neis_ = torch.gather(x.C[:,1:].float(), dim=0, index=neis_d[k_][0].reshape(-1,1).repeat(1,3).long())
+            # neis = torch.zeros(N,3, device=x.F.device)
+            # neis.scatter_(dim=0, index=neis_d[k_][1].reshape(-1,1).repeat(1,3).long(), src=neis_)
+            # all_neis.append(neis)
+        # all_neis = torch.stack(all_neis)
+
+        # d['neis'] = all_neis
+
+        # # aux_  = aux.features_at_coordinates(x.C.float())
+        # aux_c =  aux.coordinate_manager.get_coordinates(x.coordinate_map_key).float()
+        # aux_f  = aux.features_at_coordinates(aux_c)
+
+        # d['aux_c'] = aux_c
+        # d['aux_f'] = aux_f
+
+        # d['aux_c'] = aux.C
+        # d['aux_f'] = aux.F
+        # d['label'] = aux_f.squeeze(-1)
+
+        # torch.save(d, '/home/zhaotianchen/project/point-transformer/SpatioTemporalSegmentation-ScanNet/plot/scannet/sparse_extent_layer0.pth')
+
+        # =====================================================================================================================
 
         v_ = self.v(x)
 

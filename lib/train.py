@@ -118,10 +118,16 @@ def train(model, data_loader, val_data_loader, config, transform_data_fn=None):
                 if config.xyz_input:
                     input = torch.cat([coords_norm, input], dim=1)
                 sinput = SparseTensor(input, coords, device=device)
-                starget = SparseTensor(target.unsqueeze(-1).float(), coords, device=device)
+                starget = SparseTensor(target.unsqueeze(-1).float(), coordinate_map_key=sinput.coordinate_map_key, coordinate_manager=sinput.coordinate_manager, device=device) # must share the same coord-manager to align for sinput
 
                 data_time += data_timer.toc(False)
                 # model.initialize_coords(*init_args)
+
+                # d = {}
+                # d['c'] = sinput.C
+                # d['l'] = starget.F
+                # torch.save('./plot/test-label.pth')
+                # import ipdb; ipdb.set_trace()
 
                 # with torch.autograd.profiler.profile(enabled=True, use_cuda=True, record_shapes=False, profile_memory=True) as prof0:
                 if aux is not None:

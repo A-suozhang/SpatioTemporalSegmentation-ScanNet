@@ -124,6 +124,7 @@ data_arg.add_argument(
 train_arg = add_argument_group('Training')
 train_arg.add_argument('--is_train', type=str2bool, default=True)
 train_arg.add_argument('--is_export', type=str2bool, default=False)
+train_arg.add_argument('--is_debug', type=str2bool, default=False)
 train_arg.add_argument('--multiprocess', type=str2bool, default=False)  # DEBUG: use the multiprocess training
 # train_arg.add_argument('--stat_freq', type=int, default=50, help='print frequency')
 train_arg.add_argument('--stat_freq', type=int, default=50, help='print frequency')

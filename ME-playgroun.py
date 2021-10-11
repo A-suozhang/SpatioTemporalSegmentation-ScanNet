@@ -55,7 +55,9 @@ N_voxel = 3
 
 coords = torch.tensor([[0, 2., 4., 2.],
                        [0, 1., 3., 1.],
-                       [0, 0., 3., 1.]
+                       # [0, 0., 3., 1.]
+                       [0, 4., 6., 3.]
+                       # [0, 1., 5., 1.]
                        ])
 
 conv1 = ME.MinkowskiConvolution(1,1,kernel_size=1,dimension=3)
@@ -79,6 +81,66 @@ x2 = ME.SparseTensor(coordinates=coords, features=feats2.reshape([-1,1]))
 
 x1_s2 = conv_s2(x1)
 x1_p2 = pool_s2(x1)
+
+'''
+test the kernel generator
+'''
+ro0 = torch.tensor(
+			[[3,3,-2],
+            [1,3,2]]
+).int()
+
+kgargs = {
+        "kernel_size": 2,
+        "stride": 1,
+        "dilation": 2,
+        # "region_type":ME.RegionType.HYPER_CROSS,
+        "region_type": ME.RegionType.CUSTOM,
+        "region_offsets": ro0,
+        "dimension": 3,
+        }
+
+print(ro0)
+
+# import ipdb; ipdb.set_trace()
+
+kg0 = ME.KernelGenerator(
+		# **kgargs
+        kernel_size=2,
+        stride=1,
+        dilation=2,
+        region_type=ME.RegionType.CUSTOM,
+        region_offsets=ro0,
+        dimension=3
+        )
+
+conv = ME.MinkowskiChannelwiseConvolution(
+        in_channels=1,
+        kernel_size=2,
+        stride=1,
+        dilation=1,
+        bias=False,
+        kernel_generator=kg0,
+        dimension=3
+        )
+
+print(conv)
+
+# import ipdb; ipdb.set_trace()
+
+cm0 = x1.coordinate_manager
+cmk0 = x1.coordinate_map_key
+kmap0 = cm0.get_kernel_map(
+        cmk0,
+        cmk0,
+        **kgargs
+        )
+print(kmap0)
+
+# kmap's keys are how many kernel-sizes has neighbors
+
+import ipdb; ipdb.set_trace()
+
 
 '''
 check grad for gen from part of a SparseTensor
