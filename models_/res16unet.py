@@ -227,12 +227,10 @@ class Res16UNetBase(ResNetBase):
     self.final = conv(self.PLANES[7], out_channels, kernel_size=1, stride=1, bias=True, D=D)
 
   def forward(self, x, save_anchor=False, iter_=None, aux=None):
-
     # for n, m in self.named_modules():
         # if 'block' in n:
             # if hasattr(m, "schedule_update"):
                 # m.schedule_update(iter_)
-
     if save_anchor:
         self.anchors = []
     # mapped to transformer.stem1
@@ -423,6 +421,8 @@ class Res16UNetTestA(Res16UNetTest):
   # BLOCK = [TestConv, TRBlock, TestConv, TRBlock, TestConv, TRBlock, TestConv, TRBlock]
   # BLOCK= [TRBlock]*8
   BLOCK= [DiscreteAttnTRBlock]*8
+  # BLOCK= [MultiHeadDiscreteAttnTRBlock]*8
+  BLOCK[-1]= BasicBlock
   # BLOCK= [DiscreteQKTRBlock]*8
   # BLOCK= [SingleConv]*8
 

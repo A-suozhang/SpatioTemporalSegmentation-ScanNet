@@ -54,12 +54,12 @@ kept_labels = [
 
 class SemanticKITTI(dict):
 
-    def __init__(self, root, voxel_size, num_points, **kwargs):
-        
+    def __init__(self, root, voxel_size, num_points,**kwargs):
+
         submit_to_server = kwargs.get('submit', False)
         sample_stride = kwargs.get('sample_stride', 1)
         google_mode = kwargs.get('google_mode', False)
-        
+
         if submit_to_server:
             super().__init__({
                 'train':
@@ -83,7 +83,7 @@ class SemanticKITTI(dict):
                                           voxel_size,
                                           split='train',
                                           num_points=None,
-                                          sample_stride=1,
+                                          sample_stride=sample_stride,
                                           google_mode=google_mode),
                 'test':
                     SemanticKITTIInternal(root,
@@ -91,7 +91,7 @@ class SemanticKITTI(dict):
                                           split='val',
                                           num_points=None,
                                           sample_stride=sample_stride
-                    ) 
+                    )
             })
 
 
@@ -132,7 +132,6 @@ class SemanticKITTIInternal:
             self.seqs = [
                 '11', '12', '13', '14', '15', '16', '17', '18', '19', '20', '21'
             ]
-
         self.files = []
         for seq in self.seqs:
             seq_files = sorted(
