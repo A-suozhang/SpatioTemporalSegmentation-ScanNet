@@ -246,7 +246,8 @@ class cfl_collate_fn_factory:
       if self.limit_numpoints and batch_num_points > self.limit_numpoints:
         num_full_points = sum(len(c) for c in coords)
         num_full_batch_size = len(coords)
-        logging.warning(
+        # logging.warning(
+        print(   # show in terminal but dont write into log
             f'\t\tCannot fit {num_full_points} points into {self.limit_numpoints} points '
             f'limit. Truncating batch size at {batch_id} out of {num_full_batch_size} with {batch_num_points - num_points}.'
         )

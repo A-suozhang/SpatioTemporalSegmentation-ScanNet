@@ -17,6 +17,7 @@ export OPTIMIZER=${OPTIMIZER:-SGD}
 #export LR=${LR:-1e-3}
 export LR=${LR:-1e-2}
 export BATCH_SIZE=${BATCH_SIZE:-12}
+export ITER_SIZE=${ITER_SIZE:-1}
 export WEIGHT_DECAY=${WEIGHT_DECAY:-1E-4}
 export SCHEDULER=${SCHEDULER:-SquaredLR}
 export MAX_ITER=${MAX_ITER:-60000}
@@ -51,6 +52,7 @@ echo "
     --optimizer $OPTIMIZER \
 	--weight_decay $WEIGHT_DECAY \
     --batch_size $BATCH_SIZE \
+    --iter_size $ITER_SIZE \
     --scheduler $SCHEDULER \
     --max_iter $MAX_ITER \
 	--voxel_size $VOXEL_SIZE
@@ -77,6 +79,7 @@ time python -W ignore main.py \
 	--optimizer $OPTIMIZER \
 	--weight_decay $WEIGHT_DECAY \
 	--batch_size $BATCH_SIZE \
+	--iter_size $ITER_SIZE \
 	--scheduler $SCHEDULER \
 	--max_iter $MAX_ITER \
 	--num_points $POINTS \

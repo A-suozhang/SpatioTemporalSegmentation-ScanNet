@@ -92,14 +92,16 @@ class TRBlock(nn.Module):
         self.type = 'attn'
         self.with_pose_enc = True
         self.with_diverse_reg = False
-        self.diverse_lambda = 1.
         # self.type = 'debug'
+        if self.with_diverse_reg:
+            self.diverse_lambda = 1.
+
         assert self.type in ['attn','debug']
 
         if self.type == 'attn':
 
-            self.vec_dim = planes // 8
-            # self.vec_dim = 1
+            # self.vec_dim = planes // 8
+            self.vec_dim = 1
             if self.with_pose_enc:
                 self.pos_enc = ME.MinkowskiConvolution(3, self.vec_dim, kernel_size=1, dimension=3)
 
@@ -116,7 +118,7 @@ class TRBlock(nn.Module):
                     # ) / 10 # / 10  to make the data around 1e-2, which is important for training!
                 # )
 
-            self.debug_channel_conv = ME.MinkowskiChannelwiseConvolution(self.planes, kernel_size=3, dimension=3)
+            # self.debug_channel_conv = ME.MinkowskiChannelwiseConvolution(self.planes, kernel_size=3, dimension=3)
             if self.inplanes != self.planes:
                 self.linear_top = MinkoskiConvBNReLU(inplanes, planes, kernel_size=1)
                 self.downsample = ME.MinkowskiConvolution(inplanes, planes, kernel_size=1, dimension=3)
@@ -223,7 +225,8 @@ class TRBlock(nn.Module):
                 self.get_diversity_reg(neis_l)
 
             out = torch.zeros([N, dim], device=q_.F.device)
-            pose_enc2save = []
+            if self.with_pose_enc:
+                pose_enc2save = []
             for k_ in range(self.k):
 
                 if not k_ in neis_d.keys():
@@ -238,7 +241,7 @@ class TRBlock(nn.Module):
                 else:
                     v_f = v_.F
 
-                neis_v_ = torch.gather(v_.F, dim=0, index=neis_d[k_][0].reshape(-1,1).expand(-1,dim).long())
+                neis_v_ = torch.gather(v_f, dim=0, index=neis_d[k_][0].reshape(-1,1).expand(-1,dim).long())
                 neis_v = torch.zeros(N,dim, device=q_.F.device)  # DEBUG: not sure if needs decalre every time
                 neis_v = torch.scatter(neis_v, dim=0, index=neis_d[k_][1].reshape(-1,1).expand(-1,dim).long(), src=neis_v_)
                 sparse_mask_cur_k_v = sparse_masks[k_]
@@ -248,8 +251,9 @@ class TRBlock(nn.Module):
 
                 out += out_cur_k
 
-            pose_enc2save = torch.stack(pose_enc2save)
-            self.register_buffer("pos_enc_map", pose_enc2save)
+            if self.with_pose_enc:
+                pose_enc2save = torch.stack(pose_enc2save)
+                self.register_buffer("pos_enc_map", pose_enc2save)
 
             out = ME.SparseTensor(features=out, coordinate_map_key=x.coordinate_map_key, coordinate_manager=x.coordinate_manager)
             out = self.out_bn_relu(out)
@@ -316,8 +320,8 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
         # self.qk_type = 'sub'
         self.qk_type = 'conv'
         self.conv_v = False
-        self.vec_dim = 1
-        # self.vec_dim = self.planes // 8
+        # self.vec_dim = 1
+        self.vec_dim = self.planes // 8
         self.temp = 1
         self.top_k_choice = False
         # self.neighbor_type = 'sparse_query'
@@ -333,6 +337,8 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
 
         self.codebook_prior = False
         self.hard_mask = False
+
+        self.sparse_pattern_reg = True
 
         num_class = 21
         self.with_label_embedding = False
@@ -358,50 +364,69 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
             raise NotImplementedError
 
         if self.conv_v == True:
-            self.v = MinkoskiConvBNReLU(planes, planes*self.h, kernel_size=3)
+            self.v = MinkoskiConvBNReLU(planes, planesself.h, kernel_size=3)
         else:
             self.v = MinkoskiConvBNReLU(planes, planes*self.h, kernel_size=1)
 
         self.codebook = nn.ModuleList([])
 
-        # ro0 = torch.tensor(
-                    # [[3,3,-2],
-                    # [1,3,2]]
-                # ).int()
-        kgargs0 = {
-            "kernel_size": 3,
-            "stride": 1,
-            "dilation": 2,
-            "region_type":ME.RegionType.HYPER_CROSS,
-            # "region_type": ME.RegionType.CUSTOM,
-            # "region_offsets": ro0,
-            "dimension": 3,
-            }
-        kgargs1 = {
-            "kernel_size": 3,
-            "stride": 1,
-            "dilation": 1,
-            "region_type":ME.RegionType.HYPER_CROSS,
-            # "region_type": ME.RegionType.CUSTOM,
-            # "region_offsets": ro0,
-            "dimension": 3,
-            }
-        kg0 = ME.KernelGenerator(
-                **kgargs0
-                )
-        kg1 = ME.KernelGenerator(
-                **kgargs1
-                )
-        kgs = [kg0, kg1]
-        for i_ in range(self.M):
-            self.codebook.append(
-                nn.Sequential(
-                    # ME.MinkowskiConvolution(planes, planes, kernel_size=3, dimension=3),
-                    ME.MinkowskiChannelwiseConvolution(planes*self.h, kernel_size=3, dimension=3, kernel_generator=kgs[i_]),
-                    # ME.MinkowskiBatchNorm(planes),
-                    # ME.MinkowskiReLU(),
+        self.CUSTOM_KERNEL = True
+        if self.CUSTOM_KERNEL:
+            kgargs0 = {
+                "kernel_size": 3,
+                "stride": 1,
+                "dilation": 2,
+                "region_type":ME.RegionType.HYPER_CROSS,
+                # "region_type": ME.RegionType.CUSTOM,
+                # "region_offsets": ro0,
+                "dimension": 3,
+                }
+            kgargs1 = {
+                "kernel_size": 3,
+                "stride": 1,
+                "dilation": 1,
+                "region_type":ME.RegionType.HYPER_CUBE,
+                # "region_type": ME.RegionType.CUSTOM,
+                # "region_offsets": ro0,
+                "dimension": 3,
+                }
+            self.kgargs = [kgargs0, kgargs1]
+            kg0 = ME.KernelGenerator(
+                    **kgargs0
                     )
-                )
+            kg1 = ME.KernelGenerator(
+                    **kgargs1
+                    )
+            kgs = [kg0, kg1]
+            for i_ in range(self.M):
+                self.codebook.append(
+                    nn.Sequential(
+                        # ME.MinkowskiConvolution(planes, planes, kernel_size=3, dimension=3),
+                        ME.MinkowskiChannelwiseConvolution(planes*self.h, kernel_size=3, dimension=3, kernel_generator=kgs[i_]),
+                        # ME.MinkowskiBatchNorm(planes),
+                        # ME.MinkowskiReLU(),
+                        )
+                    )
+        else:
+            kgargs0 = {
+                "kernel_size": 3,
+                "stride": 1,
+                "dilation": 1,
+                "region_type":ME.RegionType.HYPER_CUBE,
+                # "region_type": ME.RegionType.CUSTOM,
+                # "region_offsets": ro0,
+                "dimension": 3,
+                }
+            self.kgargs = [kgargs0]*self.M
+            for i_ in range(self.M):
+                self.codebook.append(
+                    nn.Sequential(
+                        # ME.MinkowskiConvolution(planes, planes, kernel_size=3, dimension=3),
+                        ME.MinkowskiChannelwiseConvolution(planes*self.h, kernel_size=3, dimension=3),
+                        # ME.MinkowskiBatchNorm(planes),
+                        # ME.MinkowskiReLU(),
+                        )
+                    )
         # specify some of the Priors
         if self.codebook_prior:
 
@@ -448,6 +473,45 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
             x = x.unsqueeze(2).expand(-1,-1,self.planes*self.h//self.vec_dim, -1).reshape(-1,self.planes*self.h,M)
 
         return x
+
+    def get_sparse_pattern(self, x):
+
+        # PROBLEM 1: how to support more flexible density estimation
+        #    - currently only support matching kenrel & its neighbor
+        #    - the very sparse scenarios are hard to distinguish(3x3 kernel is too small, all have 0 neis)
+        #    - memory bottleneck needs benchmarking, are neis_d itself very mem-consuming?
+
+        sparse_patterns= []  # [M]
+        for m_ in range(self.M):
+            kgargs = self.kgargs[m_]
+            if 'dimension' in kgargs.keys():
+                del kgargs['dimension']
+            neis_d = x.coordinate_manager.get_kernel_map(x.coordinate_map_key,
+                                                                x.coordinate_map_key,
+                                                                **kgargs
+                                                                )
+            N = x.C.shape[0]
+            # its easy to get how many matched elements of cur-point & kernel
+            # but the kernel shape is hard to be flexible, like i need to index the lower-right part
+            sparse_pattern_ = torch.zeros([N], device=x.device)
+            cur_k = len(neis_d.keys())
+            for k_ in range(cur_k):
+
+                if not k_ in neis_d.keys():
+                        continue
+                sparse_pattern_[neis_d[k_][0].long()] +=1
+            sparse_pattern_ = sparse_pattern_ / cur_k
+            sparse_patterns.append(sparse_pattern_)
+        sparse_patterns = torch.stack(sparse_patterns, dim=-1)
+
+        self.register_buffer("sparse_patterns",sparse_patterns)
+
+        # Reg Type1:  encourage the kernel to lean to map with more matching neighbors
+        temp_ = 0.1
+        eps = 1.e-3
+        self.sparse_pattern = F.softmax((sparse_patterns+eps)/temp_, dim=-1)  # [N. M]
+
+        return sparse_patterns
 
     def get_vq_loss(self, neis_l):
         pass
@@ -545,6 +609,9 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
         '''
         self.register_buffer('coord_map', x.C)
 
+        if self.sparse_pattern_reg:
+            self.get_sparse_pattern(x)
+
         if self.planes != self.inplanes:
             res = self.downsample(x)
             x = self.linear_top(x)
@@ -613,15 +680,21 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
                     )
 
             choice = torch.stack(choice, dim=-1)
+
+            if self.sparse_pattern_reg:
+                choice = choice*self.sparse_patterns.unsqueeze(1)
+
             if self.M > 1: # if M==1, skip softmax since there is only 1 value
                 choice = F.softmax(choice / self.temp, dim=-1) # [N, vec_dim, M] 
             else:
                 pass
-            attn_map = torch.stack([self.codebook[_][0].kernel for _ in range(self.M) ], dim=0) # [M. K]
+            # attn_map = torch.stack([self.codebook[_][0].kernel for _ in range(self.M) ], dim=0) # [M. K], in some case(CUSTOM_KERNEL)
+            attn_map = torch.cat([self.codebook[_][0].kernel for _ in range(self.M)],dim=0) # [M. K]
             self.register_buffer('attn_map', attn_map)
             self.register_buffer('choice_map', choice)
 
         elif self.qk_type == 'sub':
+            # DEBUG: currently should not used
             q_ = self.q(x)
             q_f = q_.F
 
@@ -713,14 +786,15 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
                         pass
             out = out.sum(-1)
         else:
-            # apply the attn_weight aggregation with the channelwiseConvolution
-            out = []
+            # normal-case: apply the attn_weight aggregation with the channelwiseConvolution
+            out = torch.zeros([N, dim], device=v_.device)
             for _ in range(self.M):
                 self.codebook[_][0].kernel.requires_grad = True
                 out_ = self.codebook[_](v_)
-                out.append(out_.F)
-            out = torch.stack(out, dim=-1)
-            out = (out*self.expand_vec_dim(choice)).sum(-1)
+                out += out_.F*self.expand_vec_dim(choice[:,:,_])
+                # out.append(out_.F)
+            # out = torch.stack(out, dim=-1)
+            # out = (out*self.expand_vec_dim(choice)).sum(-1)
             out = out.reshape([N, self.planes*self.h])
 
         out = ME.SparseTensor(features=out, coordinate_map_key=x.coordinate_map_key, coordinate_manager=x.coordinate_manager)
@@ -731,6 +805,43 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
             self.get_label_embedding(out, aux)
 
         return out
+
+
+class MultiHeadDiscreteAttnTRBlock(nn.Module):
+    expansion=1
+    NORM_TYPE = NormType.BATCH_NORM
+    def __init__(self,
+                   inplanes,
+                   planes,
+                   stride=1,
+                   dilation=1,
+                   downsample=None,
+                   conv_type=ConvType.HYPERCUBE,
+                   nonlinearity_type='ReLU',
+                   bn_momentum=0.1,
+                   D=3,
+                   ):
+        super(MultiHeadDiscreteAttnTRBlock, self).__init__()
+
+        self.h = 4
+        self.blocks = nn.ModuleList([])
+        for _ in range(self.h):
+            self.blocks.append(
+                DiscreteAttnTRBlock(
+                    inplanes,
+                    planes,
+                    )
+                )
+        self.final_mapping = MinkoskiConvBNReLU(planes*self.h, planes, kernel_size=1)
+
+    def forward(self, x, iter_=None, aux=None):
+        outs = []
+        for _ in range(self.h):
+            outs.append(self.blocks[_](x).F)
+        outs = torch.cat(outs, dim=-1)
+        outs = ME.SparseTensor(features=outs, coordinate_map_key=x.coordinate_map_key, coordinate_manager=x.coordinate_manager)
+        outs = self.final_mapping(outs)
+        return outs
 
 class DiscreteQKTRBlock(TRBlock):
 
