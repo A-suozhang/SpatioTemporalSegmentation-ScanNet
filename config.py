@@ -88,6 +88,7 @@ data_arg.add_argument('--batch_size', type=int, default=16)
 data_arg.add_argument('--val_batch_size', type=int, default=8)
 data_arg.add_argument('--test_batch_size', type=int, default=1)
 data_arg.add_argument('--cache_data', type=str2bool, default=False)
+data_arg.add_argument('--sample_stride', type=int, default=10)
 data_arg.add_argument(
     '--threads', type=int, default=0, help='num threads for train/test dataloader')
 data_arg.add_argument('--val_threads', type=int, default=0, help='num threads for val dataloader')

@@ -4,6 +4,7 @@ export CUDA_LAUNCH_BLOCKING=1
 #export BATCH_SIZE=6
 #export BATCH_SIZE=8
 export BATCH_SIZE=4
+export ITER_SIZE=1
 #export MODEL=MinkowskiTransformerNet
 #export MODEL=Res16UNet34C
 #export MODEL=Res16UNet18A

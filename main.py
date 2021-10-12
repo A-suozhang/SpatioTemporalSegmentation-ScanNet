@@ -209,6 +209,7 @@ def main():
             dataset = SemanticKITTI(root=config.semantic_kitti_path,
                                    num_points = None,
                                    voxel_size=config.voxel_size,
+                                   sample_stride=config.sample_stride,
                                    submit=False)
             train_data_loader = torch.utils.data.DataLoader(
                 dataset['train'],

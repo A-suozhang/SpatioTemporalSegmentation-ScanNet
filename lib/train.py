@@ -22,6 +22,11 @@ import numpy as np
 from models import load_model
 from models.pct_voxel_utils import separate_batch, voxel2points
 
+# Profiler
+from lib.profile import CUDAMemoryProfiler
+import sys
+import threading
+
 def validate(model, val_data_loader, writer, curr_iter, config, transform_data_fn=None):
     v_loss, v_score, v_mAP, v_mIoU = test(model, val_data_loader, config)
     return v_mIoU
@@ -128,6 +133,14 @@ def train(model, data_loader, val_data_loader, config, transform_data_fn=None):
                 # d['l'] = starget.F
                 # torch.save('./plot/test-label.pth')
                 # import ipdb; ipdb.set_trace()
+
+                # Set up profiler
+                # memory_profiler = CUDAMemoryProfiler(
+                #     [model, criterion],
+                #     filename="cuda_memory.profile"
+                # )
+                # sys.settrace(memory_profiler)
+                # threading.settrace(memory_profiler)
 
                 # with torch.autograd.profiler.profile(enabled=True, use_cuda=True, record_shapes=False, profile_memory=True) as prof0:
                 if aux is not None:
