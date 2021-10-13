@@ -227,13 +227,13 @@ def train(model, data_loader, val_data_loader, config, transform_data_fn=None):
 
             if curr_iter % config.stat_freq == 0 or curr_iter == 1:
                 lrs = ', '.join(['{:.3e}'.format(x) for x in scheduler.get_lr()])
-                IoU = ((total_correct_class) / (total_iou_deno_class+1e-6)).mean()
+                IoU = ((total_correct_class) / (total_iou_deno_class+1e-6)).mean()*100.
                 debug_str = "[{}] ===> Epoch[{}]({}/{}): Loss {:.4f}\tLR: {}\t".format(
                         config.log_dir.split('/')[-2],
                         epoch, curr_iter,
                         len(data_loader) // config.iter_size, losses.avg, lrs)
                 debug_str += "Score {:.3f}\tIoU {:.3f}\tData time: {:.4f}, Iter time: {:.4f}".format(
-                        scores.avg, IoU, data_time_avg.avg, iter_time_avg.avg)
+                        scores.avg, IoU.item(), data_time_avg.avg, iter_time_avg.avg)
                 if regs.avg > 0:
                     debug_str += "\n Additional Reg Loss {:.3f}".format(regs.avg)
                 # print(debug_str)

@@ -3,8 +3,8 @@ export OMP_NUM_THREADS=16
 
 #export MODEL=Res16UNet34C
 #export MODEL=Res16UNet18A
-#export MODEL=Res16UNetTestA
-export MODEL=Res16UNet
+export MODEL=Res16UNetTestA
+#export MODEL=Res16UNet
 
 #export MODEL=PointTransformer
 #export IS_EXPORT=True

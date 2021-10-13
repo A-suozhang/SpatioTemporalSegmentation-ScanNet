@@ -2,6 +2,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch
 from torch.autograd import Function
+import numpy as np
 
 import MinkowskiEngine as ME
 
@@ -316,12 +317,13 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
         '''
 
         self.h = 2 # the num-head, noted that since all heads are parallel, could view as expansion
-        self.M = 2
+        self.M = 3
         # self.qk_type = 'sub'
         self.qk_type = 'conv'
         self.conv_v = False
         # self.vec_dim = 1
-        self.vec_dim = self.planes // 8
+        self.vec_dim = 4
+        # self.vec_dim = self.planes // 8
         self.temp = 1
         self.top_k_choice = False
         # self.neighbor_type = 'sparse_query'
@@ -335,10 +337,10 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
         self.diverse_reg = False
         self.diverse_lambda = (1.e-4)
 
-        self.codebook_prior = False
+        self.codebook_prior = True
         self.hard_mask = False
 
-        self.sparse_pattern_reg = True
+        self.sparse_pattern_reg = False
 
         num_class = 21
         self.with_label_embedding = False
@@ -390,14 +392,17 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
                 # "region_offsets": ro0,
                 "dimension": 3,
                 }
-            self.kgargs = [kgargs0, kgargs1]
-            kg0 = ME.KernelGenerator(
-                    **kgargs0
-                    )
-            kg1 = ME.KernelGenerator(
-                    **kgargs1
-                    )
-            kgs = [kg0, kg1]
+            kgargs2 = {
+                "kernel_size": 2,
+                "stride": 1,
+                "dilation": 2,
+                "region_type":ME.RegionType.HYPER_CUBE,
+                # "region_type": ME.RegionType.CUSTOM,
+                # "region_offsets": ro0,
+                "dimension": 3,
+                }
+            self.kgargs = [kgargs0, kgargs1, kgargs2]
+            kgs = [ME.KernelGenerator(**kg) for kg in self.kgargs]
             for i_ in range(self.M):
                 self.codebook.append(
                     nn.Sequential(
@@ -430,23 +435,37 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
         # specify some of the Priors
         if self.codebook_prior:
 
-            mask_empty = torch.zeros_like(self.codebook[0][0].kernel)
-            masks = []
+            mask0 = []
+            mask1 = np.array([
+                    [10,11,12,20,21,22],
+                    [1,2,3,10,21,20],
+                    [3,4,5,6,7,8],
+                    [17,18,19,20,22,23,24],
+                    ])
+            mask2 = []
+            self.codebook_masks = [mask0, mask1, mask2]
+            # for _ in range(len(self.codebook))
+                # mask_ = mask_empty.clone()
+                # mask_[:10,:].fill_(1)
+                # masks.append(mask_)
 
             for _ in range(len(self.codebook)):
-                mask_ = mask_empty.clone()
-                mask_[:10,:].fill_(1)
-                masks.append(mask_)
-
-            for _ in range(len(self.codebook)):
+                # mask_empty = torch.zeros_like(self.codebook[0][0].kernel)
                 new_kernel = self.codebook[_][0].kernel
-                if _ == 0:
-                    new_kernel = new_kernel[:9,:].fill_(new_kernel.max())
-                elif _ == 1:
-                    new_kernel = new_kernel[10:18].fill_(new_kernel.max())
+                k_, dim_ = new_kernel.shape
+                if len(self.codebook_masks[_])>1:
+                    dim_per_mask = dim_ // len(self.codebook_masks[_])
+                else:
+                    dim_per_mask = dim_
+                for m_ in range(len(self.codebook_masks[_])):
+                    new_kernel[self.codebook_masks[_][m_],dim_per_mask*m_:dim_per_mask*(m_+1)] = 0
+                # if _ == 0:
+                    # new_kernel = new_kernel[:9,:].fill_(new_kernel.max())
+                # elif _ == 1:
+                    # new_kernel = new_kernel[10:18].fill_(new_kernel.max())
                 self.codebook[_][0].kernel = nn.Parameter(self.codebook[_][0].kernel)
 
-            codebook_weight = torch.stack([m[0].kernel for m in self.codebook])
+            # codebook_weight = torch.stack([m[0].kernel for m in self.codebook])
             # torch.save(codebook_weight, '/home/zhaotianchen/project/point-transformer/SpatioTemporalSegmentation-ScanNet/plot/codebook_weight.pth')
 
         self.out_bn_relu = nn.Sequential(
@@ -678,7 +697,6 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
                     [choice_.shape[0], self.vec_dim, self.planes*self.h // self.vec_dim]
                         ).sum(-1)
                     )
-
             choice = torch.stack(choice, dim=-1)
 
             if self.sparse_pattern_reg:
