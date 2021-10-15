@@ -83,7 +83,8 @@ def train(model, data_loader, val_data_loader, config, transform_data_fn=None):
             num_class = 19
             config.normalize_color = False
             config.xyz_input = False
-            config.val_freq = config.val_freq*20
+            val_freq_ = config.val_freq
+            config.val_freq = config.val_freq*10
     else:
         num_class = 20
 
@@ -95,6 +96,13 @@ def train(model, data_loader, val_data_loader, config, transform_data_fn=None):
             optimizer.zero_grad()
             data_time, batch_loss = 0, 0
             iter_timer.tic()
+
+            if curr_iter >= config.max_iter:
+                # if curr_iter >= max(config.max_iter, config.epochs*(len(data_loader) // config.iter_size):
+                    is_training = False
+                    break
+            elif curr_iter >= config.max_iter*(2/3):
+                config.val_freq = val_freq_*2 # valid more freq on lower half
 
             for sub_iter in range(config.iter_size):
                 # Get training data
@@ -219,11 +227,6 @@ def train(model, data_loader, val_data_loader, config, transform_data_fn=None):
             for l in range(num_class):
                 total_correct_class[l] += ((pred == l) & (target == l)).sum()
                 total_iou_deno_class[l] += (((pred == l) & (target!=-1)) | (target == l) ).sum()
-
-            if curr_iter >= config.max_iter:
-            # if curr_iter >= max(config.max_iter, config.epochs*(len(data_loader) // config.iter_size):
-                is_training = False
-                break
 
             if curr_iter % config.stat_freq == 0 or curr_iter == 1:
                 lrs = ', '.join(['{:.3e}'.format(x) for x in scheduler.get_lr()])

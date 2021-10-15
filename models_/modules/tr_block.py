@@ -85,7 +85,6 @@ class TRBlock(nn.Module):
 
         self.inplanes = inplanes
         self.planes = planes
-        self.k = 27
         self.h = 1
 
         # === Single Conv Definition ===
@@ -97,12 +96,17 @@ class TRBlock(nn.Module):
         if self.with_diverse_reg:
             self.diverse_lambda = 1.
 
+        # self.sparse_kernel = [0,1,2,3,9,10,11,12,15,16,21,22]
+        self.sparse_kernel = [4,5,7,10,12,13,14,16,19,21,22,23,25]
+        self.k = len(self.sparse_kernel)
+        self.expansion = 4
+
         assert self.type in ['attn','debug']
 
         if self.type == 'attn':
 
-            # self.vec_dim = planes // 8
-            self.vec_dim = 1
+            self.vec_dim = 8
+            # self.vec_dim = 1
             if self.with_pose_enc:
                 self.pos_enc = ME.MinkowskiConvolution(3, self.vec_dim, kernel_size=1, dimension=3)
 
@@ -124,9 +128,16 @@ class TRBlock(nn.Module):
                 self.linear_top = MinkoskiConvBNReLU(inplanes, planes, kernel_size=1)
                 self.downsample = ME.MinkowskiConvolution(inplanes, planes, kernel_size=1, dimension=3)
 
-            self.q = MinkoskiConvBNReLU(planes, self.vec_dim, kernel_size=3)
+            self.q = nn.Sequential(
+                MinkoskiConvBNReLU(planes, planes, kernel_size=1),
+                MinkoskiConvBNReLU(planes, self.vec_dim, kernel_size=3),
+            )
             self.v = MinkoskiConvBNReLU(planes, planes, kernel_size=1)
-            self.map_qk = nn.Linear(self.vec_dim, self.vec_dim)
+            self.map_qk = nn.Sequential(
+                nn.Linear(self.vec_dim, self.vec_dim*self.expansion),
+                nn.ReLU(),
+                nn.Linear(self.vec_dim*self.expansion, self.vec_dim),
+            )
             self.out_bn_relu = nn.Sequential(
                     ME.MinkowskiBatchNorm(planes),
                     ME.MinkowskiReLU(),
@@ -170,7 +181,6 @@ class TRBlock(nn.Module):
         self.diverse_loss = self.diverse_lambda*self.diverse_loss
 
     def forward(self, x, iter_=None, aux=None):
-
         if self.type == 'attn':
 
             if self.planes != self.inplanes:
@@ -191,31 +201,32 @@ class TRBlock(nn.Module):
                                                             kernel_size=3,
                                                             stride=1,
                                                                 )
-
             # q_.coordinate_manager == v_.coordinate_manager 
             N, dim = v_.F.shape
             sparse_masks = []
-            for k_ in range(self.k):
-                neis_sparse_mask_ = torch.gather(x.F, dim=0, index=neis_d[k_][0].reshape(-1,1).repeat(1,self.planes).long())
+            # for k_ in range(self.k):
+            for k_ in self.sparse_kernel:
+                neis_sparse_mask_ = torch.gather(x.F, dim=0, index=neis_d[k_][0].reshape(-1,1).expand(-1,self.planes).long())
                 neis_sparse_mask = torch.zeros(N,self.planes, device=q_.F.device)  # DEBUG: not sure if needs decalre every time
-                neis_sparse_mask = torch.scatter(neis_sparse_mask, dim=0, index=neis_d[k_][1].reshape(-1,1).repeat(1,self.planes).long(), src=neis_sparse_mask_)
+                neis_sparse_mask = torch.scatter(neis_sparse_mask, dim=0, index=neis_d[k_][1].reshape(-1,1).expand(-1,self.planes).long(), src=neis_sparse_mask_)
                 sparse_mask_cur_k = (neis_sparse_mask.abs().sum(-1) > 0).float()
                 sparse_masks.append(sparse_mask_cur_k)
 
             neis_l = []
-            for k_ in range(self.k):
+            # for k_ in range(self.k):
+            for i_k, k_ in enumerate(self.sparse_kernel):
 
                 if not k_ in neis_d.keys():
                     continue
 
-                neis_ = torch.gather(q_.F, dim=0, index=neis_d[k_][0].reshape(-1,1).repeat(1,self.vec_dim).long())
+                neis_ = torch.gather(q_.F, dim=0, index=neis_d[k_][0].reshape(-1,1).expand(-1,self.vec_dim).long())
                 neis = torch.zeros(N,self.vec_dim, device=q_.F.device)  # DEBUG: not sure if needs decalre every time
-                neis = torch.scatter(neis, dim=0, index=neis_d[k_][1].reshape(-1,1).repeat(1,self.vec_dim).long(), src=neis_)
-                sparse_mask_cur_k = sparse_masks[k_]
-                neis = neis - (q_.F*sparse_mask_cur_k.unsqueeze(-1).repeat(1, self.vec_dim))
+                neis = torch.scatter(neis, dim=0, index=neis_d[k_][1].reshape(-1,1).expand(-1,self.vec_dim).long(), src=neis_)
+                sparse_mask_cur_k = sparse_masks[i_k]
+                neis = neis - (q_.F*sparse_mask_cur_k.unsqueeze(-1).expand(-1, self.vec_dim))
 
                 neis = self.map_qk(neis)  # apply a linear layer over the neighbor
-                neis = neis*sparse_mask_cur_k.unsqueeze(-1).repeat(1,self.vec_dim)
+                neis = neis*sparse_mask_cur_k.unsqueeze(-1).expand(-1,self.vec_dim)
 
                 neis_l.append(neis)
 
@@ -228,7 +239,9 @@ class TRBlock(nn.Module):
             out = torch.zeros([N, dim], device=q_.F.device)
             if self.with_pose_enc:
                 pose_enc2save = []
-            for k_ in range(self.k):
+
+            # for k_ in range(self.k):
+            for i_k, k_ in enumerate(self.sparse_kernel):
 
                 if not k_ in neis_d.keys():
                     continue
@@ -245,12 +258,10 @@ class TRBlock(nn.Module):
                 neis_v_ = torch.gather(v_f, dim=0, index=neis_d[k_][0].reshape(-1,1).expand(-1,dim).long())
                 neis_v = torch.zeros(N,dim, device=q_.F.device)  # DEBUG: not sure if needs decalre every time
                 neis_v = torch.scatter(neis_v, dim=0, index=neis_d[k_][1].reshape(-1,1).expand(-1,dim).long(), src=neis_v_)
-                sparse_mask_cur_k_v = sparse_masks[k_]
+                sparse_mask_cur_k_v = sparse_masks[i_k]
 
                 neis_v = neis_v*sparse_mask_cur_k_v.unsqueeze(-1).expand(N, self.planes)   # [N, dim]
-                out_cur_k = neis_v*neis_l[:,:,k_].unsqueeze(-1).expand(-1,-1,self.planes//self.vec_dim).reshape(-1,self.planes) # [N. dims]
-
-                out += out_cur_k
+                out += neis_v*neis_l[:,:,i_k].unsqueeze(-1).expand(-1,-1,self.planes//self.vec_dim).reshape(-1,self.planes) # [N. dims]
 
             if self.with_pose_enc:
                 pose_enc2save = torch.stack(pose_enc2save)
@@ -337,7 +348,7 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
         self.diverse_reg = False
         self.diverse_lambda = (1.e-4)
 
-        self.codebook_prior = True
+        self.codebook_prior = False
         self.hard_mask = False
 
         self.sparse_pattern_reg = False
@@ -359,6 +370,7 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
         if self.qk_type == 'conv':
             # since conv already contains the neighbor info, so no pos_enc
             self.q = MinkoskiConvBNReLU(planes, self.vec_dim, kernel_size=3)
+            # self.q = MinkoskiConvBNReLU(planes, self.vec_dim, kernel_size=1) # DEBUG_OBLY!
         elif self.qk_type == 'sub':
             self.q = MinkoskiConvBNReLU(planes, self.vec_dim, kernel_size=1)
             self.map_qk = nn.Linear(self.vec_dim, self.vec_dim)
@@ -385,6 +397,7 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
                 }
             kgargs1 = {
                 "kernel_size": 3,
+                # "kernel_size": 2,    # DEBUG_ONLY!
                 "stride": 1,
                 "dilation": 1,
                 "region_type":ME.RegionType.HYPER_CUBE,
@@ -395,7 +408,7 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
             kgargs2 = {
                 "kernel_size": 2,
                 "stride": 1,
-                "dilation": 2,
+                "dilation": 3,
                 "region_type":ME.RegionType.HYPER_CUBE,
                 # "region_type": ME.RegionType.CUSTOM,
                 # "region_offsets": ro0,
@@ -438,8 +451,8 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
             mask0 = []
             mask1 = np.array([
                     [10,11,12,20,21,22],
-                    [1,2,3,10,21,20],
-                    [3,4,5,6,7,8],
+                    [1,2,3,4,5,6,10,21,20],
+                    [3,4,5,6,7,8,9,10,11],
                     [17,18,19,20,22,23,24],
                     ])
             mask2 = []
@@ -453,6 +466,8 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
                 # mask_empty = torch.zeros_like(self.codebook[0][0].kernel)
                 new_kernel = self.codebook[_][0].kernel
                 k_, dim_ = new_kernel.shape
+                if len(self.codebook_masks[_])>0:
+                    assert self.vec_dim % len(self.codebook_masks[_]) == 0
                 if len(self.codebook_masks[_])>1:
                     dim_per_mask = dim_ // len(self.codebook_masks[_])
                 else:
@@ -495,6 +510,11 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
 
     def get_sparse_pattern(self, x):
 
+        '''
+
+        # FORMULA 1: get codebook kernel shapes and directly use the sparse-pattern matching 
+        # as the guidance of choice
+
         # PROBLEM 1: how to support more flexible density estimation
         #    - currently only support matching kenrel & its neighbor
         #    - the very sparse scenarios are hard to distinguish(3x3 kernel is too small, all have 0 neis)
@@ -512,25 +532,67 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
             N = x.C.shape[0]
             # its easy to get how many matched elements of cur-point & kernel
             # but the kernel shape is hard to be flexible, like i need to index the lower-right part
-            sparse_pattern_ = torch.zeros([N], device=x.device)
+            if self.codebook_prior:
+                # only when codebook-prior is given, each point would have different pattern
+                sparse_pattern_ = torch.zeros([N, self.vec_dim], device=x.device)
+            else:
+                sparse_pattern_ = torch.zeros([N, 1], device=x.device)
+
+            cur_mask = self.codebook_masks[m_]
             cur_k = len(neis_d.keys())
             for k_ in range(cur_k):
 
                 if not k_ in neis_d.keys():
                         continue
-                sparse_pattern_[neis_d[k_][0].long()] +=1
-            sparse_pattern_ = sparse_pattern_ / cur_k
+
+                if len(cur_mask)>0:
+                    for i_ in range(len(cur_mask)):
+                        if k_ in cur_mask[i_]:  # for masked k
+                            continue
+                        else:
+                            sparse_pattern_[neis_d[k_][0].long(),i_] +=1
+                else:
+                    sparse_pattern_[neis_d[k_][0].long(),:] +=1
+
+            if len(cur_mask)>0:
+                for i_ in range(len(cur_mask)):
+                    sparse_pattern_[:,i_] = sparse_pattern_[:,i_] / (cur_k - len(cur_mask[i_]))
+            else:
+                sparse_pattern_ = sparse_pattern_ / cur_k
             sparse_patterns.append(sparse_pattern_)
         sparse_patterns = torch.stack(sparse_patterns, dim=-1)
 
         self.register_buffer("sparse_patterns",sparse_patterns)
 
         # Reg Type1:  encourage the kernel to lean to map with more matching neighbors
-        temp_ = 0.1
+        temp_ = 1
         eps = 1.e-3
         self.sparse_pattern = F.softmax((sparse_patterns+eps)/temp_, dim=-1)  # [N. M]
+        '''
 
-        return sparse_patterns
+        # formula 2: MultiScale Estimation of how sparse a point is 
+        # apply softmax in the normalized N points dimension
+        # calc the relative sparsity distance to many centers as regs
+
+        eps = 1.e-3
+        T = 0.1
+
+        neis_d = x.coordinate_manager.get_kernel_map(
+                                                    x.coordinate_map_key,
+                                                    x.coordinate_map_key,
+                                                    kernel_size=3,
+                                                    stride=1,
+                                                    )
+        N = x.C.shape[0]
+        sparse_pattern_ = torch.zeros([N, 1], device=x.device)
+        for k_ in range(len(neis_d)):
+            if not k_ in neis_d.keys():
+                continue
+            else:
+                sparse_pattern_[neis_d[k_][0].long(),:] +=1
+        sparse_pattern_ = sparse_pattern_ / sparse_pattern_.max()
+        codebook_centers = torch.arange(0,1,1/self.M,device=x.device)
+        self.sparse_patterns = F.softmax((sparse_pattern_ - codebook_centers + eps).abs()/T, dim=-1).unsqueeze(1) # [N,1, M]
 
     def get_vq_loss(self, neis_l):
         pass
@@ -700,7 +762,7 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
             choice = torch.stack(choice, dim=-1)
 
             if self.sparse_pattern_reg:
-                choice = choice*self.sparse_patterns.unsqueeze(1)
+                choice = choice*self.sparse_patterns
 
             if self.M > 1: # if M==1, skip softmax since there is only 1 value
                 choice = F.softmax(choice / self.temp, dim=-1) # [N, vec_dim, M] 

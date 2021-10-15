@@ -52,7 +52,7 @@ def train_worker(gpu, num_devices, NetClass, data_loader, val_data_loader, confi
     if gpu is not None:
         print("Use GPU: {} for training".format(gpu))
         rank = gpu
-    addr = 23481
+    addr = 23487
     dist.init_process_group(
         backend="nccl",
         init_method="tcp://127.0.0.1:{}".format(addr),
@@ -169,7 +169,8 @@ def train_worker(gpu, num_devices, NetClass, data_loader, val_data_loader, confi
         num_class = 19
         config.normalize_color = False
         config.xyz_input = False
-        config.val_freq = config.val_freq*20
+        val_freq_ = config.val_freq
+        config.val_freq = config.val_freq*10 # origianl val_freq_
     else:
         num_class = 20
 
@@ -179,12 +180,21 @@ def train_worker(gpu, num_devices, NetClass, data_loader, val_data_loader, confi
         total_iou_deno_class = torch.zeros(num_class, device=device)
 
         for iteration in range(len(data_loader) // config.iter_size):
+
             optimizer.zero_grad()
             data_time, batch_loss = 0, 0
             iter_timer.tic()
 
+            if curr_iter >= config.max_iter:
+                # if curr_iter >= max(config.max_iter, config.epochs*(len(data_loader) // config.iter_size):
+                    is_training = False
+                    break
+            elif curr_iter >= config.max_iter*(2/3):
+                config.val_freq = val_freq_*2 # valid more freq on lower half
+
             for sub_iter in range(config.iter_size):
-                # Get training data
+
+                            # Get training data
                 data_timer.tic()
                 if config.return_transformation:
                     coords, input, target, _, _, pointcloud, transformation = data_iter.next()
@@ -299,11 +309,6 @@ def train_worker(gpu, num_devices, NetClass, data_loader, val_data_loader, confi
                 total_correct_class[l] += ((pred == l) & (target == l)).sum()
                 total_iou_deno_class[l] += (((pred == l) & (target!=-1)) | (target == l) ).sum()
 
-            if curr_iter >= config.max_iter:
-            # if curr_iter >= max(config.max_iter, config.epochs*(len(data_loader) // config.iter_size):
-                is_training = False
-                break
-
             if curr_iter % config.stat_freq == 0 or curr_iter == 1:
                 lrs = ', '.join(['{:.3e}'.format(g['lr']) for g in optimizer.param_groups])
                 IoU = ((total_correct_class) / (total_iou_deno_class+1e-6)).mean()*100.
@@ -366,9 +371,10 @@ def train_worker(gpu, num_devices, NetClass, data_loader, val_data_loader, confi
         if val_miou > best_val_miou and rank == 0:
             best_val_miou = val_miou
             best_val_iter = curr_iter
+            logging.info("Final best miou: {}  at iter {} ".format(val_miou, curr_iter))
             checkpoint(model, optimizer, epoch, curr_iter, config, best_val_miou, best_val_iter, "best_val")
 
-        logging.info("Current best mIoU: {:.3f} at iter {}".format(best_val_miou, best_val_iter))
+            logging.info("Current best mIoU: {:.3f} at iter {}".format(best_val_miou, best_val_iter))
     # print("Current best mIoU: {:.3f} at iter {}".format(best_val_miou, best_val_iter))
 
 

@@ -17,7 +17,7 @@ export DATASET=SemanticKITTI
 #export MAX_ITER=30000
 #export MAX_ITER=10000
 export MAX_ITER=15000
-export MAX_POINTS=300000  # bs=4, h=4 model
+export MAX_POINTS=270000  # bs=4, h=4 model
 #export POINTS=4096
 #export LR=7.5e-2
 
