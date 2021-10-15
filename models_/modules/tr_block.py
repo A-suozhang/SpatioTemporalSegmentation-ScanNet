@@ -335,7 +335,6 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
         # self.vec_dim = 1
         self.vec_dim = 4
         # self.vec_dim = self.planes // 8
-        self.temp = 1
         self.top_k_choice = False
         # self.neighbor_type = 'sparse_query'
         self.k = 27
@@ -351,7 +350,7 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
         self.codebook_prior = False
         self.hard_mask = False
 
-        self.sparse_pattern_reg = False
+        self.sparse_pattern_reg = True
 
         num_class = 21
         self.with_label_embedding = False
@@ -369,7 +368,11 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
 
         if self.qk_type == 'conv':
             # since conv already contains the neighbor info, so no pos_enc
-            self.q = MinkoskiConvBNReLU(planes, self.vec_dim, kernel_size=3)
+            self.q = nn.Sequential(
+                ME.MinkowskiConvolution(planes, self.vec_dim, kernel_size=3,dimension=3),
+                ME.MinkowskiBatchNorm(self.vec_dim),
+                    )
+            # self.q = MinkoskiConvBNReLU(planes, self.vec_dim, kernel_size=3)
             # self.q = MinkoskiConvBNReLU(planes, self.vec_dim, kernel_size=1) # DEBUG_OBLY!
         elif self.qk_type == 'sub':
             self.q = MinkoskiConvBNReLU(planes, self.vec_dim, kernel_size=1)
@@ -508,9 +511,7 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
 
         return x
 
-    def get_sparse_pattern(self, x):
-
-        '''
+    def get_sparse_pattern(self, x, type_=1):
 
         # FORMULA 1: get codebook kernel shapes and directly use the sparse-pattern matching 
         # as the guidance of choice
@@ -519,80 +520,85 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
         #    - currently only support matching kenrel & its neighbor
         #    - the very sparse scenarios are hard to distinguish(3x3 kernel is too small, all have 0 neis)
         #    - memory bottleneck needs benchmarking, are neis_d itself very mem-consuming?
+        if type_ == 1:
 
-        sparse_patterns= []  # [M]
-        for m_ in range(self.M):
-            kgargs = self.kgargs[m_]
-            if 'dimension' in kgargs.keys():
-                del kgargs['dimension']
-            neis_d = x.coordinate_manager.get_kernel_map(x.coordinate_map_key,
-                                                                x.coordinate_map_key,
-                                                                **kgargs
-                                                                )
-            N = x.C.shape[0]
-            # its easy to get how many matched elements of cur-point & kernel
-            # but the kernel shape is hard to be flexible, like i need to index the lower-right part
-            if self.codebook_prior:
-                # only when codebook-prior is given, each point would have different pattern
-                sparse_pattern_ = torch.zeros([N, self.vec_dim], device=x.device)
-            else:
-                sparse_pattern_ = torch.zeros([N, 1], device=x.device)
+            sparse_patterns= []  # [M]
+            for m_ in range(self.M):
+                kgargs = self.kgargs[m_]
+                if 'dimension' in kgargs.keys():
+                    del kgargs['dimension']
+                neis_d = x.coordinate_manager.get_kernel_map(x.coordinate_map_key,
+                                                                    x.coordinate_map_key,
+                                                                    **kgargs
+                                                                    )
+                N = x.C.shape[0]
+                # its easy to get how many matched elements of cur-point & kernel
+                # but the kernel shape is hard to be flexible, like i need to index the lower-right part
+                if self.codebook_prior:
+                    # only when codebook-prior is given, each point would have different pattern
+                    sparse_pattern_ = torch.zeros([N, self.vec_dim], device=x.device)
+                else:
+                    sparse_pattern_ = torch.zeros([N, 1], device=x.device)
 
-            cur_mask = self.codebook_masks[m_]
-            cur_k = len(neis_d.keys())
-            for k_ in range(cur_k):
+                if hasattr(self, "codebook_masks"):
+                    cur_mask = self.codebook_masks[m_]
+                else:
+                    cur_mask = []
 
-                if not k_ in neis_d.keys():
-                        continue
+                cur_k = len(neis_d.keys())
+                for k_ in range(cur_k):
+
+                    if not k_ in neis_d.keys():
+                            continue
+
+                    if len(cur_mask)>0:
+                        for i_ in range(len(cur_mask)):
+                            if k_ in cur_mask[i_]:  # for masked k
+                                continue
+                            else:
+                                sparse_pattern_[neis_d[k_][0].long(),i_] +=1
+                    else:
+                        sparse_pattern_[neis_d[k_][0].long(),:] +=1
 
                 if len(cur_mask)>0:
                     for i_ in range(len(cur_mask)):
-                        if k_ in cur_mask[i_]:  # for masked k
-                            continue
-                        else:
-                            sparse_pattern_[neis_d[k_][0].long(),i_] +=1
+                        sparse_pattern_[:,i_] = sparse_pattern_[:,i_] / (cur_k - len(cur_mask[i_]))
                 else:
-                    sparse_pattern_[neis_d[k_][0].long(),:] +=1
+                    sparse_pattern_ = sparse_pattern_ / cur_k
+                sparse_patterns.append(sparse_pattern_)
+            sparse_patterns = torch.stack(sparse_patterns, dim=-1)
 
-            if len(cur_mask)>0:
-                for i_ in range(len(cur_mask)):
-                    sparse_pattern_[:,i_] = sparse_pattern_[:,i_] / (cur_k - len(cur_mask[i_]))
-            else:
-                sparse_pattern_ = sparse_pattern_ / cur_k
-            sparse_patterns.append(sparse_pattern_)
-        sparse_patterns = torch.stack(sparse_patterns, dim=-1)
+            self.register_buffer("sparse_patterns",sparse_patterns)
 
-        self.register_buffer("sparse_patterns",sparse_patterns)
-
-        # Reg Type1:  encourage the kernel to lean to map with more matching neighbors
-        temp_ = 1
-        eps = 1.e-3
-        self.sparse_pattern = F.softmax((sparse_patterns+eps)/temp_, dim=-1)  # [N. M]
-        '''
+            # Reg Type1:  encourage the kernel to lean to map with more matching neighbors
+            temp_ = 0.1
+            eps = 1.e-3
+            self.sparse_pattern = F.softmax((sparse_patterns+eps)/temp_, dim=-1)  # [N. M]
 
         # formula 2: MultiScale Estimation of how sparse a point is 
         # apply softmax in the normalized N points dimension
         # calc the relative sparsity distance to many centers as regs
+        elif type_ == 2:
 
-        eps = 1.e-3
-        T = 0.1
+            eps = 1.e-3
+            T = 0.01
 
-        neis_d = x.coordinate_manager.get_kernel_map(
-                                                    x.coordinate_map_key,
-                                                    x.coordinate_map_key,
-                                                    kernel_size=3,
-                                                    stride=1,
-                                                    )
-        N = x.C.shape[0]
-        sparse_pattern_ = torch.zeros([N, 1], device=x.device)
-        for k_ in range(len(neis_d)):
-            if not k_ in neis_d.keys():
-                continue
-            else:
-                sparse_pattern_[neis_d[k_][0].long(),:] +=1
-        sparse_pattern_ = sparse_pattern_ / sparse_pattern_.max()
-        codebook_centers = torch.arange(0,1,1/self.M,device=x.device)
-        self.sparse_patterns = F.softmax((sparse_pattern_ - codebook_centers + eps).abs()/T, dim=-1).unsqueeze(1) # [N,1, M]
+            neis_d = x.coordinate_manager.get_kernel_map(
+                                                        x.coordinate_map_key,
+                                                        x.coordinate_map_key,
+                                                        kernel_size=3,
+                                                        stride=1,
+                                                        )
+            N = x.C.shape[0]
+            sparse_pattern_ = torch.zeros([N, 1], device=x.device)
+            for k_ in range(len(neis_d)):
+                if not k_ in neis_d.keys():
+                    continue
+                else:
+                    sparse_pattern_[neis_d[k_][0].long(),:] +=1
+            sparse_pattern_ = sparse_pattern_ / sparse_pattern_.max()
+            codebook_centers = torch.arange(0,1,1/self.M,device=x.device)
+            self.sparse_patterns = F.softmax((sparse_pattern_ - codebook_centers + eps).abs()/T, dim=-1).unsqueeze(1) # [N,1, M]
 
     def get_vq_loss(self, neis_l):
         pass
@@ -760,14 +766,19 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
                         ).sum(-1)
                     )
             choice = torch.stack(choice, dim=-1)
+            eps = 1.e-3
+            self.temp = 0.1
+            # choice = choice.reshape([N,self.M*self.vec_dim])
+
+            if self.M > 1: # if M==1, skip softmax since there is only 1 value
+                choice = F.softmax((choice+eps)/self.temp, dim=-1) # [N, vec_dim, M] 
+                # choice = choice.reshape([N, self.vec_dim, self.M])
+            else:
+                pass
 
             if self.sparse_pattern_reg:
                 choice = choice*self.sparse_patterns
 
-            if self.M > 1: # if M==1, skip softmax since there is only 1 value
-                choice = F.softmax(choice / self.temp, dim=-1) # [N, vec_dim, M] 
-            else:
-                pass
             # attn_map = torch.stack([self.codebook[_][0].kernel for _ in range(self.M) ], dim=0) # [M. K], in some case(CUSTOM_KERNEL)
             attn_map = torch.cat([self.codebook[_][0].kernel for _ in range(self.M)],dim=0) # [M. K]
             self.register_buffer('attn_map', attn_map)
