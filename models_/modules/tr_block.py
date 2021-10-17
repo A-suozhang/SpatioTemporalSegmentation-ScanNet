@@ -97,18 +97,21 @@ class TRBlock(nn.Module):
             self.diverse_lambda = 1.
 
         # self.sparse_kernel = [0,1,2,3,9,10,11,12,15,16,21,22]
-        self.sparse_kernel = [4,5,7,10,12,13,14,16,19,21,22,23,25]
+        self.sparse_kernel = [1,3,4,5,7,10,12,13,14,16,19,21,22]
+        # self.sparse_kernel = range(27)
         self.k = len(self.sparse_kernel)
-        self.expansion = 4
 
         assert self.type in ['attn','debug']
 
         if self.type == 'attn':
 
-            self.vec_dim = 8
+            self.vec_dim = 4
             # self.vec_dim = 1
             if self.with_pose_enc:
-                self.pos_enc = ME.MinkowskiConvolution(3, self.vec_dim, kernel_size=1, dimension=3)
+                self.pos_enc = nn.Sequential(
+                    MinkoskiConvBNReLU(3, planes, kernel_size=1),
+                    MinkoskiConvBNReLU(planes, self.vec_dim, kernel_size=1),
+                        )
 
             # self.vq = True # use vector quantization 
             # self.vq_loss_commit_beta = 1.
@@ -134,9 +137,9 @@ class TRBlock(nn.Module):
             )
             self.v = MinkoskiConvBNReLU(planes, planes, kernel_size=1)
             self.map_qk = nn.Sequential(
-                nn.Linear(self.vec_dim, self.vec_dim*self.expansion),
+                nn.Linear(self.vec_dim, self.planes),
                 nn.ReLU(),
-                nn.Linear(self.vec_dim*self.expansion, self.vec_dim),
+                nn.Linear(self.planes, self.vec_dim),
             )
             self.out_bn_relu = nn.Sequential(
                     ME.MinkowskiBatchNorm(planes),
@@ -350,7 +353,7 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
         self.codebook_prior = False
         self.hard_mask = False
 
-        self.sparse_pattern_reg = False
+        self.sparse_pattern_reg = True
 
         num_class = 21
         self.with_label_embedding = False
@@ -580,25 +583,25 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
         # calc the relative sparsity distance to many centers as regs
         elif type_ == 2:
 
-            eps = 1.e-3
-            T = 0.1
+        eps = 1.e-3
+        T = 25
 
-            neis_d = x.coordinate_manager.get_kernel_map(
-                                                        x.coordinate_map_key,
-                                                        x.coordinate_map_key,
-                                                        kernel_size=3,
-                                                        stride=1,
-                                                        )
-            N = x.C.shape[0]
-            sparse_pattern_ = torch.zeros([N, 1], device=x.device)
-            for k_ in range(len(neis_d)):
-                if not k_ in neis_d.keys():
-                    continue
-                else:
-                    sparse_pattern_[neis_d[k_][0].long(),:] +=1
-            sparse_pattern_ = sparse_pattern_ / sparse_pattern_.max()
-            codebook_centers = torch.arange(0,1,1/self.M,device=x.device)
-            self.sparse_patterns = F.softmax((sparse_pattern_ - codebook_centers + eps).abs()/T, dim=-1).unsqueeze(1) # [N,1, M]
+        neis_d = x.coordinate_manager.get_kernel_map(
+                                                    x.coordinate_map_key,
+                                                    x.coordinate_map_key,
+                                                    kernel_size=3,
+                                                    stride=1,
+                                                    )
+        N = x.C.shape[0]
+        sparse_pattern_ = torch.zeros([N, 1], device=x.device)
+        for k_ in range(len(neis_d)):
+            if not k_ in neis_d.keys():
+                continue
+            else:
+                sparse_pattern_[neis_d[k_][0].long(),:] +=1
+        sparse_pattern_ = sparse_pattern_ / sparse_pattern_.max()
+        codebook_centers = torch.arange(0,1,1/self.M,device=x.device)
+        self.sparse_patterns = F.softmax((1/(sparse_pattern_ - codebook_centers + eps).abs())/T, dim=-1).unsqueeze(1) # [N,1, M]
 
     def get_vq_loss(self, neis_l):
         pass
@@ -770,8 +773,9 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
             self.temp = 1
             # self.temp = 0.1
             # choice = choice.reshape([N,self.M*self.vec_dim])
-            if self.sparse_pattern_reg:
-                choice = choice*self.sparse_patterns
+
+            # debug: actually to show the effect of the sparse-pattern reg, we should multuiply it afterwards, however, too strong aug seems to bring lossy perf
+            # needs checking
 
             if self.M > 1: # if M==1, skip softmax since there is only 1 value
                 choice = F.softmax((choice)/self.temp, dim=-1) # [N, vec_dim, M] 
@@ -780,7 +784,10 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
             else:
                 pass
 
-                        # attn_map = torch.stack([self.codebook[_][0].kernel for _ in range(self.M) ], dim=0) # [M. K], in some case(CUSTOM_KERNEL)
+            if self.sparse_pattern_reg:
+                choice = choice*self.sparse_patterns
+
+            # attn_map = torch.stack([self.codebook[_][0].kernel for _ in range(self.M) ], dim=0) # [M. K], in some case(CUSTOM_KERNEL)
             attn_map = torch.cat([self.codebook[_][0].kernel for _ in range(self.M)],dim=0) # [M. K]
             self.register_buffer('attn_map', attn_map)
             self.register_buffer('choice_map', choice)
