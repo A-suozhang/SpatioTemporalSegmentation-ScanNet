@@ -416,7 +416,7 @@ class Res16UNetTest(Res16UNetBase):
 
 class Res16UNetTestA(Res16UNetTest):
 
-  DEPTH_RATIO = 1
+  DEPTH_RATIO = 2
   PLANES_RATIO = 1
   # BLOCK = [TestConv, TRBlock, TestConv, TRBlock, TestConv, TRBlock, TestConv, TRBlock]
   # BLOCK= [TRBlock]*8

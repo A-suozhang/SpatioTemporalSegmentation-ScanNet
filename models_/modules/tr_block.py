@@ -350,7 +350,7 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
         self.codebook_prior = False
         self.hard_mask = False
 
-        self.sparse_pattern_reg = True
+        self.sparse_pattern_reg = False
 
         num_class = 21
         self.with_label_embedding = False
@@ -511,7 +511,7 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
 
         return x
 
-    def get_sparse_pattern(self, x, type_=1):
+    def get_sparse_pattern(self, x, type_=2):
 
         # FORMULA 1: get codebook kernel shapes and directly use the sparse-pattern matching 
         # as the guidance of choice
@@ -581,7 +581,7 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
         elif type_ == 2:
 
             eps = 1.e-3
-            T = 0.01
+            T = 0.1
 
             neis_d = x.coordinate_manager.get_kernel_map(
                                                         x.coordinate_map_key,
@@ -767,19 +767,20 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
                     )
             choice = torch.stack(choice, dim=-1)
             eps = 1.e-3
-            self.temp = 0.1
+            self.temp = 1
+            # self.temp = 0.1
             # choice = choice.reshape([N,self.M*self.vec_dim])
+            if self.sparse_pattern_reg:
+                choice = choice*self.sparse_patterns
 
             if self.M > 1: # if M==1, skip softmax since there is only 1 value
-                choice = F.softmax((choice+eps)/self.temp, dim=-1) # [N, vec_dim, M] 
+                choice = F.softmax((choice)/self.temp, dim=-1) # [N, vec_dim, M] 
+                # choice = F.softmax((choice+eps)/self.temp, dim=-1) # [N, vec_dim, M] 
                 # choice = choice.reshape([N, self.vec_dim, self.M])
             else:
                 pass
 
-            if self.sparse_pattern_reg:
-                choice = choice*self.sparse_patterns
-
-            # attn_map = torch.stack([self.codebook[_][0].kernel for _ in range(self.M) ], dim=0) # [M. K], in some case(CUSTOM_KERNEL)
+                        # attn_map = torch.stack([self.codebook[_][0].kernel for _ in range(self.M) ], dim=0) # [M. K], in some case(CUSTOM_KERNEL)
             attn_map = torch.cat([self.codebook[_][0].kernel for _ in range(self.M)],dim=0) # [M. K]
             self.register_buffer('attn_map', attn_map)
             self.register_buffer('choice_map', choice)
