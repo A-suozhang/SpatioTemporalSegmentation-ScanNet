@@ -144,8 +144,8 @@ def train(model, data_loader, val_data_loader, config, transform_data_fn=None):
 
                 # Set up profiler
                 # memory_profiler = CUDAMemoryProfiler(
-                #     [model, criterion],
-                #     filename="cuda_memory.profile"
+                    # [model, criterion],
+                    # filename="cuda_memory.profile"
                 # )
                 # sys.settrace(memory_profiler)
                 # threading.settrace(memory_profiler)
