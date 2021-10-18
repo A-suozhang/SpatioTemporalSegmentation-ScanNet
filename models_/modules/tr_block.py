@@ -97,18 +97,21 @@ class TRBlock(nn.Module):
             self.diverse_lambda = 1.
 
         # self.sparse_kernel = [0,1,2,3,9,10,11,12,15,16,21,22]
-        self.sparse_kernel = [4,5,7,10,12,13,14,16,19,21,22,23,25]
+        self.sparse_kernel = [1,3,4,5,7,10,12,13,14,16,19,21,22]
+        # self.sparse_kernel = range(27)
         self.k = len(self.sparse_kernel)
-        self.expansion = 4
 
         assert self.type in ['attn','debug']
 
         if self.type == 'attn':
 
-            self.vec_dim = 8
+            self.vec_dim = 4
             # self.vec_dim = 1
             if self.with_pose_enc:
-                self.pos_enc = ME.MinkowskiConvolution(3, self.vec_dim, kernel_size=1, dimension=3)
+                self.pos_enc = nn.Sequential(
+                    MinkoskiConvBNReLU(3, planes, kernel_size=1),
+                    MinkoskiConvBNReLU(planes, self.vec_dim, kernel_size=1),
+                        )
 
             # self.vq = True # use vector quantization 
             # self.vq_loss_commit_beta = 1.
@@ -134,9 +137,9 @@ class TRBlock(nn.Module):
             )
             self.v = MinkoskiConvBNReLU(planes, planes, kernel_size=1)
             self.map_qk = nn.Sequential(
-                nn.Linear(self.vec_dim, self.vec_dim*self.expansion),
+                nn.Linear(self.vec_dim, self.planes),
                 nn.ReLU(),
-                nn.Linear(self.vec_dim*self.expansion, self.vec_dim),
+                nn.Linear(self.planes, self.vec_dim),
             )
             self.out_bn_relu = nn.Sequential(
                     ME.MinkowskiBatchNorm(planes),
@@ -327,14 +330,14 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
         temp - the softmax temperature
         '''
 
-        self.h = 2 # the num-head, noted that since all heads are parallel, could view as expansion
+        self.h = 4 # the num-head, noted that since all heads are parallel, could view as expansion
         self.M = 3
         # self.qk_type = 'sub'
         self.qk_type = 'conv'
         self.conv_v = False
         # self.vec_dim = 1
-        self.vec_dim = 4
-        # self.vec_dim = self.planes // 8
+        # self.vec_dim = 4
+        self.vec_dim = self.planes // 4
         self.top_k_choice = False
         # self.neighbor_type = 'sparse_query'
         self.k = 27
@@ -511,7 +514,7 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
 
         return x
 
-    def get_sparse_pattern(self, x, type_=1):
+    def get_sparse_pattern(self, x, type_=2):
 
         # FORMULA 1: get codebook kernel shapes and directly use the sparse-pattern matching 
         # as the guidance of choice
@@ -581,7 +584,7 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
         elif type_ == 2:
 
             eps = 1.e-3
-            T = 0.01
+            T = 25
 
             neis_d = x.coordinate_manager.get_kernel_map(
                                                         x.coordinate_map_key,
@@ -598,7 +601,7 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
                     sparse_pattern_[neis_d[k_][0].long(),:] +=1
             sparse_pattern_ = sparse_pattern_ / sparse_pattern_.max()
             codebook_centers = torch.arange(0,1,1/self.M,device=x.device)
-            self.sparse_patterns = F.softmax((sparse_pattern_ - codebook_centers + eps).abs()/T, dim=-1).unsqueeze(1) # [N,1, M]
+            self.sparse_patterns = F.softmax((1/(sparse_pattern_ - codebook_centers + eps).abs())/T, dim=-1).unsqueeze(1) # [N,1, M]
 
     def get_vq_loss(self, neis_l):
         pass
@@ -767,11 +770,16 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
                     )
             choice = torch.stack(choice, dim=-1)
             eps = 1.e-3
-            self.temp = 0.1
+            self.temp = 1
+            # self.temp = 0.1
             # choice = choice.reshape([N,self.M*self.vec_dim])
 
+            # debug: actually to show the effect of the sparse-pattern reg, we should multuiply it afterwards, however, too strong aug seems to bring lossy perf
+            # needs checking
+
             if self.M > 1: # if M==1, skip softmax since there is only 1 value
-                choice = F.softmax((choice+eps)/self.temp, dim=-1) # [N, vec_dim, M] 
+                choice = F.softmax((choice)/self.temp, dim=-1) # [N, vec_dim, M] 
+                # choice = F.softmax((choice+eps)/self.temp, dim=-1) # [N, vec_dim, M] 
                 # choice = choice.reshape([N, self.vec_dim, self.M])
             else:
                 pass
