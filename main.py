@@ -354,7 +354,7 @@ def main():
         else:
             model = NetClass(num_in_channel, num_labels, config)
 
-    logging.info('===> Number of trainable parameters: {}: {}'.format(NetClass.__name__,count_parameters(model)))
+    logging.info('===> Number of trainable parameters: {}: {}M'.format(NetClass.__name__,count_parameters(model)/1e6))
     logging.info(model)
 
     # Set the number of threads

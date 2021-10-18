@@ -203,7 +203,7 @@ def test(model, data_loader, config, transform_data_fn=None, has_gt=True, save_p
                     else:
                         ious_.append(total_correct[_]/(total_seen[_] + total_positive[_] - total_correct[_]))
                 # ious_ = torch.stack(ious_, dim=-1).cpu().numpy()*100
-                # print(np.nanmean(ious), np.nanmean(ious_))
+                print(np.nanmean(per_class_iu(hist)), np.nanmean(ious_))
                 ious = np.array(ious_)*100
 
                 ap = average_precision(prob.cpu().detach().numpy(), target_np)
