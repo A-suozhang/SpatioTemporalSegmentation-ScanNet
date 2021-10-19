@@ -355,6 +355,12 @@ def main():
             model = NetClass(num_in_channel, num_labels, config)
 
     logging.info('===> Number of trainable parameters: {}: {}M'.format(NetClass.__name__,count_parameters(model)/1e6))
+    if hasattr(model, "block1"):
+        h = model.block1[0].h
+    else:
+        h = None
+    logging.info('===> Model Args:\n PLANES: {} \n LAYERS: {}\n HEADS: {}\n'.format(model.PLANES, model.LAYERS, h))
+    import ipdb; ipdb.set_trace()
     logging.info(model)
 
     # Set the number of threads

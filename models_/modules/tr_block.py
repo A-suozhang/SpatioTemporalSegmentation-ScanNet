@@ -583,25 +583,25 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
         # calc the relative sparsity distance to many centers as regs
         elif type_ == 2:
 
-        eps = 1.e-3
-        T = 25
+            eps = 1.e-3
+            T = 25
 
-        neis_d = x.coordinate_manager.get_kernel_map(
-                                                    x.coordinate_map_key,
-                                                    x.coordinate_map_key,
-                                                    kernel_size=3,
-                                                    stride=1,
-                                                    )
-        N = x.C.shape[0]
-        sparse_pattern_ = torch.zeros([N, 1], device=x.device)
-        for k_ in range(len(neis_d)):
-            if not k_ in neis_d.keys():
-                continue
-            else:
-                sparse_pattern_[neis_d[k_][0].long(),:] +=1
-        sparse_pattern_ = sparse_pattern_ / sparse_pattern_.max()
-        codebook_centers = torch.arange(0,1,1/self.M,device=x.device)
-        self.sparse_patterns = F.softmax((1/(sparse_pattern_ - codebook_centers + eps).abs())/T, dim=-1).unsqueeze(1) # [N,1, M]
+            neis_d = x.coordinate_manager.get_kernel_map(
+                                                        x.coordinate_map_key,
+                                                        x.coordinate_map_key,
+                                                        kernel_size=3,
+                                                        stride=1,
+                                                        )
+            N = x.C.shape[0]
+            sparse_pattern_ = torch.zeros([N, 1], device=x.device)
+            for k_ in range(len(neis_d)):
+                if not k_ in neis_d.keys():
+                    continue
+                else:
+                    sparse_pattern_[neis_d[k_][0].long(),:] +=1
+            sparse_pattern_ = sparse_pattern_ / sparse_pattern_.max()
+            codebook_centers = torch.arange(0,1,1/self.M,device=x.device)
+            self.sparse_patterns = F.softmax((1/(sparse_pattern_ - codebook_centers + eps).abs())/T, dim=-1).unsqueeze(1) # [N,1, M]
 
     def get_vq_loss(self, neis_l):
         pass

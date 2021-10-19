@@ -91,7 +91,7 @@ data_arg.add_argument('--cache_data', type=str2bool, default=False)
 data_arg.add_argument('--sample_stride', type=int, default=1)
 data_arg.add_argument(
     '--threads', type=int, default=0, help='num threads for train/test dataloader')
-data_arg.add_argument('--val_threads', type=int, default=0, help='num threads for val dataloader')
+data_arg.add_argument('--val_threads', type=int, default=4, help='num threads for val dataloader')
 data_arg.add_argument('--ignore_label', type=int, default=-1)
 data_arg.add_argument('--train_elastic_distortion', type=str2bool, default=True)
 data_arg.add_argument('--test_elastic_distortion', type=str2bool, default=False)
