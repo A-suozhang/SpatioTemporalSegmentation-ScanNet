@@ -330,14 +330,14 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
         temp - the softmax temperature
         '''
 
-        self.h = 4 # the num-head, noted that since all heads are parallel, could view as expansion
-        self.M = 3
+        self.h = 2 # the num-head, noted that since all heads are parallel, could view as expansion
+        self.M = 2
         # self.qk_type = 'sub'
         self.qk_type = 'conv'
         self.conv_v = False
         # self.vec_dim = 1
         # self.vec_dim = 4
-        self.vec_dim = self.planes // 4
+        self.vec_dim = self.planes // 8
         self.top_k_choice = False
         # self.neighbor_type = 'sparse_query'
         self.k = 27
@@ -411,16 +411,17 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
                 # "region_offsets": ro0,
                 "dimension": 3,
                 }
-            kgargs2 = {
-                "kernel_size": 2,
-                "stride": 1,
-                "dilation": 3,
-                "region_type":ME.RegionType.HYPER_CUBE,
-                # "region_type": ME.RegionType.CUSTOM,
-                # "region_offsets": ro0,
-                "dimension": 3,
-                }
-            self.kgargs = [kgargs0, kgargs1, kgargs2]
+            # kgargs2 = {
+                # "kernel_size": 2,
+                # "stride": 1,
+                # "dilation": 3,
+                # "region_type":ME.RegionType.HYPER_CUBE,
+                # # "region_type": ME.RegionType.CUSTOM,
+                # # "region_offsets": ro0,
+                # "dimension": 3,
+                # }
+            # self.kgargs = [kgargs0, kgargs1, kgargs2]
+            self.kgargs = [kgargs0, kgargs1]
             kgs = [ME.KernelGenerator(**kg) for kg in self.kgargs]
             for i_ in range(self.M):
                 self.codebook.append(

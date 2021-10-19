@@ -175,6 +175,11 @@ def train_worker(gpu, num_devices, NetClass, data_loader, val_data_loader, confi
         val_freq_ = config.val_freq
         num_class = 20
 
+    while is_training:
+
+        total_correct_class = torch.zeros(num_class, device=device)
+        total_iou_deno_class = torch.zeros(num_class, device=device)
+
         for iteration in range(len(data_loader) // config.iter_size):
 
             optimizer.zero_grad()
