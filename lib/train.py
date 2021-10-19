@@ -87,6 +87,7 @@ def train(model, data_loader, val_data_loader, config, transform_data_fn=None):
             config.val_freq = config.val_freq*10
     else:
         num_class = 20
+        val_freq_ = config.val_freq
 
     while is_training:
         total_correct_class = torch.zeros(num_class, device=device)

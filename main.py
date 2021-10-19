@@ -34,6 +34,7 @@ from lib.utils import load_state_with_same_shape, get_torch_device, count_parame
 from lib.dataset import initialize_data_loader, _init_fn
 from lib.datasets import load_dataset
 from lib.datasets.semantic_kitti import SemanticKITTI
+from lib.datasets.Indoor3DSemSegLoader import S3DIS
 from lib.dataloader import InfSampler
 import lib.transforms as t
 
@@ -71,6 +72,7 @@ def main():
         json_config['weights'] = config.weights
         json_config['multiprocess'] = False
         json_config['log_dir'] = config.log_dir
+        json_config['val_threads'] = config.val_threads
         config = edict(json_config)
 
         config.val_batch_size = val_bs
@@ -137,6 +139,8 @@ def main():
     - ScannetDataset
     - SemanticKITTI
     """
+
+    point_scannet = False
     if config.is_train:
 
         if config.dataset == 'ScannetSparseVoxelizationDataset':
@@ -227,6 +231,34 @@ def main():
                 pin_memory=True,
                 collate_fn=t.cfl_collate_fn_factory(False) 
             )
+        elif config.dataset == "S3DIS":
+            trainset = S3DIS(
+                    config,
+                    train=True,
+                    )
+            valset = S3DIS(
+                    config,
+                    train=False,
+                    )
+            train_data_loader = torch.utils.data.DataLoader(
+                trainset,
+                batch_size=config.batch_size,
+                sampler=InfSampler(trainset, shuffle=True), # shuffle=true, repeat=true
+                num_workers=config.threads,
+                pin_memory=True,
+                collate_fn=t.cfl_collate_fn_factory(config.train_limit_numpoints)
+            )
+
+            val_data_loader = torch.utils.data.DataLoader( # shuffle=false, repeat=false
+                valset,
+                batch_size=config.batch_size,
+                num_workers=config.val_threads,
+                pin_memory=True,
+                collate_fn=t.cfl_collate_fn_factory(False)
+            )
+
+        else:
+            raise NotImplementedError
 
 
         # Setting up num_in_channel and num_labels
@@ -247,7 +279,6 @@ def main():
         val_DatasetClass = load_dataset('ScannetDatasetWholeScene_evaluation')
 
         if config.dataset == 'ScannetSparseVoxelizationDataset':
-            point_scannet = False
 
             if config.is_export: # when export, we need to export the train results too
                 train_data_loader = initialize_data_loader(
@@ -318,7 +349,6 @@ def main():
             num_in_channel = 3
 
         elif config.dataset == "SemanticKITTI":
-            point_scannet = False
             dataset = SemanticKITTI(root=config.semantic_kitti_path,
                                    num_points = None,
                                    voxel_size=config.voxel_size,
@@ -332,6 +362,32 @@ def main():
             )
             num_in_channel = 4
             num_labels = 19
+
+        elif config.dataset == 'S3DIS':
+            trainset = S3DIS(
+                    config,
+                    train=True,
+                    )
+            valset = S3DIS(
+                    config,
+                    train=False,
+                    )
+            train_data_loader = torch.utils.data.DataLoader(
+                trainset,
+                batch_size=config.batch_size,
+                sampler=InfSampler(trainset, shuffle=True), # shuffle=true, repeat=true
+                num_workers=config.threads,
+                pin_memory=True,
+                collate_fn=t.cfl_collate_fn_factory(config.train_limit_numpoints)
+            )
+
+            val_data_loader = torch.utils.data.DataLoader( # shuffle=false, repeat=false
+                valset,
+                batch_size=config.batch_size,
+                num_workers=config.val_threads,
+                pin_memory=True,
+                collate_fn=t.cfl_collate_fn_factory(False)
+            )
 
     logging.info('===> Building model')
 
@@ -355,6 +411,17 @@ def main():
             model = NetClass(num_in_channel, num_labels, config)
 
     logging.info('===> Number of trainable parameters: {}: {}M'.format(NetClass.__name__,count_parameters(model)/1e6))
+    if hasattr(model, "block1"):
+        if hasattr(model.block1[0],'h'):
+            h = model.block1[0].h
+            vec_dim = model.block1[0].vec_dim
+        else:
+            h = None
+            vec_dim = None
+    else:
+        h = None
+        vec_dim = None
+    logging.info('===> Model Args:\n PLANES: {} \n LAYERS: {}\n HEADS: {}\n Vec-dim: {}\n'.format(model.PLANES, model.LAYERS, h, vec_dim))
     logging.info(model)
 
     # Set the number of threads
