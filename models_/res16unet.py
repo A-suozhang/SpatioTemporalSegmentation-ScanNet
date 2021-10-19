@@ -421,12 +421,10 @@ class Res16UNetTestA(Res16UNetTest):
   # BLOCK = [TestConv, TRBlock, TestConv, TRBlock, TestConv, TRBlock, TestConv, TRBlock]
   # BLOCK= [TRBlock]*8
   # BLOCK= [SingleConv]*8
-  BLOCK= [BasicBlock]*8
+  BLOCK= [DiscreteAttnTRBlock]*8
   BLOCK[-1]= BasicBlock
-  # BLOCK= [DiscreteQKTRBlock]*8
   # BLOCK= [BasicBlock]*8
-  # BLOCK= [SingleConv]*8
-
+  # BLOCK= [MultiHeadDiscreteAttnTRBlock]*8
   # BLOCK[-1]= BasicBlock
   # BLOCK[0]= BasicBlock
   # BLOCK[1]= BasicBlock
