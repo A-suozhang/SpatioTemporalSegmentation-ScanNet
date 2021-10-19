@@ -161,7 +161,7 @@ def test(model, data_loader, config, transform_data_fn=None, has_gt=True, save_p
             REVERT_WHOLE_POINTCLOUD = False
             if REVERT_WHOLE_POINTCLOUD:
                 whole_pred = []
-                wihole_target = []
+                whole_target = []
                 for batch_ in range(config.val_batch_size):
                     batch_mask_ = (soutput.C[:,0] == batch_).cpu().numpy()
                     whole_pred_ = soutput.F[batch_mask_][inverse_map_list[batch_]]
@@ -191,21 +191,20 @@ def test(model, data_loader, config, transform_data_fn=None, has_gt=True, save_p
                 pred = pred[target != -1]
                 target = target[target != -1]
 
-                for _ in range(num_labels): # debug for SemKITTI: spvnas way of calc miou
-                    total_seen[_] += torch.sum(target == _)
-                    total_correct[_] += torch.sum((pred == target) & (target == _))
-                    total_positive[_] += torch.sum(pred == _)
+                # for _ in range(num_labels): # debug for SemKITTI: spvnas way of calc miou
+                    # total_seen[_] += torch.sum(target == _)
+                    # total_correct[_] += torch.sum((pred == target) & (target == _))
+                    # total_positive[_] += torch.sum(pred == _)
 
-                ious_ = []
-                for _ in range(num_labels):
-                    if total_seen[_] == 0:
-                        ious_.append(1)
-                    else:
-                        ious_.append(total_correct[_]/(total_seen[_] + total_positive[_] - total_correct[_]))
+                # ious_ = []
+                # for _ in range(num_labels):
+                    # if total_seen[_] == 0:
+                        # ious_.append(1)
+                    # else:
+                        # ious_.append(total_correct[_]/(total_seen[_] + total_positive[_] - total_correct[_]))
                 # ious_ = torch.stack(ious_, dim=-1).cpu().numpy()*100
                 # print(np.nanmean(per_class_iu(hist)), np.nanmean(ious_))
                 ious = np.array(ious_)*100
-
                 ap = average_precision(prob.cpu().detach().numpy(), target_np)
                 aps = np.vstack((aps, ap))
                 # Due to heavy bias in class, there exists class with no test label at all
