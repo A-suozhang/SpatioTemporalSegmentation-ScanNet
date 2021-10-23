@@ -152,7 +152,7 @@ class TRBlock(nn.Module):
                             ME.MinkowskiBatchNorm(planes),
                             )
 
-    def schedule_update(self, iter_=None):
+    def schedule_update(self, iter_=None): 
         '''
         some schedulable params
         '''
@@ -184,6 +184,9 @@ class TRBlock(nn.Module):
         self.diverse_loss = self.diverse_lambda*self.diverse_loss
 
     def forward(self, x, iter_=None, aux=None):
+
+        self.schedule_update(iter_)
+
         if self.type == 'attn':
 
             if self.planes != self.inplanes:
@@ -337,10 +340,12 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
         self.conv_v = False
         # self.vec_dim = 1
         # self.vec_dim = 4
-        self.vec_dim = self.planes // 8
+        self.vec_dim = self.planes // 4
         self.top_k_choice = False
         # self.neighbor_type = 'sparse_query'
         self.k = 27
+        self.temp_ = 1.e3 # the initial temp
+        # self.temp_ = 1.e3 # the initial temp
 
         # === some additonal tricks ===
         self.skip_choice = False # only_used in debug mode, notice that this mode contains unused params, so could not support ddp for now
@@ -353,7 +358,8 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
         self.codebook_prior = False
         self.hard_mask = False
 
-        self.sparse_pattern_reg = True
+        self.sparse_pattern_reg = False
+        self.svd_decomp = False  # TODO: how to inplace chaging value for nn.module parameter? hard
 
         num_class = 21
         self.with_label_embedding = False
@@ -369,24 +375,25 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
             self.linear_top = MinkoskiConvBNReLU(inplanes, planes, kernel_size=1)
             self.downsample = ME.MinkowskiConvolution(inplanes, planes, kernel_size=1, dimension=3)
 
-        if self.qk_type == 'conv':
-            # since conv already contains the neighbor info, so no pos_enc
-            self.q = nn.Sequential(
-                ME.MinkowskiConvolution(planes, self.vec_dim, kernel_size=3,dimension=3),
-                ME.MinkowskiBatchNorm(self.vec_dim),
-                    )
-            # self.q = MinkoskiConvBNReLU(planes, self.vec_dim, kernel_size=3)
-            # self.q = MinkoskiConvBNReLU(planes, self.vec_dim, kernel_size=1) # DEBUG_OBLY!
-        elif self.qk_type == 'sub':
-            self.q = MinkoskiConvBNReLU(planes, self.vec_dim, kernel_size=1)
-            self.map_qk = nn.Linear(self.vec_dim, self.vec_dim)
-        else:
-            raise NotImplementedError
-
         if self.conv_v == True:
             self.v = MinkoskiConvBNReLU(planes, planesself.h, kernel_size=3)
         else:
             self.v = MinkoskiConvBNReLU(planes, planes*self.h, kernel_size=1)
+
+        if not self.skip_choice:
+            if self.qk_type == 'conv':
+                # since conv already contains the neighbor info, so no pos_enc
+                self.q = nn.Sequential(
+                    ME.MinkowskiConvolution(planes, self.vec_dim, kernel_size=3,dimension=3),
+                    ME.MinkowskiBatchNorm(self.vec_dim),
+                        )
+                # self.q = MinkoskiConvBNReLU(planes, self.vec_dim, kernel_size=3)
+                # self.q = MinkoskiConvBNReLU(planes, self.vec_dim, kernel_size=1) # DEBUG_OBLY!
+            elif self.qk_type == 'sub':
+                self.q = MinkoskiConvBNReLU(planes, self.vec_dim, kernel_size=1)
+                self.map_qk = nn.Linear(self.vec_dim, self.vec_dim)
+            else:
+                raise NotImplementedError
 
         self.codebook = nn.ModuleList([])
 
@@ -426,9 +433,12 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
             for i_ in range(self.M):
                 self.codebook.append(
                     nn.Sequential(
-                        # ME.MinkowskiConvolution(planes, planes, kernel_size=3, dimension=3),
+                        # ME.MinkowskiConvolution(planes*self.h, planes*self.h, kernel_size=3, dimension=3, kernel_generator=kgs[i_]),
                         ME.MinkowskiChannelwiseConvolution(planes*self.h, kernel_size=3, dimension=3, kernel_generator=kgs[i_]),
-                        # ME.MinkowskiBatchNorm(planes),
+                        ME.MinkowskiBatchNorm(planes*self.h),
+                        ME.MinkowskiReLU(),
+                        # ME.MinkowskiChannelwiseConvolution(planes*self.h, kernel_size=3, dimension=3, kernel_generator=kgs[i_]),
+                        # ME.MinkowskiBatchNorm(planes*self.h),
                         # ME.MinkowskiReLU(),
                         )
                     )
@@ -446,8 +456,8 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
             for i_ in range(self.M):
                 self.codebook.append(
                     nn.Sequential(
-                        # ME.MinkowskiConvolution(planes, planes, kernel_size=3, dimension=3),
-                        ME.MinkowskiChannelwiseConvolution(planes*self.h, kernel_size=3, dimension=3),
+                        ME.MinkowskiConvolution(planes*self.h, planes*self.h, kernel_size=3, dimension=3),
+                        # ME.MinkowskiChannelwiseConvolution(planes*self.h, kernel_size=3, dimension=3),
                         # ME.MinkowskiBatchNorm(planes),
                         # ME.MinkowskiReLU(),
                         )
@@ -649,6 +659,8 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
         '''
         some schedulable params
         '''
+        # ======= the temp annealing for choice =============
+        self.temp = (self.temp_)**(1-iter_) # start from the temp, end with 0
         pass
 
         # ========== Split Codebook ==============
@@ -699,6 +711,7 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
         3rd: use attn_map: [N, M] to aggregate M convs for each point
         '''
         self.register_buffer('coord_map', x.C)
+        self.schedule_update(iter_)
 
         if self.sparse_pattern_reg:
             self.get_sparse_pattern(x)
@@ -752,99 +765,100 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
         if self.diverse_reg:
             self.get_diversity_reg()
 
-        if self.qk_type == 'conv':
+        if not self.skip_choice:
 
-            q_ = self.q(x)
-            q_f = self.expand_vec_dim(q_.F)
-            q_= ME.SparseTensor(features=q_f, coordinate_map_key=q_.coordinate_map_key, coordinate_manager=q_.coordinate_manager) # [N, dim]
-            N, dim = q_.F.shape
+            if self.qk_type == 'conv':
 
-            # get dot-product of conv-weight & q_
-            choice = []
-            out = []
-            for _ in range(self.M):
-                self.codebook[_][0].kernel.requires_grad = False
-                choice_ = self.codebook[_](q_)
-                choice.append(choice_.F.reshape(
-                    [choice_.shape[0], self.vec_dim, self.planes*self.h // self.vec_dim]
-                        ).sum(-1)
-                    )
-            choice = torch.stack(choice, dim=-1)
-            eps = 1.e-3
-            self.temp = 1
-            # self.temp = 0.1
-            # choice = choice.reshape([N,self.M*self.vec_dim])
+                q_ = self.q(x)
+                q_f = self.expand_vec_dim(q_.F)
+                q_= ME.SparseTensor(features=q_f, coordinate_map_key=q_.coordinate_map_key, coordinate_manager=q_.coordinate_manager) # [N, dim]
+                N, dim = q_.F.shape
 
-            # debug: actually to show the effect of the sparse-pattern reg, we should multuiply it afterwards, however, too strong aug seems to bring lossy perf
-            # needs checking
+                # get dot-product of conv-weight & q_
+                choice = []
+                out = []
+                for _ in range(self.M):
+                    self.codebook[_][0].kernel.requires_grad = False
+                    choice_ = self.codebook[_](q_)
+                    choice.append(choice_.F.reshape(
+                        [choice_.shape[0], self.vec_dim, self.planes*self.h // self.vec_dim]
+                            ).sum(-1)
+                        )
+                choice = torch.stack(choice, dim=-1)
+                eps = 1.e-3
+                # self.temp = 0.1
+                # choice = choice.reshape([N,self.M*self.vec_dim])
 
-            if self.M > 1: # if M==1, skip softmax since there is only 1 value
-                choice = F.softmax((choice)/self.temp, dim=-1) # [N, vec_dim, M] 
-                # choice = F.softmax((choice+eps)/self.temp, dim=-1) # [N, vec_dim, M] 
-                # choice = choice.reshape([N, self.vec_dim, self.M])
-            else:
-                pass
+                # debug: actually to show the effect of the sparse-pattern reg, we should multuiply it afterwards, however, too strong aug seems to bring lossy perf
+                # needs checking
+                if self.M > 1: # if M==1, skip softmax since there is only 1 value
+                    choice = F.softmax((choice)/self.temp, dim=-1) # [N, vec_dim, M] 
+                    # choice = F.softmax((choice+eps)/self.temp, dim=-1) # [N, vec_dim, M] 
+                    # choice = choice.reshape([N, self.vec_dim, self.M])
+                else:
+                    pass
 
-            if self.sparse_pattern_reg:
-                choice = choice*self.sparse_patterns
+                if self.sparse_pattern_reg:
+                    choice = choice*self.sparse_patterns
 
-            # attn_map = torch.stack([self.codebook[_][0].kernel for _ in range(self.M) ], dim=0) # [M. K], in some case(CUSTOM_KERNEL)
-            attn_map = torch.cat([self.codebook[_][0].kernel for _ in range(self.M)],dim=0) # [M. K]
-            self.register_buffer('attn_map', attn_map)
-            self.register_buffer('choice_map', choice)
+                # attn_map = torch.stack([self.codebook[_][0].kernel for _ in range(self.M) ], dim=0) # [M. K], in some case(CUSTOM_KERNEL)
+                attn_map = torch.cat([self.codebook[_][0].kernel for _ in range(self.M)],dim=0) # [M. K]
+                self.register_buffer('attn_map', attn_map)
+                self.register_buffer('choice_map', choice)
 
-        elif self.qk_type == 'sub':
-            # DEBUG: currently should not used
-            q_ = self.q(x)
-            q_f = q_.F
+            elif self.qk_type == 'sub':
+                # DEBUG: currently should not used
+                q_ = self.q(x)
+                q_f = q_.F
 
-            codebook_weight = []
-            for _ in range(self.M):
-                codebook_weight.append(self.codebook[_][0].kernel)
-            codebook_weight = torch.stack(codebook_weight, dim=-1) # [K, vec_dim, M]  
+                codebook_weight = []
+                for _ in range(self.M):
+                    codebook_weight.append(self.codebook[_][0].kernel)
+                codebook_weight = torch.stack(codebook_weight, dim=-1) # [K, vec_dim, M]  
 
-            neis_d = q_.coordinate_manager.get_kernel_map(q_.coordinate_map_key,
-                                                            q_.coordinate_map_key,
-                                                            kernel_size=3,
-                                                            stride=1,
-                                                                )
-            N, dim = q_.F.shape
+                neis_d = q_.coordinate_manager.get_kernel_map(q_.coordinate_map_key,
+                                                                q_.coordinate_map_key,
+                                                                kernel_size=3,
+                                                                stride=1,
+                                                                    )
+                N, dim = q_.F.shape
 
-            choice = []
-            for k_ in range(self.k):
+                choice = []
+                for k_ in range(self.k):
 
-                if not k_ in neis_d.keys():
-                    continue
+                    if not k_ in neis_d.keys():
+                        continue
 
-                neis_ = torch.gather(q_.F, dim=0, index=neis_d[k_][0].reshape(-1,1).expand(-1,self.vec_dim).long())
-                neis = torch.zeros(N,self.vec_dim, device=q_.F.device)  # DEBUG: not sure if needs decalre every time
-                neis.scatter_(dim=0, index=neis_d[k_][1].reshape(-1,1).expand(-1,self.vec_dim).long(), src=neis_)
+                    neis_ = torch.gather(q_.F, dim=0, index=neis_d[k_][0].reshape(-1,1).expand(-1,self.vec_dim).long())
+                    neis = torch.zeros(N,self.vec_dim, device=q_.F.device)  # DEBUG: not sure if needs decalre every time
+                    neis.scatter_(dim=0, index=neis_d[k_][1].reshape(-1,1).expand(-1,self.vec_dim).long(), src=neis_)
 
-                sparse_mask_cur_k = (neis.abs().sum(-1) > 0).float()
-                neis = neis - (q_.F*sparse_mask_cur_k.unsqueeze(-1).expand(-1, self.vec_dim))
-                neis = self.map_qk(neis)  # apply a linear layer over the neighbor
-                neis = neis*sparse_mask_cur_k.unsqueeze(-1).expand(-1, self.vec_dim)
+                    sparse_mask_cur_k = (neis.abs().sum(-1) > 0).float()
+                    neis = neis - (q_.F*sparse_mask_cur_k.unsqueeze(-1).expand(-1, self.vec_dim))
+                    neis = self.map_qk(neis)  # apply a linear layer over the neighbor
+                    neis = neis*sparse_mask_cur_k.unsqueeze(-1).expand(-1, self.vec_dim)
 
-                out_cur_k = self.expand_vec_dim(neis).unsqueeze(-1)*codebook_weight[k_].unsqueeze(0)
-                out_cur_k = out_cur_k.sum(1).permute(0,1)  # [M, N]
+                    out_cur_k = self.expand_vec_dim(neis).unsqueeze(-1)*codebook_weight[k_].unsqueeze(0)
+                    out_cur_k = out_cur_k.sum(1).permute(0,1)  # [M, N]
 
-                choice.append(out_cur_k)
+                    choice.append(out_cur_k)
 
-            # choice = F.softmax(torch.stack(choice, dim=-1), dim=-1).sum(-1)
-            choice = torch.stack(choice, dim=-1).sum(-1)
-            choice = F.softmax(choice/self.temp, dim=-1)
-            if self.smooth_choice:
-                # trying use avg_pool instead of conv
-                choice = ME.SparseTensor(features=choice, coordinate_map_key=q_.coordinate_map_key, coordinate_manager=q_.coordinate_manager) # [N, dim]
-                choice = self.smooth_conv(choice).F
+                # choice = F.softmax(torch.stack(choice, dim=-1), dim=-1).sum(-1)
+                choice = torch.stack(choice, dim=-1).sum(-1)
+                choice = F.softmax(choice/self.temp, dim=-1)
+                if self.smooth_choice:
+                    # trying use avg_pool instead of conv
+                    choice = ME.SparseTensor(features=choice, coordinate_map_key=q_.coordinate_map_key, coordinate_manager=q_.coordinate_manager) # [N, dim]
+                    choice = self.smooth_conv(choice).F
 
-            choice = choice.unsqueeze(1).expand(-1, dim, -1) # [N, dim, M]
-            self.register_buffer('choice_map')
-            self.register_buffer('coord_map')
+                choice = choice.unsqueeze(1).expand(-1, dim, -1) # [N, dim, M]
+                self.register_buffer('choice_map')
+                self.register_buffer('coord_map')
 
         if self.skip_choice:
             N, dim = v_.shape
-            choice = torch.randint(0,self.M, (N,1,self.M))
+            # choice = torch.randint(0,self.M, (N,1,self.M))
+            choice = torch.ones((N,1,self.M), device=v_.device).fill_(1/self.M)
             if self.skip_choice:
                 out = []
                 for _ in range(self.M):
