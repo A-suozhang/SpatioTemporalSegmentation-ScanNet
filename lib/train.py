@@ -80,11 +80,17 @@ def train(model, data_loader, val_data_loader, config, transform_data_fn=None):
 
     data_iter = data_loader.__iter__()
     if config.dataset == "SemanticKITTI":
-            num_class = 19
-            config.normalize_color = False
-            config.xyz_input = False
-            val_freq_ = config.val_freq
-            config.val_freq = config.val_freq*10
+        num_class = 19
+        config.normalize_color = False
+        config.xyz_input = False
+        val_freq_ = config.val_freq
+        config.val_freq = config.val_freq*10
+    elif config.dataset == "S3DIS":
+        num_class = 13
+        config.normalize_color = False
+        config.xyz_input = False
+        val_freq_ = config.val_freq
+        config.val_freq = config.val_freq
     else:
         num_class = 20
         val_freq_ = config.val_freq

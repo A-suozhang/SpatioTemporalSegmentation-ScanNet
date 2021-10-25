@@ -52,7 +52,7 @@ def train_worker(gpu, num_devices, NetClass, data_loader, val_data_loader, confi
     if gpu is not None:
         print("Use GPU: {} for training".format(gpu))
         rank = gpu
-    addr = 23489
+    addr = 23493
     dist.init_process_group(
         backend="nccl",
         init_method="tcp://127.0.0.1:{}".format(addr),
@@ -171,6 +171,11 @@ def train_worker(gpu, num_devices, NetClass, data_loader, val_data_loader, confi
         config.xyz_input = False
         val_freq_ = config.val_freq
         config.val_freq = config.val_freq*10 # origianl val_freq_
+    elif config.dataset == 'S3DIS':
+        num_class = 13
+        config.normalize_color = False
+        config.xyz_input = False
+        val_freq_ = config.val_freq
     else:
         val_freq_ = config.val_freq
         num_class = 20

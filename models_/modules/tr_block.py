@@ -338,9 +338,8 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
         # self.qk_type = 'sub'
         self.qk_type = 'conv'
         self.conv_v = False
-        # self.vec_dim = 1
-        # self.vec_dim = 4
         self.vec_dim = self.planes // 4
+        # self.vec_dim = self.planes // 8
         self.top_k_choice = False
         # self.neighbor_type = 'sparse_query'
         self.k = 27
@@ -348,7 +347,7 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
         # self.temp_ = 1.e3 # the initial temp
 
         # === some additonal tricks ===
-        self.skip_choice = False # only_used in debug mode, notice that this mode contains unused params, so could not support ddp for now
+        self.skip_choice = True # only_used in debug mode, notice that this mode contains unused params, so could not support ddp for now
         self.gradual_split = False
         self.smooth_choice = False
 
@@ -435,9 +434,6 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
                     nn.Sequential(
                         # ME.MinkowskiConvolution(planes*self.h, planes*self.h, kernel_size=3, dimension=3, kernel_generator=kgs[i_]),
                         ME.MinkowskiChannelwiseConvolution(planes*self.h, kernel_size=3, dimension=3, kernel_generator=kgs[i_]),
-                        ME.MinkowskiBatchNorm(planes*self.h),
-                        ME.MinkowskiReLU(),
-                        # ME.MinkowskiChannelwiseConvolution(planes*self.h, kernel_size=3, dimension=3, kernel_generator=kgs[i_]),
                         # ME.MinkowskiBatchNorm(planes*self.h),
                         # ME.MinkowskiReLU(),
                         )
@@ -745,7 +741,7 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
 
         # d['neis'] = all_neis
 
-        # # aux_  = aux.features_at_coordinates(x.C.float())
+        # aux_  = aux.features_at_coordinates(x.C.float())
         # aux_c =  aux.coordinate_manager.get_coordinates(x.coordinate_map_key).float()
         # aux_f  = aux.features_at_coordinates(aux_c)
 
@@ -756,7 +752,8 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
         # d['aux_f'] = aux.F
         # d['label'] = aux_f.squeeze(-1)
 
-        # torch.save(d, '/home/zhaotianchen/project/point-transformer/SpatioTemporalSegmentation-ScanNet/plot/scannet/sparse_extent_layer0.pth')
+        # torch.save(d, '/home/zhaotianchen/project/point-transformer/SpatioTemporalSegmentation-ScanNet/plot/final/sparse_extent_layer1.pth')
+        # import ipdb; ipdb.set_trace()
 
         # =====================================================================================================================
 

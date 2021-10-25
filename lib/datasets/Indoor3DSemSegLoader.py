@@ -24,44 +24,82 @@ def _load_data_file(name):
 
 
 class S3DIS(data.Dataset):
-    def __init__(self, config, train=True, download=False, data_precent=1.0):
+    def __init__(self, config, train=True, download=False, data_precent=1.0, whole_scene=True):
         super().__init__()
-        self.data_precent = data_precent
-        self.folder = "indoor3d_sem_seg_hdf5_data"
-        self.data_path = "/data/eva_share_users/zhaotianchen/"
-        self.data_dir = os.path.join(self.data_path, self.folder)
-        self.url = (
-            "https://shapenet.cs.stanford.edu/media/indoor3d_sem_seg_hdf5_data.zip"
-        )
-        self.train = train
-        self.split = "train" if self.train else "val"
+        if not whole_scene:
+            self.data_precent = data_precent
+            self.folder = "indoor3d_sem_seg_hdf5_data"
+            self.data_path = "/data/eva_share_users/zhaotianchen/"
+            self.data_dir = os.path.join(self.data_path, self.folder)
+            self.url = (
+                "https://shapenet.cs.stanford.edu/media/indoor3d_sem_seg_hdf5_data.zip"
+            )
+            self.train = train
+            self.split = "train" if self.train else "val"
 
-        self.NUM_IN_CHANNEL=9
-        self.NUM_LABELS=13
-        self.IGNORE_LABELS = [-1]  # labels that are not evaluated
-        self.NEED_PRED_POSTPROCESSING = False
+            self.NUM_IN_CHANNEL=9
+            self.NUM_LABELS=13
+            self.IGNORE_LABELS = [-1]  # labels that are not evaluated
+            self.NEED_PRED_POSTPROCESSING = False
 
-        if self.train:
-            self.data_dict = torch.load(os.path.join(self.data_dir, "s3dis_train.pth"),'cpu')
+            if self.train:
+                self.data_dict = torch.load(os.path.join(self.data_dir, "s3dis_train.pth"),'cpu')
+            else:
+                self.data_dict = torch.load(os.path.join(self.data_dir, "s3dis_val.pth"), 'cpu')
+
+            # self.data_dict = torch.load(os.path.join(self.data_dir, "s3dis_debug.pth"), 'cpu')
+
+            # DEBUG: dirty fixing
+            self.data_dict['data'] = np.concatenate(self.data_dict['data'], axis=0)    # [batches, 4096, 9]
+            self.data_dict['label'] = np.concatenate(self.data_dict['label'], axis=0)    # [batches, 4096, 9]
+
+            self.sparse_voxelizer = SparseVoxelizer(
+                voxel_size=config.voxel_size,
+                clip_bound=None,
+                use_augmentation=False,
+                scale_augmentation_bound=None,
+                rotation_augmentation_bound=None,
+                translation_augmentation_ratio_bound=None,
+                rotation_axis=0, # this isn't actually used
+                ignore_label=-1
+            )
         else:
-            self.data_dict = torch.load(os.path.join(self.data_dir, "s3dis_val.pth"), 'cpu')
+            self.whole_scene = whole_scene   # load-whole scene
 
-        # self.data_dict = torch.load(os.path.join(self.data_dir, "s3dis_debug.pth"), 'cpu')
+            self.NUM_IN_CHANNEL=9
+            self.NUM_LABELS=13
+            self.IGNORE_LABELS = [-1]  # labels that are not evaluated
+            self.NEED_PRED_POSTPROCESSING = False
 
-        # DEBUG: dirty fixing
-        self.data_dict['data'] = np.concatenate(self.data_dict['data'], axis=0)    # [batches, 4096, 9]
-        self.data_dict['label'] = np.concatenate(self.data_dict['label'], axis=0)    # [batches, 4096, 9]
+            self.train = train
+            self.split = "train" if self.train else "val"
 
-        self.sparse_voxelizer = SparseVoxelizer(
-            voxel_size=config.voxel_size,
-            clip_bound=None,
-            use_augmentation=False,
-            scale_augmentation_bound=None,
-            rotation_augmentation_bound=None,
-            translation_augmentation_ratio_bound=None,
-            rotation_axis=0, # this isn't actually used
-            ignore_label=-1
-        )
+            if self.train:
+                area_ids = [1,2,3,4,6]
+            else:
+                area_ids = [5]
+
+            # area_ids = [1,2,3,4,5,6]
+
+            self.data_path = "/home/zhaotianchen/project/point-transformer/pvcnn/data/s3dis/pointcnn"
+            area_names = ["Area_{}".format(i) for i in area_ids]
+
+            self.filelists = []
+            for area_name in area_names:
+                scene_names = os.listdir(os.path.join(self.data_path, area_name))
+                for scene_name in scene_names:
+                    self.filelists.append(os.path.join(area_name, scene_name))
+
+            self.sparse_voxelizer = SparseVoxelizer(
+                voxel_size=config.voxel_size,
+                clip_bound=None,
+                use_augmentation=False,
+                scale_augmentation_bound=None,
+                rotation_augmentation_bound=None,
+                translation_augmentation_ratio_bound=None,
+                rotation_axis=0, # this isn't actually used
+                ignore_label=-1
+            )
 
         # if download and not os.path.exists(self.data_dir):
             # zipfile = os.path.join(self.data_dir, os.path.basename(self.url))
@@ -146,45 +184,87 @@ class S3DIS(data.Dataset):
 
     def __getitem__(self, index):
 
-        data = self.data_dict['data'][index].reshape([-1,9])
-        target = self.data_dict['label'][index].reshape([-1])
-        data_ = data
+        if not self.whole_scene:
+            data = self.data_dict['data'][index].reshape([-1,9])
+            target = self.data_dict['label'][index].reshape([-1])
+            data_ = data
 
-        if 'train' in self.split:
-            theta = np.random.uniform(0, 2 * np.pi)
-            scale_factor = np.random.uniform(0.95, 1.05)
-            rot_mat = np.array([[np.cos(theta), np.sin(theta), 0],
-                                [-np.sin(theta),
-                                 np.cos(theta), 0], [0, 0, 1]])
+            if 'train' in self.split:
+                theta = np.random.uniform(0, 2 * np.pi)
+                scale_factor = np.random.uniform(0.95, 1.05)
+                rot_mat = np.array([[np.cos(theta), np.sin(theta), 0],
+                                    [-np.sin(theta),
+                                     np.cos(theta), 0], [0, 0, 1]])
 
-            data[:, :3] = np.dot(data_[:, :3], rot_mat) * scale_factor
+                data[:, :3] = np.dot(data_[:, :3], rot_mat) * scale_factor
+            else:
+                pass
+
+            coords = data[:,:3] - (data[:,:3]).min(0)
+            outs = self.sparse_voxelizer.voxelize(
+                coords, # debug, not sure
+                data_,
+                target,
+                center=None,
+                rotation_angle=None,
+                return_transformation=False
+                )
+
+            # d = {}
+            # d['label'] = target
+            # d['origin_pc'] = data_[:,:3]
+            # d['v_coord'] = outs[0]
+            # d['v_label'] = outs[2]
+            # torch.save(d, "./plot/data-s3dis.pth")
+            # import ipdb; ipdb.set_trace()
+
+            (coords, feats, labels, unique_map, inverse_map) = outs
         else:
-            pass
+            root_path = os.path.join(self.data_path, self.filelists[index])
+            data = np.load(os.path.join(root_path, "xyzrgb.npy")).astype(np.float32)
 
-        coords = data[:,:3] - (data[:,:3]).min(0)
-        outs = self.sparse_voxelizer.voxelize(
-            coords, # debug, not sure
-            data_,
-            target,
-            center=None,
-            rotation_angle=None,
-            return_transformation=False
-            )
+            # Apply AUG
+            if 'train' in self.split:
+                theta = np.random.uniform(0, 2 * np.pi)
+                scale_factor = np.random.uniform(0.95, 1.05)
+                rot_mat = np.array([[np.cos(theta), np.sin(theta), 0],
+                                    [-np.sin(theta),
+                                     np.cos(theta), 0], [0, 0, 1]])
 
-        # d = {}
-        # d['label'] = target
-        # d['origin_pc'] = data_[:,:3]
-        # d['v_coord'] = outs[0]
-        # d['v_label'] = outs[2]
-        # torch.save(d, "./plot/data-s3dis.pth")
-        # import ipdb; ipdb.set_trace()
+                data[:, :3] = np.dot(data[:, :3], rot_mat) * scale_factor
+            else:
+                pass
 
-        # outs = (coords, feats, labels, unique_map, inverse_map)
+            label = np.load(os.path.join(root_path, "label.npy")).astype(np.float32)
+            label = label.squeeze(-1)
+            normalized_xyz = (data[:,:3] / data[:,:3].max() - 0.5)
+            data = np.concatenate([data, normalized_xyz], axis=-1)
+            coords = data[:,:3]
+            coords[:,:3] -= np.expand_dims(coords[:,:3].min(0), axis=0)
+            outs = self.sparse_voxelizer.voxelize(
+                coords,
+                data,
+                label,
+                center=None,
+                rotation_angle=None,
+                return_transformation=False
+                )
+            # d = {}
+            # d['label'] = label
+            # d['origin_pc'] = coords[:,:3]
+            # d['v_coord'] = outs[0]
+            # d['v_label'] = outs[2]
+            # torch.save(d, "./plot/data-s3dis-whole.pth")
+            # print(label.shape, outs[2].shape)
+
         assert isinstance(outs, tuple)
         return outs
 
     def __len__(self):
-        return len(self.data_dict['data'])
+        if not self.whole_scene:
+            return len(self.data_dict['data'])
+        else:
+            return len(self.filelists)
 
     def cleanup(self):
         self.sparse_voxelizer.cleanup()

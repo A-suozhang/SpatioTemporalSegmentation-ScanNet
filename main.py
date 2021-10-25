@@ -64,7 +64,7 @@ def main():
 
     if config.test_config:
         # When using the test_config, reload and overwrite it, so should keep some configs 
-        val_bs = config.batch_size
+        val_bs = config.val_batch_size
         is_export = config.is_export
 
         json_config = json.load(open(config.test_config, 'r'))
@@ -364,6 +364,8 @@ def main():
             num_labels = 19
 
         elif config.dataset == 'S3DIS':
+            config.xyz_input = False
+
             trainset = S3DIS(
                     config,
                     train=True,
@@ -388,6 +390,8 @@ def main():
                 pin_memory=True,
                 collate_fn=t.cfl_collate_fn_factory(False)
             )
+            num_in_channel = 9
+            num_labels = 13
 
     logging.info('===> Building model')
 

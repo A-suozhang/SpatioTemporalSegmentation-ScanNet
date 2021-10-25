@@ -159,10 +159,11 @@ def test(model, data_loader, config, transform_data_fn=None, has_gt=True, save_p
 
             # Unpack it to original length
             REVERT_WHOLE_POINTCLOUD = False
+            # print('{{}/{}}'.format(iteration, max_iter))
             if REVERT_WHOLE_POINTCLOUD:
                 whole_pred = []
                 whole_target = []
-                for batch_ in range(config.val_batch_size):
+                for batch_ in range(config.batch_size):
                     batch_mask_ = (soutput.C[:,0] == batch_).cpu().numpy()
                     whole_pred_ = soutput.F[batch_mask_][inverse_map_list[batch_]]
                     whole_target_ = target[batch_mask_][inverse_map_list[batch_]]
