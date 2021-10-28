@@ -8,8 +8,8 @@ export ITER_SIZE=2
 export MODEL=Res16UNetTestA
 #export MODEL=Res16UNet
 
-export OPTIMIZER=SGD
-#export OPTIMIZER=Adam
+#export OPTIMIZER=SGD
+export OPTIMIZER=Adam
 
 #export DATASET=ScannetDataset
 #export DATASET=ScannetSparseVoxelizationDataset
@@ -23,13 +23,8 @@ export MAX_POINTS=200000  # bs=4, h=4 model
 #export POINTS=4096
 #export LR=7.5e-2
 
-export LR=1e-1
 #export LR=1e-1
-export MAX_ITER=15000
-#export MAX_POINTS=180000  # bs=4, cont-attn
-export MAX_POINTS=260000  # bs=4, h=4 model
-#export POINTS=4096
-#export LR=7.5e-2
+export LR=2e-3
 
 export MP=True
 

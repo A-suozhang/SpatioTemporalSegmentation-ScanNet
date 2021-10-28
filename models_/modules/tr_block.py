@@ -337,9 +337,10 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
         self.M = 2
         # self.qk_type = 'sub'
         self.qk_type = 'conv'
-        self.conv_v = False
+        self.conv_v = True
+        # self.vec_dim = 1
+        # self.vec_dim = 4
         self.vec_dim = self.planes // 8
-        # self.vec_dim = self.planes // 8
         self.top_k_choice = False
         # self.neighbor_type = 'sparse_query'
         self.k = 27
@@ -375,7 +376,10 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
             self.downsample = ME.MinkowskiConvolution(inplanes, planes, kernel_size=1, dimension=3)
 
         if self.conv_v == True:
-            self.v = MinkoskiConvBNReLU(planes, planesself.h, kernel_size=3)
+            self.v = nn.Sequential(
+                    MinkoskiConvBNReLU(planes, planes, kernel_size=3),
+                    MinkoskiConvBNReLU(planes, planes*self.h, kernel_size=1),
+                )
         else:
             self.v = MinkoskiConvBNReLU(planes, planes*self.h, kernel_size=1)
 
@@ -657,6 +661,18 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
         '''
         # ======= the temp annealing for choice =============
         self.temp = (self.temp_)**(1-iter_) # start from the temp, end with 0
+
+        if self.skip_choice == True and iter_> 0.1:
+            self.skip_choice = False
+            print('SkipChoice Warmup Done, Start training choice qk')
+
+        if self.skip_choice == False and not hasattr(self, "q"):
+            self.q = nn.Sequential(
+                ME.MinkowskiConvolution(self.planes, self.vec_dim, kernel_size=3,dimension=3),
+                ME.MinkowskiBatchNorm(self.vec_dim),
+                    )
+            self.q.to(self.codebook[0][0].kernel.device)
+
         pass
 
         # ========== Split Codebook ==============
@@ -855,15 +871,14 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
         if self.skip_choice:
             N, dim = v_.shape
             # choice = torch.randint(0,self.M, (N,1,self.M))
-            choice = torch.ones((N,1,self.M), device=v_.device).fill_(1/self.M)
-            if self.skip_choice:
-                out = []
-                for _ in range(self.M):
-                    self.codebook[_][0].kernel.requires_grad = True
-                    out_ = self.codebook[_](v_)
-                    out.append(out_.F)
-                out = torch.stack(out, dim=-1)
-                out = out.sum(-1)
+            # choice = torch.ones((N,1,self.M), device=v_.device).fill_(1/self.M)
+            out = []
+            for _ in range(self.M):
+                self.codebook[_][0].kernel.requires_grad = True
+                out_ = self.codebook[_](v_)
+                out.append(out_.F)
+            out = torch.stack(out, dim=-1)
+            out = out.sum(-1)
 
         elif self.top_k_choice:
             # DEV: maybe add Channel Choice also to support a point with different vec_dims(needs repeating), maybe even nearly full(since if a point have many choices, it will appear in many choices)
@@ -996,7 +1011,6 @@ class DiscreteQKTRBlock(TRBlock):
         self.qk_type = 'dot'
         # self.qk_type = 'conv'
         self.conv_v = False
-        # self.conv_v = True
         # self.vec_dim = 1
         self.vec_dim = planes // 8
         # self.vec_dim = 8

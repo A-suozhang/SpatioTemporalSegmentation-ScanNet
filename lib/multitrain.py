@@ -52,7 +52,7 @@ def train_worker(gpu, num_devices, NetClass, data_loader, val_data_loader, confi
     if gpu is not None:
         print("Use GPU: {} for training".format(gpu))
         rank = gpu
-    addr = 23493
+    addr = 23448
     dist.init_process_group(
         backend="nccl",
         init_method="tcp://127.0.0.1:{}".format(addr),
