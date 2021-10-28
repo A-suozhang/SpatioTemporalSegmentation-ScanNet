@@ -3,7 +3,7 @@ export CUDA_LAUNCH_BLOCKING=1
 #export BATCH_SIZE=16
 #export BATCH_SIZE=6
 #export BATCH_SIZE=8
-export BATCH_SIZE=4
+export BATCH_SIZE=2
 export ITER_SIZE=1
 #export MODEL=MinkowskiTransformerNet
 #export MODEL=Res16UNet34C
@@ -36,6 +36,7 @@ export LOG=$1
 
 #export USE_AUX=True
 #export RESUME=True
+export ENABLE_POINT_BRANCH=True # SPVCNN feature
 
 #export DISTILL=True
 

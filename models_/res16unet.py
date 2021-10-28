@@ -10,6 +10,7 @@ from models.modules.resnet_block import BasicBlock, Bottleneck, SingleConv, Test
 from models.modules.tr_block import *
 
 import torch
+from torch import nn
 import numpy as np
 import MinkowskiEngine.MinkowskiOps as me
 
@@ -229,7 +230,39 @@ class Res16UNetBase(ResNetBase):
 
     self.final = conv(self.PLANES[7], out_channels, kernel_size=1, stride=1, bias=True, D=D)
 
-  def forward(self, x, save_anchor=False, iter_=None, aux=None):
+    if config.enable_point_branch:
+      self.point_transform_mlp = nn.ModuleList([
+        nn.Sequential(
+          nn.Linear(self.INIT_DIM, self.PLANES[3]),
+          nn.BatchNorm1d(self.PLANES[3]),
+          nn.ReLU(True)
+        ),
+        nn.Sequential(
+          nn.Linear(self.PLANES[3], self.PLANES[5]),
+          nn.BatchNorm1d(self.PLANES[5]),
+          nn.ReLU(True)
+        ),
+        nn.Sequential(
+          nn.Linear(self.PLANES[5], self.PLANES[7]),
+          nn.BatchNorm1d(self.PLANES[7]),
+          nn.ReLU(True)
+        )
+      ])
+      self.downsample16x = nn.Sequential(
+        ME.MinkowskiMaxPooling(kernel_size=2, stride=2, dimension=3),
+        ME.MinkowskiMaxPooling(kernel_size=2, stride=2, dimension=3),
+        ME.MinkowskiMaxPooling(kernel_size=2, stride=2, dimension=3),
+        ME.MinkowskiMaxPooling(kernel_size=2, stride=2, dimension=3)
+      )
+      self.downsample4x = nn.Sequential(
+        ME.MinkowskiMaxPooling(kernel_size=2, stride=2, dimension=3),
+        ME.MinkowskiMaxPooling(kernel_size=2, stride=2, dimension=3)
+      )
+      self.dropout = nn.Dropout(0.3, True)
+      self.interpolate = ME.MinkowskiInterpolation(return_kernel_map=False, return_weights=False)
+    
+
+  def forward(self, x, save_anchor=False, iter_=None, aux=None, enable_point_branch=False):
     # for n, m in self.named_modules():
         # if 'block' in n:
             # if hasattr(m, "schedule_update"):
@@ -240,6 +273,11 @@ class Res16UNetBase(ResNetBase):
     out = self.conv0p1s1(x)
     out = self.bn0(out)
     out_p1 = get_nonlinearity_fn(self.config.nonlinearity, out)
+
+    if enable_point_branch:
+      out_p1_point = out_p1.F
+      out_p1_coord = out_p1.C
+
     # mapped to transformer.stem2
     out = self.conv1p1s2(out_p1)
     out = self.bn1(out)
@@ -275,6 +313,13 @@ class Res16UNetBase(ResNetBase):
     # if save_anchor:
         # self.anchors.append(out)
 
+    if enable_point_branch:
+      interpolated_out = self.interpolate(out, out_p1_coord.type(torch.FloatTensor).to(out.device))
+      # fused feature
+      block4_features = interpolated_out + self.point_transform_mlp[0](out_p1_point)
+      out_fused = ME.SparseTensor(features=block4_features, coordinates=out_p1_coord)
+      out_fused = self.downsample16x(out_fused)
+      out = ME.SparseTensor(features=self.dropout(out_fused.F), coordinate_map_key=out.coordinate_map_key, coordinate_manager=out.coordinate_manager)
 
     # pixel_dist=8
     # mapped to transfrormer.PTBlock5
@@ -297,6 +342,13 @@ class Res16UNetBase(ResNetBase):
     if save_anchor:
       self.anchors.append(out)
 
+    if enable_point_branch:
+      interpolated_out = self.interpolate(out, out_p1_coord.type(torch.FloatTensor).to(out.device))
+      block6_features = interpolated_out + self.point_transform_mlp[1](block4_features)
+      out_fused = ME.SparseTensor(features=block6_features, coordinates=out_p1_coord)
+      out_fused = self.downsample4x(out_fused)
+      out = ME.SparseTensor(features=self.dropout(out_fused.F), coordinate_map_key=out.coordinate_map_key, coordinate_manager=out.coordinate_manager)
+
     # pixel_dist=2
     # mapped to transformer.PTBlock7
     out = self.convtr6p4s2(out)
@@ -315,6 +367,13 @@ class Res16UNetBase(ResNetBase):
 
     out = me.cat(out, out_p1)
     out = self.block8(out, iter_, aux)
+
+    if enable_point_branch:
+      interpolated_out = self.interpolate(out, out_p1_coord.type(torch.FloatTensor).to(out.device))
+      block8_features = interpolated_out + self.point_transform_mlp[2](block6_features)
+      out_fused = ME.SparseTensor(features=block8_features, coordinates=out_p1_coord)
+      out = ME.SparseTensor(features=self.dropout(out_fused.F), coordinate_map_key=out.coordinate_map_key, coordinate_manager=out.coordinate_manager)
+
 
     out = self.final(out)
 
@@ -420,12 +479,12 @@ class Res16UNetTest(Res16UNetBase):
 class Res16UNetTestA(Res16UNetTest):
 
   DEPTH_RATIO = 2
-  PLANES_RATIO = 0.5
+  PLANES_RATIO = 0.75
   # BLOCK = [TestConv, TRBlock, TestConv, TRBlock, TestConv, TRBlock, TestConv, TRBlock]
   # BLOCK= [TRBlock]*8
   # BLOCK= [SingleConv]*8
-  BLOCK= [BasicBlock]*8
-  # BLOCK= [DiscreteAttnTRBlock]*8
+  # BLOCK= [BasicBlock]*8
+  BLOCK= [DiscreteAttnTRBlock]*8
   BLOCK[-1]= BasicBlock
   # BLOCK= [BasicBlock]*8
   # BLOCK= [MultiHeadDiscreteAttnTRBlock]*8

@@ -28,7 +28,7 @@ export RESUME=${RESUME:-none}
 # export RESUME=${RESUME:-True}
 export POINTS=${POINTS:-8192}
 export VOXEL_SIZE=${VOXEL_SIZE:-0.1}
-
+export ENABLE_POINT_BRANCH=${ENABLE_POINT_BRANCH:-false}
 
 export USE_AUX=${USE_AUX:-false}
 export DISTILL=${DISTILL:-false}
@@ -89,6 +89,7 @@ time python -W ignore main.py \
 	--multiprocess $MP \
 	--voxel_size $VOXEL_SIZE \
 	--is_debug $IS_DEBUG \
+	--enable_point_branch $ENABLE_POINT_BRANCH \
 	$3 
 
 #time python -W ignore main.py \

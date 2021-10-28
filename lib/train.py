@@ -114,6 +114,8 @@ def train(model, data_loader, val_data_loader, config, transform_data_fn=None):
             for sub_iter in range(config.iter_size):
                 # Get training data
                 data_timer.tic()
+                pointcloud = None
+
                 if config.return_transformation:
                     coords, input, target, _, _, pointcloud, transformation = data_iter.next()
                 else:
@@ -160,6 +162,8 @@ def train(model, data_loader, val_data_loader, config, transform_data_fn=None):
                 # with torch.autograd.profiler.profile(enabled=True, use_cuda=True, record_shapes=False, profile_memory=True) as prof0:
                 if aux is not None:
                     soutput = model(sinput, aux)
+                elif config.enable_point_branch:
+                    soutput = model(sinput, iter_ = curr_iter / config.max_iter, enable_point_branch=True)
                 else:
                     # label-aux, feed it in as additional reg
                     soutput = model(sinput, iter_= curr_iter / config.max_iter, aux=starget)  # feed in the progress of training for annealing inside the model

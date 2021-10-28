@@ -215,13 +215,14 @@ def main():
                                    voxel_size=config.voxel_size,
                                    sample_stride=config.sample_stride,
                                    submit=False)
+            collate_fn_factory = t.cfl_collate_fn_factory
             train_data_loader = torch.utils.data.DataLoader(
                 dataset['train'],
                 batch_size=config.batch_size,
                 sampler=InfSampler(dataset['train'], shuffle=True), # shuffle=true, repeat=true
                 num_workers=config.threads,
                 pin_memory=True,
-                collate_fn=t.cfl_collate_fn_factory(config.train_limit_numpoints)
+                collate_fn=collate_fn_factory(config.train_limit_numpoints)
             )
 
             val_data_loader = torch.utils.data.DataLoader( # shuffle=false, repeat=false

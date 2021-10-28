@@ -99,6 +99,7 @@ data_arg.add_argument('--return_transformation', type=str2bool, default=False)
 data_arg.add_argument('--ignore_duplicate_class', type=str2bool, default=False)
 data_arg.add_argument('--partial_crop', type=float, default=0.)
 data_arg.add_argument('--train_limit_numpoints', type=int, default=180000)
+data_arg.add_argument('--enable_point_branch', type=str2bool, default=False)
 
 # data_arg.add_argument('--points', type=bool, default=False)
 data_arg.add_argument('--voxel_size', type=float, default=0.1)

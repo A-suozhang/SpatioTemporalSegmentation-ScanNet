@@ -338,16 +338,16 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
         # self.qk_type = 'sub'
         self.qk_type = 'conv'
         self.conv_v = False
-        self.vec_dim = self.planes // 4
+        self.vec_dim = self.planes // 8
         # self.vec_dim = self.planes // 8
         self.top_k_choice = False
         # self.neighbor_type = 'sparse_query'
         self.k = 27
-        self.temp_ = 1.e3 # the initial temp
+        self.temp_ = 1.e0 # the initial temp
         # self.temp_ = 1.e3 # the initial temp
 
         # === some additonal tricks ===
-        self.skip_choice = True # only_used in debug mode, notice that this mode contains unused params, so could not support ddp for now
+        self.skip_choice = False # only_used in debug mode, notice that this mode contains unused params, so could not support ddp for now
         self.gradual_split = False
         self.smooth_choice = False
 
