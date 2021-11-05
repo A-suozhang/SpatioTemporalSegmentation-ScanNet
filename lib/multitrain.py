@@ -52,7 +52,7 @@ def train_worker(gpu, num_devices, NetClass, data_loader, val_data_loader, confi
     if gpu is not None:
         print("Use GPU: {} for training".format(gpu))
         rank = gpu
-    addr = 23448
+    addr = 23455
     dist.init_process_group(
         backend="nccl",
         init_method="tcp://127.0.0.1:{}".format(addr),
@@ -134,34 +134,33 @@ def train_worker(gpu, num_devices, NetClass, data_loader, val_data_loader, confi
 
     best_val_miou, best_val_iter, curr_iter, epoch, is_training = 0, 0, 1, 1, True
 
-    # RESUME not tested!
     if config.resume:
-        raise NotImplementedError
-        # v_loss, v_score, v_mAP, v_mIoU = test(model, val_data_loader, config)
+        # Test loaded ckpt first
+        v_loss, v_score, v_mAP, v_mIoU = test(model, val_data_loader, config)
 
-        # checkpoint_fn = config.resume + '/weights.pth'
-        # if osp.isfile(checkpoint_fn):
-            # logging.info("=> loading checkpoint '{}'".format(checkpoint_fn))
-            # state = torch.load(checkpoint_fn)
-            # curr_iter = state['iteration'] + 1
-            # epoch = state['epoch']
-            # # we skip attention maps because the shape won't match because voxel number is different
-            # # e.g. copyting a param with shape (23385, 8, 4) to (43529, 8, 4)
-            # d = {k:v for k,v in state['state_dict'].items() if 'map' not in k }
-            # # handle those attn maps we don't load from saved dict
-            # for k in model.state_dict().keys():
-                # if k in d.keys(): continue
-                # d[k] = model.state_dict()[k]
-            # model.load_state_dict(d)
-            # if config.resume_optimizer:
-                # scheduler = initialize_scheduler(optimizer, config, last_step=curr_iter)
-                # optimizer.load_state_dict(state['optimizer'])
-            # if 'best_val' in state:
-                # best_val_miou = state['best_val']
-                # best_val_iter = state['best_val_iter']
-            # logging.info("=> loaded checkpoint '{}' (epoch {})".format(checkpoint_fn, state['epoch']))
-        # else:
-            # raise ValueError("=> no checkpoint found at '{}'".format(checkpoint_fn))
+        checkpoint_fn = config.resume + '/weights.pth'
+        if osp.isfile(checkpoint_fn):
+            logging.info("=> loading checkpoint '{}'".format(checkpoint_fn))
+            state = torch.load(checkpoint_fn)
+            curr_iter = state['iteration'] + 1
+            epoch = state['epoch']
+            # we skip attention maps because the shape won't match because voxel number is different
+            # e.g. copyting a param with shape (23385, 8, 4) to (43529, 8, 4)
+            d = {k:v for k,v in state['state_dict'].items() if 'map' not in k }
+            # handle those attn maps we don't load from saved dict
+            for k in model.state_dict().keys():
+                if k in d.keys(): continue
+                d[k] = model.state_dict()[k]
+            model.load_state_dict(d)
+            if config.resume_optimizer:
+                scheduler = initialize_scheduler(optimizer, config, last_step=curr_iter)
+                optimizer.load_state_dict(state['optimizer'])
+            if 'best_val' in state:
+                best_val_miou = state['best_val']
+                best_val_iter = state['best_val_iter']
+            logging.info("=> loaded checkpoint '{}' (epoch {})".format(checkpoint_fn, state['epoch']))
+        else:
+            raise ValueError("=> no checkpoint found at '{}'".format(checkpoint_fn))
 
     data_iter = data_loader.__iter__()
     device = gpu # multitrain fed in the device
@@ -239,6 +238,8 @@ def train_worker(gpu, num_devices, NetClass, data_loader, val_data_loader, confi
                 # model.initialize_coords(*init_args)
                 if aux is not None:
                     soutput = model(sinput, aux)
+                elif config.enable_point_branch:
+                    soutput = model(sinput, iter_= curr_iter / config.max_iter, enable_point_branch=True)
                 else:
                     soutput = model(sinput, iter_= curr_iter / config.max_iter)  # feed in the progress of training for annealing inside the model
                     # soutput = model(sinput)
@@ -282,11 +283,20 @@ def train_worker(gpu, num_devices, NetClass, data_loader, val_data_loader, confi
                 # Compute and accumulate gradient
                 loss /= config.iter_size
                 batch_loss += loss.item()
-                loss.backward()
-
+                if not config.use_sam:
+                    loss.backward()
+                else:
+                    with model.no_sync():
+                        loss.backward()
 
             # Update number of steps
-            optimizer.step()
+            if not config.use_sam:
+                optimizer.step()
+            else:
+                optimizer.first_step(zero_grad=True)
+                soutput = model(sinput, iter_= curr_iter / config.max_iter, aux=starget)
+                criterion(soutput.F, target.long()).backward()
+                optimizer.second_step(zero_grad=True)
 
             if config.lr_warmup is None:
                 scheduler.step()

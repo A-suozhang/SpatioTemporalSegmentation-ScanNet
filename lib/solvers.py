@@ -9,6 +9,8 @@ import logging
 from torch.optim import SGD, Adam
 from torch.optim.lr_scheduler import LambdaLR, StepLR
 
+from lib.sam import SAM
+
 
 class LambdaStepLR(LambdaLR):
 
@@ -121,30 +123,40 @@ class SGDLars(SGD):
 def initialize_optimizer(params, config):
   assert config.optimizer in ['SGD', 'Adagrad', 'Adam', 'RMSProp', 'Rprop', 'SGDLars']
 
-  if config.optimizer == 'SGD':
-    return SGD(
-        params,
-        lr=config.lr,
-        momentum=config.sgd_momentum,
-        dampening=0.,
-        nesterov=True,
-        weight_decay=config.weight_decay)
-  if config.optimizer == 'SGDLars':
-    return SGDLars(
-        params,
-        lr=config.lr,
-        momentum=config.sgd_momentum,
-        dampening=config.sgd_dampening,
-        weight_decay=config.weight_decay)
-  elif config.optimizer == 'Adam':
-    return Adam(
-        params,
-        lr=config.lr,
-        betas=(config.adam_beta1, config.adam_beta2),
-        weight_decay=config.weight_decay)
+  if config.use_sam:
+      base_optimizer = SGD
+      optimizer = SAM(
+              params,
+              base_optimizer,
+              lr=config.lr,
+              momentum=config.sgd_momentum,
+              )
+      return optimizer
   else:
-    logging.error('Optimizer type not supported')
-    raise ValueError('Optimizer type not supported')
+      if config.optimizer == 'SGD':
+        return SGD(
+            params,
+            lr=config.lr,
+            momentum=config.sgd_momentum,
+            dampening=0.,
+            nesterov=True,
+            weight_decay=config.weight_decay)
+      if config.optimizer == 'SGDLars':
+        return SGDLars(
+            params,
+            lr=config.lr,
+            momentum=config.sgd_momentum,
+            dampening=config.sgd_dampening,
+            weight_decay=config.weight_decay)
+      elif config.optimizer == 'Adam':
+        return Adam(
+            params,
+            lr=config.lr,
+            betas=(config.adam_beta1, config.adam_beta2),
+            weight_decay=config.weight_decay)
+      else:
+        logging.error('Optimizer type not supported')
+        raise ValueError('Optimizer type not supported')
 
 
 def initialize_scheduler(optimizer, config, last_step=-1):

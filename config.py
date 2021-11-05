@@ -51,7 +51,7 @@ opt_arg = add_argument_group('Optimizer')
 # opt_arg.add_argument('--optimizer', type=str, default='SGD')
 opt_arg.add_argument('--optimizer', type=str, default='Adam')
 opt_arg.add_argument('--lr', type=float, default=1e-2)
-opt_arg.add_argument('--lr_warmup', type=float, default=0)
+opt_arg.add_argument('--lr_warmup', type=float, default=None)
 opt_arg.add_argument('--sgd_momentum', type=float, default=0.9)
 opt_arg.add_argument('--sgd_dampening', type=float, default=0.1)
 opt_arg.add_argument('--adam_beta1', type=float, default=0.9)
@@ -146,6 +146,7 @@ train_arg.add_argument(
     type=str2bool,
     help='Use checkpoint optimizer states when resume training')
 train_arg.add_argument('--eval_upsample', type=str2bool, default=False)
+train_arg.add_argument('--use_sam', type=str2bool, default=False)
 
 train_arg.add_argument('--distill', type=str2bool, default=False)
 # train_arg.add_argument('--tch_model', type=str, default="Res16UNet18A") # speciffy this in train_distill func

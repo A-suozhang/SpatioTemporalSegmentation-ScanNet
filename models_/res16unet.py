@@ -234,17 +234,17 @@ class Res16UNetBase(ResNetBase):
       self.point_transform_mlp = nn.ModuleList([
         nn.Sequential(
           nn.Linear(self.INIT_DIM, self.PLANES[3]),
-          nn.BatchNorm1d(self.PLANES[3]),
+          # nn.BatchNorm1d(self.PLANES[3]),
           nn.ReLU(True)
         ),
         nn.Sequential(
           nn.Linear(self.PLANES[3], self.PLANES[5]),
-          nn.BatchNorm1d(self.PLANES[5]),
+          #nn.BatchNorm1d(self.PLANES[5]),
           nn.ReLU(True)
         ),
         nn.Sequential(
           nn.Linear(self.PLANES[5], self.PLANES[7]),
-          nn.BatchNorm1d(self.PLANES[7]),
+          # nn.BatchNorm1d(self.PLANES[7]),
           nn.ReLU(True)
         )
       ])
@@ -258,7 +258,8 @@ class Res16UNetBase(ResNetBase):
         ME.MinkowskiMaxPooling(kernel_size=2, stride=2, dimension=3),
         ME.MinkowskiMaxPooling(kernel_size=2, stride=2, dimension=3)
       )
-      self.dropout = nn.Dropout(0.3, True)
+      self.dropout = nn.Dropout(0.1, True)
+      # self.dropout = nn.Dropout(0.3, True)
       self.interpolate = ME.MinkowskiInterpolation(return_kernel_map=False, return_weights=False)
     
 
@@ -479,21 +480,28 @@ class Res16UNetTest(Res16UNetBase):
 class Res16UNetTestA(Res16UNetTest):
 
   DEPTH_RATIO = 2
-  PLANES_RATIO = 0.75
+  PLANES_RATIO = 0.75 # for SPVCNN experiment, the smallest model
   # BLOCK = [TestConv, TRBlock, TestConv, TRBlock, TestConv, TRBlock, TestConv, TRBlock]
+
+  # Discrete Attention Experiment 
   BLOCK= [DiscreteAttnTRBlock]*8
   BLOCK[-1]= BasicBlock
+
+  # All conv
+  # BLOCK = [BasicBlock] * 8
+
   # BLOCK= [MultiHeadDiscreteAttnTRBlock]*8
+  # BLOCK= [ConvTRBlock]*8
   # BLOCK= [DiscreteQKTRBlock]*8
   # BLOCK= [BasicBlock]*8
   # BLOCK= [SingleConv]*8
 
   # BLOCK[-1]= BasicBlock
-  # BLOCK[0]= BasicBlock
-  # BLOCK[1]= BasicBlock
+  BLOCK[0]= BasicBlock
+  BLOCK[-2]= BasicBlock
 
   LAYERS = (np.array([1, 1, 1, 1, 1, 1, 1, 1])*DEPTH_RATIO).astype(int)
-  # LAYERS = (2, 3, 4, 6, 2, 2, 2, )
+  # LAYERS = (2, 3, 4, 6, 2, 2, 2, 2)
   PLANES = (np.array([32, 64, 128, 256, 128, 128, 96, 96])*PLANES_RATIO).astype(int)
   # PLANES = (8, 16, 32, 64, 64, 32, 24, 24)
   # PLANES = (16, 32, 64, 128, 128, 64, 48, 48)

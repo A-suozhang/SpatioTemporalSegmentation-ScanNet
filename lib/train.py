@@ -24,6 +24,7 @@ from models.pct_voxel_utils import separate_batch, voxel2points
 
 # Profiler
 from lib.profile import CUDAMemoryProfiler
+from lib.sam import SAM
 import sys
 import threading
 
@@ -211,7 +212,13 @@ def train(model, data_loader, val_data_loader, config, transform_data_fn=None):
                     # soutput = model(sinput)
 
             # Update number of steps
-            optimizer.step()
+            if not config.use_sam:
+                optimizer.step()
+            else:
+                optimizer.first_step(zero_grad=True)
+                soutput = model(sinput, iter_= curr_iter / config.max_iter, aux=starget)
+                criterion(soutput.F, target.long()).backward()
+                optimizer.second_step(zero_grad=True)
 
             if config.lr_warmup is None:
                 scheduler.step()
