@@ -158,8 +158,8 @@ def test(model, data_loader, config, transform_data_fn=None, has_gt=True, save_p
                 assert len_sum == len(pred)
 
             # Unpack it to original length
-            REVERT_WHOLE_POINTCLOUD = False
-            print('{}/{}'.format(iteration, max_iter))
+            REVERT_WHOLE_POINTCLOUD = True
+            # print('{}/{}'.format(iteration, max_iter))
             if REVERT_WHOLE_POINTCLOUD:
                 whole_pred = []
                 whole_target = []

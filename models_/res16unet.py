@@ -478,9 +478,10 @@ class Res16UNetTest(Res16UNetBase):
 
 class Res16UNetTestA(Res16UNetTest):
 
-  DEPTH_RATIO = 2
+  DEPTH_RATIO = 1
   PLANES_RATIO = 0.75
   # BLOCK = [TestConv, TRBlock, TestConv, TRBlock, TestConv, TRBlock, TestConv, TRBlock]
+  # BLOCK= [TRBlock]*8
   BLOCK= [DiscreteAttnTRBlock]*8
   BLOCK[-1]= BasicBlock
   # BLOCK= [MultiHeadDiscreteAttnTRBlock]*8
@@ -490,11 +491,12 @@ class Res16UNetTestA(Res16UNetTest):
 
   # BLOCK[-1]= BasicBlock
   BLOCK[0]= BasicBlock
-  BLOCK[1]= BasicBlock
+  # BLOCK[1]= BasicBlock
 
-  LAYERS = (np.array([1, 1, 1, 1, 1, 1, 1, 1])*DEPTH_RATIO).astype(int)
-  # LAYERS = (2, 3, 4, 6, 2, 2, 2, )
-  PLANES = (np.array([32, 64, 128, 256, 128, 128, 96, 96])*PLANES_RATIO).astype(int)
+  # LAYERS = (np.array([1, 1, 1, 1, 1, 1, 1, 1])*DEPTH_RATIO).astype(int)
+  LAYERS = (np.array([1, 2, 2, 3, 3, 2,2, 1])*DEPTH_RATIO).astype(int)
+  # LAYERS = (2, 3, 4, 6, 2, 2, 2, 2)
+  PLANES = (np.array([32, 64, 128, 256, 256, 128, 96, 96])*PLANES_RATIO).astype(int)
 
   # PLANES = (8, 16, 32, 64, 64, 32, 24, 24)
   # PLANES = (16, 32, 64, 128, 128, 64, 48, 48)
