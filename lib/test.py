@@ -128,7 +128,7 @@ def test(model, data_loader, config, transform_data_fn=None, has_gt=True, save_p
             if aux is not None:
                 soutput = model(sinput)
             else:
-                soutput = model(sinput, iter_ = iteration / max_iter)
+                soutput = model(sinput, iter_ = iteration / max_iter, enable_point_branch=config.enable_point_branch)
             output = soutput.F
             if torch.isnan(output).sum() > 0:
                 import ipdb; ipdb.set_trace()

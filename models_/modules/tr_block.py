@@ -405,7 +405,7 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
                 # since conv already contains the neighbor info, so no pos_enc
                 self.q = nn.Sequential(
                     ME.MinkowskiConvolution(planes, self.vec_dim, kernel_size=3,dimension=3),
-                    ME.MinkowskiBatchNorm(self.vec_dim),
+                    # ME.MinkowskiBatchNorm(self.vec_dim),
                         )
                 # self.q = MinkoskiConvBNReLU(planes, self.vec_dim, kernel_size=3)
                 # self.q = MinkoskiConvBNReLU(planes, self.vec_dim, kernel_size=1) # DEBUG_OBLY!
@@ -424,6 +424,7 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
                 "stride": 1,
                 "dilation": 2,
                 "region_type":ME.RegionType.HYPER_CROSS,
+                # "region_type":ME.RegionType.HYPER_CUBE,
                 # "region_type": ME.RegionType.CUSTOM,
                 # "region_offsets": ro0,
                 "dimension": 3,
@@ -984,6 +985,43 @@ class MultiHeadDiscreteAttnTRBlock(nn.Module):
         outs = ME.SparseTensor(features=outs, coordinate_map_key=x.coordinate_map_key, coordinate_manager=x.coordinate_manager)
         outs = self.final_mapping(outs)
         return outs
+
+class ConvTRBlock(nn.Module):
+    expansion=1
+    NORM_TYPE = NormType.BATCH_NORM
+    def __init__(self,
+                   inplanes,
+                   planes,
+                   stride=1,
+                   dilation=1,
+                   downsample=None,
+                   conv_type=ConvType.HYPERCUBE,
+                   nonlinearity_type='ReLU',
+                   bn_momentum=0.1,
+                   D=3,
+                   ):
+        super(ConvTRBlock, self).__init__()
+
+        self.h = 1
+        self.vec_dim = 4
+        self.alphas = nn.Parameter(torch.rand([2]))
+        self.tr = TRBlock(
+                    inplanes,
+                    planes,
+                    )
+        self.conv = BasicBlock(
+                    inplanes,
+                    planes,
+                    downsample=downsample,
+                )
+
+    def forward(self, x, iter_=None, aux=None):
+        try:
+            outs = self.conv(x)*self.alphas[0] + self.tr(x)*self.alphas[1]
+        except:
+            import ipdb; ipdb.set_trace()
+        return outs
+
 
 class DiscreteQKTRBlock(TRBlock):
 

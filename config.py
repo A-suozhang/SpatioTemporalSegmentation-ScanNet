@@ -146,6 +146,7 @@ train_arg.add_argument(
     type=str2bool,
     help='Use checkpoint optimizer states when resume training')
 train_arg.add_argument('--eval_upsample', type=str2bool, default=False)
+train_arg.add_argument('--use_sam', type=str2bool, default=False)
 
 train_arg.add_argument('--distill', type=str2bool, default=False)
 # train_arg.add_argument('--tch_model', type=str, default="Res16UNet18A") # speciffy this in train_distill func
