@@ -376,7 +376,6 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
         self.hard_mask = False
 
         self.sparse_pattern_reg = False
-        self.svd_decomp = False  # TODO: how to inplace chaging value for nn.module parameter? hard
 
         num_class = 21
         self.with_label_embedding = False
@@ -396,7 +395,7 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
             self.v = nn.Sequential(
                     MinkoskiConvBNReLU(planes, planes, kernel_size=3),
                     MinkoskiConvBNReLU(planes, planes*self.h, kernel_size=1),
-                )
+                    )
         else:
             self.v = MinkoskiConvBNReLU(planes, planes*self.h, kernel_size=1)
 
@@ -454,6 +453,10 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
             for i_ in range(self.M):
                 self.codebook.append(
                     nn.Sequential(
+<<<<<<< Updated upstream
+=======
+                        # ME.MinkowskiConvolution(planes*self.h, planes*self.h, kernel_size=3, dimension=3),
+>>>>>>> Stashed changes
                         ME.MinkowskiChannelwiseConvolution(planes*self.h, kernel_size=3, dimension=3, kernel_generator=kgs[i_]),
                         # ME.MinkowskiBatchNorm(planes*self.h),
                         # ME.MinkowskiReLU(),

@@ -24,9 +24,8 @@ export MAX_POINTS=200000  # bs=4, h=4 model
 #export POINTS=4096
 #export LR=7.5e-2
 
-export LR=2e-3
-#export LR=2e-1
-
+export LR=2e-1
+export MAX_ITER=15000
 #export MAX_POINTS=180000  # bs=4, cont-attn
 export MAX_POINTS=260000  # bs=4, h=4 model
 #export POINTS=4096
@@ -34,7 +33,6 @@ export MAX_POINTS=260000  # bs=4, h=4 model
 export MP=True
 export VOXEL_SIZE=0.05
 
-#export WEIGHT_DECAY=1.e-5
 export WEIGHT_DECAY=1.e-4
 #export WEIGHT_DECAY=5.e-6
 
