@@ -238,25 +238,47 @@ class cfl_collate_fn_factory:
     coords_batch, feats_batch, labels_batch = [], [], []
     batch_id = 0
     batch_num_points = 0
+
+    coords, feats, labels = list(coords), list(feats), list(labels)   # convert tuple to list to allow element assignmnet
     for batch_id, _ in enumerate(coords):
       num_points = coords[batch_id].shape[0]
       batch_num_points += num_points
 
       # DEBUG: stupid dropping batch while exceeding limit-points, fix it with random sample(hard, keep old)
-      if self.limit_numpoints and batch_num_points > self.limit_numpoints:
-        num_full_points = sum(len(c) for c in coords)
-        num_full_batch_size = len(coords)
-        # logging.warning(
-        print(   # show in terminal but dont write into log
-            f'\t\tCannot fit {num_full_points} points into {self.limit_numpoints} points '
-            f'limit. Truncating batch size at {batch_id} out of {num_full_batch_size} with {batch_num_points - num_points}.'
-        )
-        break
+      # == Older version, passing the last batach
+      # if self.limit_numpoints and batch_num_points > self.limit_numpoints:
+        # num_full_points = sum(len(c) for c in coords)
+        # num_full_batch_size = len(coords)
+        # # logging.warning(
+        # print(   # show in terminal but dont write into log
+            # f'\t\tCannot fit {num_full_points} points into {self.limit_numpoints} points '
+            # f'limit. Truncating batch size at {batch_id} out of {num_full_batch_size} with {batch_num_points - num_points}.'
+        # )
+        # break
+
+      # === newer version, num-limit points for each batch, if more, random sample ====
+      # troublesome with mask!
+      if self.limit_numpoints and coords[batch_id].shape[0] > self.limit_numpoints:
+          # choices = torch.randint(0,coords[batch_id].shape[0],[self.limit_numpoints])   # DEBUG: STUDID! this is not sample with replacement
+          print(   # show in terminal but dont write into log
+              f'\t\tCannot fit {coords[batch_id].shape[0]} points into {self.limit_numpoints} points '
+              f'limit. random sample the original point cloud'
+          )
+
+          choices = torch.randperm(coords[batch_id].shape[0])[:self.limit_numpoints]
+
+          coords[batch_id] = coords[batch_id][choices,:]
+          feats[batch_id] = feats[batch_id][choices,:]
+          labels[batch_id] = labels[batch_id][choices]
 
       coords_batch.append(coords[batch_id])
       feats_batch.append(torch.from_numpy(feats[batch_id]))
       labels_batch.append(torch.from_numpy(labels[batch_id]))
 
+    # DEBUG: for some extreme cases in S3DIS, points even cannot fit in the 1 batch
+    # maybe change the skip in sparse-collate to sample?
+
+    coords, feats, labels = tuple(coords), tuple(feats), tuple(labels)   # convert back to tuple
     # Concatenate all lists
     coords_batch, feats_batch, labels_batch = ME.utils.sparse_collate(coords_batch, feats_batch, labels_batch)
 
@@ -328,7 +350,7 @@ class cflt_collate_fn_factory:
       num_points = len(pointcloud)
       batch_num_points += num_points
       if self.limit_numpoints and batch_num_points > self.limit_numpoints:
-        break
+          break
 
       pointclouds_batch.append(
           torch.cat((torch.ones(pointcloud.shape[0], 1) * batch_id, torch.from_numpy(pointcloud)), 1))
