@@ -485,21 +485,13 @@ class Res16UNetTestA(Res16UNetTest):
 
   # Discrete Attention Experiment 
   # BLOCK= [TRBlock]*8
-  BLOCK= [DiscreteAttnTRBlock]*8
-
-  # All conv
-  # BLOCK = [BasicBlock] * 8
-
-  # BLOCK= [MultiHeadDiscreteAttnTRBlock]*8
-  # BLOCK= [ConvTRBlock]*8
-  # BLOCK= [DiscreteQKTRBlock]*8
-  # BLOCK= [BasicBlock]*8
   # BLOCK= [SingleConv]*8
-
-  BLOCK[0]= BasicBlock
-  BLOCK[1]= BasicBlock
+  BLOCK= [BasicBlock]*8
+  # BLOCK= [DiscreteAttnTRBlock]*8
   # BLOCK[-1]= BasicBlock
-  # BLOCK[-2]= BasicBlock
+  # BLOCK= [BasicBlock]*8
+
+  BLOCK[0]= SingleConv
   # BLOCK[1]= BasicBlock
 
   # LAYERS = (2, 3, 4, 6, 2, 2, 2, 2)

@@ -34,6 +34,7 @@ export MP=True
 export VOXEL_SIZE=0.05
 
 #export WEIGHT_DECAY=1.e-5
+
 export WEIGHT_DECAY=1.e-4
 #export WEIGHT_DECAY=5.e-6
 

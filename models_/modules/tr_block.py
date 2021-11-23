@@ -426,7 +426,7 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
 
         self.codebook = nn.ModuleList([])
 
-        self.CUSTOM_KERNEL = True
+        self.CUSTOM_KERNEL = False
         if self.CUSTOM_KERNEL:
             kgargs0 = {
                 "kernel_size": 3,
