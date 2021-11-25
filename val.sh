@@ -10,8 +10,8 @@ export MODEL=Res16UNetTestA
 #export IS_EXPORT=True
 #export DATASET=ScannetDataset
 #export DATASET=ScannetSparseVoxelizationDataset
-#export DATASET=ScannetSparseVoxelizationDataset
-export DATASET=SemanticKITTI
+export DATASET=S3DIS
+#export DATASET=SemanticKITTI
 
 export MAX_ITER=5000
 export LR=1e-1

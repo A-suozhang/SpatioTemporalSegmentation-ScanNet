@@ -2,7 +2,7 @@ export OMP_NUM_THREADS=1
 export CUDA_LAUNCH_BLOCKING=1
 
 export BATCH_SIZE=2
-export ITER_SIZE=1
+export ITER_SIZE=2
 #export BATCH_SIZE=8
 
 export MODEL=Res16UNetTestA
@@ -16,18 +16,17 @@ export OPTIMIZER=Adam
 export DATASET=SemanticKITTI
 
 #export MAX_ITER=12000
-#export MAX_ITER=15000
-export MAX_ITER=30000
+export MAX_ITER=15000
+#export MAX_ITER=30000
 #export MAX_ITER=10000
 #export MAX_ITER=15000
-export MAX_POINTS=200000  # bs=4, h=4 model
 #export POINTS=4096
 #export LR=7.5e-2
 
 export LR=2e-1
 export MAX_ITER=15000
 #export MAX_POINTS=180000  # bs=4, cont-attn
-export MAX_POINTS=260000  # bs=4, h=4 model
+export MAX_POINTS=200000  # bs=4, h=4 model
 #export POINTS=4096
 
 export MP=True

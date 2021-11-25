@@ -99,12 +99,12 @@ class TRBlock(nn.Module):
         # self.sparse_kernel = [0,1,2,3,9,10,11,12,15,16,21,22]
         # self.sparse_kernel = [1,3,4,5,7,10,12,13,14,16,19,21,22]
         self.sparse_kernels = [np.arange(27),
-                                np.arange(8),
-                                np.arange(8),
+                                # np.arange(8),
+                                # np.arange(8),
                                 ]
         self.kernel_cfgs = {
-                'kernel_size': [3,2,2],
-                'dilation':[1,2,3],
+                'kernel_size': [3],
+                'dilation':[1],
                 }
         self.k =  sum([len(sp_kernel) for sp_kernel in self.sparse_kernels])  # total K
 
@@ -139,7 +139,7 @@ class TRBlock(nn.Module):
                 self.downsample = ME.MinkowskiConvolution(inplanes, planes, kernel_size=1, dimension=3)
 
             self.q = nn.Sequential(
-                MinkoskiConvBNReLU(planes, planes, kernel_size=3),
+                MinkoskiConvBNReLU(planes, planes, kernel_size=1),
                 MinkoskiConvBNReLU(planes, self.vec_dim, kernel_size=3),
             )
             self.v = MinkoskiConvBNReLU(planes, planes, kernel_size=3)
@@ -225,8 +225,12 @@ class TRBlock(nn.Module):
             for i_sk, sparse_kernel in enumerate(self.sparse_kernels):
                 neis_d = neis_ds[i_sk]
                 sparse_mask = []
-                # for k_ in range(self.k):
-                for k_ in sparse_kernel:
+                sparse_kernel_ = list(set(neis_d.keys()).intersection(set(sparse_kernel)))   # get the intersection of current neis and sparse-mask
+                for k_ in sparse_kernel_:
+
+                    # if not k_ in neis_d.keys():
+                        # continue
+
                     neis_sparse_mask_ = torch.gather(x.F, dim=0, index=neis_d[k_][0].reshape(-1,1).expand(-1,self.planes).long())
                     neis_sparse_mask = torch.zeros(N,self.planes, device=q_.F.device)  # DEBUG: not sure if needs decalre every time
                     neis_sparse_mask = torch.scatter(neis_sparse_mask, dim=0, index=neis_d[k_][1].reshape(-1,1).expand(-1,self.planes).long(), src=neis_sparse_mask_)
@@ -235,21 +239,25 @@ class TRBlock(nn.Module):
                 sparse_masks.append(sparse_mask)
 
                 # for k_ in range(self.k):
-                for i_k, k_ in enumerate(sparse_kernel):
+                for i_k, k_ in enumerate(sparse_kernel_):
 
-                    if not k_ in neis_d.keys():
-                        continue
+                    # if not k_ in neis_d.keys():
+                        # continue
 
                     neis_ = torch.gather(q_.F, dim=0, index=neis_d[k_][0].reshape(-1,1).expand(-1,self.vec_dim).long())
                     neis = torch.zeros(N,self.vec_dim, device=q_.F.device)  # DEBUG: not sure if needs decalre every time
                     neis = torch.scatter(neis, dim=0, index=neis_d[k_][1].reshape(-1,1).expand(-1,self.vec_dim).long(), src=neis_)
-                    sparse_mask_cur_k = sparse_mask[i_k]
+                    try:
+                        sparse_mask_cur_k = sparse_mask[i_k]
+                    except IndexError:
+                        import ipdb; ipdb.set_trace()
                     neis = neis - (q_.F*sparse_mask_cur_k.unsqueeze(-1).expand(-1, self.vec_dim))
 
                     neis = self.map_qk(neis)  # apply a linear layer over the neighbor
                     neis = neis*sparse_mask_cur_k.unsqueeze(-1).expand(-1,self.vec_dim)
 
                     neis_l.append(neis)
+
 
             neis_l = torch.stack(neis_l, dim=-1) # [N, vec_dim, K]
             neis_l = F.softmax(neis_l, dim=-1)
@@ -264,7 +272,8 @@ class TRBlock(nn.Module):
             # for k_ in range(self.k):
             for i_sk, sparse_kernel in enumerate(self.sparse_kernels):
                 neis_d = neis_ds[i_sk]
-                for i_k, k_ in enumerate(sparse_kernel):
+                sparse_kernel_ = list(set(neis_d.keys()).intersection(set(sparse_kernel)))   # get the intersection of current neis and sparse-mask
+                for i_k, k_ in enumerate(sparse_kernel_):
 
                     if not k_ in neis_d.keys():
                         continue
@@ -416,7 +425,7 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
 
         self.codebook = nn.ModuleList([])
 
-        self.CUSTOM_KERNEL = True
+        self.CUSTOM_KERNEL = False
         if self.CUSTOM_KERNEL:
             kgargs0 = {
                 "kernel_size": 3,

@@ -480,33 +480,32 @@ class Res16UNetTest(Res16UNetBase):
 class Res16UNetTestA(Res16UNetTest):
 
   DEPTH_RATIO = 2
-  PLANES_RATIO = 0.75 # for SPVCNN experiment, the smallest model
+  PLANES_RATIO = 0.5 # for SPVCNN experiment, the smallest model
   # BLOCK = [TestConv, TRBlock, TestConv, TRBlock, TestConv, TRBlock, TestConv, TRBlock]
 
   # Discrete Attention Experiment 
-  BLOCK= [DiscreteAttnTRBlock]*8
-  BLOCK[-1]= BasicBlock
-
-  # All conv
-  # BLOCK = [BasicBlock] * 8
-
-  # BLOCK= [MultiHeadDiscreteAttnTRBlock]*8
-  # BLOCK= [ConvTRBlock]*8
-  # BLOCK= [DiscreteQKTRBlock]*8
-  # BLOCK= [BasicBlock]*8
+  # BLOCK= [TRBlock]*8
   # BLOCK= [SingleConv]*8
-
+  BLOCK= [BasicBlock]*8
+  # BLOCK= [DiscreteAttnTRBlock]*8
   # BLOCK[-1]= BasicBlock
-  # BLOCK[1]= BasicBlock
+  # BLOCK= [BasicBlock]*8
+
+  BLOCK[0]= SingleConv
   # BLOCK[1]= BasicBlock
 
   # LAYERS = (2, 3, 4, 6, 2, 2, 2, 2)
   LAYERS = (np.array([1, 1, 1, 1, 1, 1, 1, 1])*DEPTH_RATIO).astype(int)
+<<<<<<< HEAD
 
   BLOCK[0]= BasicBlock
   BLOCK[1]= BasicBlock
 
   PLANES = (np.array([32, 64, 128, 256, 256, 128, 96, 96])*PLANES_RATIO).astype(int)
+=======
+  PLANES = (np.array([32, 64, 128, 256, 128, 128, 96, 96])*PLANES_RATIO).astype(int)
+  # LAYERS = (2, 3, 4, 6, 2, 2, 2, 2)
+>>>>>>> c0a8384d5741fb5b7059a419d3d64c9074e68ca6
 
   # PLANES = (8, 16, 32, 64, 64, 32, 24, 24)
   # PLANES = (16, 32, 64, 128, 128, 64, 48, 48)

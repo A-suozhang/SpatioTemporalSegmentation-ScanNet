@@ -53,6 +53,7 @@ def average_precision(prob_np, target_np):
     num_class = prob_np.shape[1]
     label = label_binarize(target_np, classes=list(range(num_class)))
     with np.errstate(divide='ignore', invalid='ignore'):
+        # return average_precision_score(label, prob_np)
         return average_precision_score(label, prob_np, None)
 
 
@@ -211,6 +212,8 @@ def test(model, data_loader, config, transform_data_fn=None, has_gt=True, save_p
                 # ious_ = torch.stack(ious_, dim=-1).cpu().numpy()*100
                 # print(np.nanmean(per_class_iu(hist)), np.nanmean(ious_))
                 # ious = np.array(ious_)*100
+
+                # skip calculating aps
                 ap = average_precision(prob.cpu().detach().numpy(), target_np)
                 aps = np.vstack((aps, ap))
                 # Due to heavy bias in class, there exists class with no test label at all
@@ -454,6 +457,7 @@ def vote(predict, vote_num, pred, points_idx):
                 # logging.info('Class %d : %.4f'%(i+1, IoU[i]))
         # logging.info('eval accuracy: %f'% (total_correct / float(total_seen)))
         # logging.info('eval avg class acc: %f' % (np.mean(np.array(total_correct_class)/(np.array(total_seen_class,dtype=np.float)+1e-6))))
+
 
 
 
