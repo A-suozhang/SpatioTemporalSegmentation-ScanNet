@@ -486,13 +486,12 @@ class Res16UNetTestA(Res16UNetTest):
   # Discrete Attention Experiment 
   # BLOCK= [TRBlock]*8
   # BLOCK= [SingleConv]*8
-  BLOCK= [BasicBlock]*8
-  # BLOCK= [DiscreteAttnTRBlock]*8
-  # BLOCK[-1]= BasicBlock
-  # BLOCK= [BasicBlock]*8
+  BLOCK= [DiscreteAttnTRBlock]*8
 
   BLOCK[0]= SingleConv
-  # BLOCK[1]= BasicBlock
+  BLOCK[1]= BasicBlock
+  BLOCK[-1]= BasicBlock
+  # BLOCK[-2]= BasicBlock
 
   # LAYERS = (2, 3, 4, 6, 2, 2, 2, 2)
   LAYERS = (np.array([1, 1, 1, 1, 1, 1, 1, 1])*DEPTH_RATIO).astype(int)
