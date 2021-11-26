@@ -495,16 +495,8 @@ class Res16UNetTestA(Res16UNetTest):
 
   # LAYERS = (2, 3, 4, 6, 2, 2, 2, 2)
   LAYERS = (np.array([1, 1, 1, 1, 1, 1, 1, 1])*DEPTH_RATIO).astype(int)
-<<<<<<< HEAD
-
-  BLOCK[0]= BasicBlock
-  BLOCK[1]= BasicBlock
-
-  PLANES = (np.array([32, 64, 128, 256, 256, 128, 96, 96])*PLANES_RATIO).astype(int)
-=======
   PLANES = (np.array([32, 64, 128, 256, 128, 128, 96, 96])*PLANES_RATIO).astype(int)
   # LAYERS = (2, 3, 4, 6, 2, 2, 2, 2)
->>>>>>> c0a8384d5741fb5b7059a419d3d64c9074e68ca6
 
   # PLANES = (8, 16, 32, 64, 64, 32, 24, 24)
   # PLANES = (16, 32, 64, 128, 128, 64, 48, 48)

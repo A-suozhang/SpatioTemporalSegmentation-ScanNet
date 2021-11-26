@@ -462,10 +462,6 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
             for i_ in range(self.M):
                 self.codebook.append(
                     nn.Sequential(
-<<<<<<< Updated upstream
-=======
-                        # ME.MinkowskiConvolution(planes*self.h, planes*self.h, kernel_size=3, dimension=3),
->>>>>>> Stashed changes
                         ME.MinkowskiChannelwiseConvolution(planes*self.h, kernel_size=3, dimension=3, kernel_generator=kgs[i_]),
                         # ME.MinkowskiBatchNorm(planes*self.h),
                         # ME.MinkowskiReLU(),
