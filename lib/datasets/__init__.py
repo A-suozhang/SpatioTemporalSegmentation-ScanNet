@@ -8,10 +8,11 @@ from .scannet import ScannetSparseVoxelizationDataset, \
 from .point_scannet import ScannetDatasetWholeScene, ScannetDataset, ScannetDatasetWholeScene_evaluation
 from .semantic_kitti import SemanticKITTI
 from .Indoor3DSemSegLoader import S3DIS
+from .nuscenes import Nuscenes
 
 DATASETS = [
     ScannetSparseVoxelizationDataset, ScannetSparseVoxelization2cmDataset, ScannetDatasetWholeScene, ScannetDataset, ScannetDatasetWholeScene_evaluation,
-    SemanticKITTI, S3DIS,
+    SemanticKITTI, S3DIS, Nuscenes
 ]
 
 

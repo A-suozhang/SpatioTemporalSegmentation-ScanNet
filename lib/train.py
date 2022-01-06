@@ -38,6 +38,8 @@ def train(model, data_loader, val_data_loader, config, transform_data_fn=None):
     # Set up the train flag for batch normalization
     model.train()
 
+    import ipdb; ipdb.set_trace()
+
     # Configuration
     data_timer, iter_timer = Timer(), Timer()
     data_time_avg, iter_time_avg = AverageMeter(), AverageMeter()
@@ -92,6 +94,12 @@ def train(model, data_loader, val_data_loader, config, transform_data_fn=None):
         config.xyz_input = False
         val_freq_ = config.val_freq
         config.val_freq = config.val_freq
+    elif config.dataset == "Nuscenes":
+        num_class = 16
+        config.normalize_color = False
+        config.xyz_input = False
+        val_freq_ = config.val_freq
+        config.val_freq = config.val_freq*50
     else:
         num_class = 20
         val_freq_ = config.val_freq

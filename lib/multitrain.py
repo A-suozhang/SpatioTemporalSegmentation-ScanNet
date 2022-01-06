@@ -73,7 +73,10 @@ def train_worker(gpu, num_devices, NetClass, data_loader, val_data_loader, confi
             sampler=sampler
         )
 
-    num_in_channel = 3
+    if data_loader.dataset.NUM_IN_CHANNEL is not None:
+        num_in_channel = data_loader.dataset.NUM_IN_CHANNEL
+    else:
+        num_in_channel = 3
     num_labels = data_loader.dataset.NUM_LABELS
 
     # load model
@@ -175,6 +178,12 @@ def train_worker(gpu, num_devices, NetClass, data_loader, val_data_loader, confi
         config.normalize_color = False
         config.xyz_input = False
         val_freq_ = config.val_freq
+    elif config.dataset == "Nuscenes":
+        num_class = 16
+        config.normalize_color = False
+        config.xyz_input = False
+        val_freq_ = config.val_freq
+        config.val_freq = config.val_freq*50
     else:
         val_freq_ = config.val_freq
         num_class = 20

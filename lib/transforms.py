@@ -396,3 +396,24 @@ def elastic_distortion(pointcloud, granularity, magnitude):
   interp = scipy.interpolate.RegularGridInterpolator(ax, noise, bounds_error=0, fill_value=0)
   pointcloud[:, :3] = coords + interp(coords) * magnitude
   return pointcloud
+
+# ----- the collate_fn used for nuscenes dataset ------
+def collate_fn_BEV(data):
+    data2stack = np.stack([d[0] for d in data]).astype(np.float32)
+    label2stack = np.stack([d[1] for d in data]).astype(np.int)
+    grid_ind_stack = [d[2] for d in data]
+    point_label = [d[3] for d in data]
+    xyz = [d[4] for d in data]
+    return torch.from_numpy(data2stack), torch.from_numpy(label2stack), grid_ind_stack, point_label, xyz
+
+
+def collate_fn_BEV_test(data):
+    data2stack = np.stack([d[0] for d in data]).astype(np.float32)
+    label2stack = np.stack([d[1] for d in data]).astype(np.int)
+    grid_ind_stack = [d[2] for d in data]
+    point_label = [d[3] for d in data]
+    xyz = [d[4] for d in data]
+    index = [d[5] for d in data]
+    return torch.from_numpy(data2stack), torch.from_numpy(label2stack), grid_ind_stack, point_label, xyz, index
+
+

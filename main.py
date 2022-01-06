@@ -35,6 +35,7 @@ from lib.dataset import initialize_data_loader, _init_fn
 from lib.datasets import load_dataset
 from lib.datasets.semantic_kitti import SemanticKITTI
 from lib.datasets.Indoor3DSemSegLoader import S3DIS
+from lib.datasets.nuscenes import Nuscenes
 from lib.dataloader import InfSampler
 import lib.transforms as t
 
@@ -257,10 +258,38 @@ def main():
                 pin_memory=True,
                 collate_fn=t.cfl_collate_fn_factory(False)
             )
+        elif config.dataset == 'Nuscenes':
+            config.xyz_input=False
+            # todo:
+            trainset = Nuscenes(
+                    config,
+                    train=True,
+                    )
+            valset = Nuscenes(
+                    config,
+                    train=False,
+                    )
+            train_data_loader = torch.utils.data.DataLoader(
+                trainset,
+                batch_size=config.batch_size,
+                sampler=InfSampler(trainset, shuffle=True), # shuffle=true, repeat=true
+                num_workers=config.threads,
+                pin_memory=True,
+                # collate_fn=t.collate_fn_BEV,    # used when cylinder voxelize
+                collate_fn=t.cfl_collate_fn_factory(False)
+            )
 
+            val_data_loader = torch.utils.data.DataLoader( # shuffle=false, repeat=false
+                valset,
+                batch_size=config.batch_size,
+                num_workers=config.val_threads,
+                pin_memory=True,
+                # collate_fn=t.collate_fn_BEV,
+                collate_fn=t.cfl_collate_fn_factory(False)
+            )
         else:
+            print('Dataset {} not supported').format(config.dataset)
             raise NotImplementedError
-
 
         # Setting up num_in_channel and num_labels
         if train_data_loader.dataset.NUM_IN_CHANNEL is not None:
@@ -393,6 +422,39 @@ def main():
             )
             num_in_channel = 9
             num_labels = 13
+        elif config.dataset == 'Nuscenes':
+            config.xyz_input = False
+            trainset = Nuscenes(
+                    config,
+                    train=True,
+                    )
+            valset = Nuscenes(
+                    config,
+                    train-False,
+                    )
+            train_data_loader = torch.utils.data.DataLoader(
+                trainset,
+                batch_size=config.batch_size,
+                sampler=InfSampler(trainset, shuffle=True), # shuffle=true, repeat=true
+                num_workers=config.threads,
+                pin_memory=True,
+                # collate_fn=t.collate_fn_BEV,
+                collate_fn=t.cfl_collate_fn_factory(False)
+            )
+
+            val_data_loader = torch.utils.data.DataLoader( # shuffle=false, repeat=false
+                valset,
+                batch_size=config.batch_size,
+                num_workers=config.val_threads,
+                pin_memory=True,
+                # collate_fn=t.collate_fn_BEV,
+                collate_fn=t.cfl_collate_fn_factory(False)
+            )
+            num_in_channel = 5
+            num_labels = 16
+        else:
+            print('Dataset {} not supported').format(config.dataset)
+            raise NotImplementedError
 
     logging.info('===> Building model')
 

@@ -36,6 +36,7 @@ class Res16UNetBase(ResNetBase):
 
     if not isinstance(self.BLOCK, list): # if single type
         self.BLOCK = [self.BLOCK]*len(self.PLANES)
+    # print('IN CHANNEL inside the model {}'.format(in_channels))
 
     # Setup net_metadata
     dilations = self.DILATIONS
