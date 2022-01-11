@@ -359,11 +359,11 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
         temp - the softmax temperature
         '''
 
-        self.h = 1 # the num-head, noted that since all heads are parallel, could view as expansion
-        self.M = 2
+        self.h = 2 # the num-head, noted that since all heads are parallel, could view as expansion
+        self.M = 3
         # self.qk_type = 'sub'
         self.qk_type = 'conv'
-        self.conv_v = False
+        self.conv_v = True
         # self.vec_dim = 1
         # self.vec_dim = 4
         self.vec_dim = self.planes // 8
@@ -425,7 +425,7 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
 
         self.codebook = nn.ModuleList([])
 
-        self.CUSTOM_KERNEL = False
+        self.CUSTOM_KERNEL = True
         if self.CUSTOM_KERNEL:
             kgargs0 = {
                 "kernel_size": 3,

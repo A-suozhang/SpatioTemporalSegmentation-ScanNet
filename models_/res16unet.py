@@ -481,7 +481,7 @@ class Res16UNetTest(Res16UNetBase):
 class Res16UNetTestA(Res16UNetTest):
 
   DEPTH_RATIO = 2
-  PLANES_RATIO = 0.5 # for SPVCNN experiment, the smallest model
+  PLANES_RATIO = 1.0 # for SPVCNN experiment, the smallest model
   # BLOCK = [TestConv, TRBlock, TestConv, TRBlock, TestConv, TRBlock, TestConv, TRBlock]
 
   # Discrete Attention Experiment 
