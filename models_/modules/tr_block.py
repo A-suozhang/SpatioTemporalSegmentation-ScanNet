@@ -10,6 +10,50 @@ from models.modules.common import ConvType, NormType, get_norm, conv, get_nonlin
 from models.modules.resnet_block import *   # dirty and danger op, fix later
 from models.pct_voxel_utils import separate_batch, voxel2points, points2voxel, PTBlock, cube_query, get_neighbor_feature, pad_zero, make_position_tensor
 
+
+POS_ENC_MAP_CUBE_3 = [
+                torch.tensor([-1,-1,-1]),
+                torch.tensor([0,-1,-1]),
+                torch.tensor([1,-1,-1]),
+                torch.tensor([-1,0,-1]),
+                torch.tensor([0,0,-1]),
+                torch.tensor([1,0,-1]),
+                torch.tensor([-1,1,-1]),
+                torch.tensor([0,1,-1]),
+                torch.tensor([1,1,-1]),
+                # 
+                torch.tensor([-1,-1,0]),
+                torch.tensor([0,-1,0]),
+                torch.tensor([1,-1,0]),
+                torch.tensor([-1,0,0]),
+                torch.tensor([0,0,0]),
+                torch.tensor([1,0,0]),
+                torch.tensor([-1,1,0]),
+                torch.tensor([0,1,0]),
+                torch.tensor([1,1,0]),
+                # 
+                torch.tensor([-1,-1,1]),
+                torch.tensor([0,-1,1]),
+                torch.tensor([1,-1,1]),
+                torch.tensor([-1,0,1]),
+                torch.tensor([0,0,1]),
+                torch.tensor([1,0,1]),
+                torch.tensor([-1,1,1]),
+                torch.tensor([0,1,1]),
+                torch.tensor([1,1,1]),
+                ]
+
+
+POSE_ENC_MAP_CROSS_3 = [
+        torch.tensor([0,0,-1]),
+        torch.tensor([0,-1,0]),
+        torch.tensor([-1,0,0]),
+        torch.tensor([0,1,0]),
+        torch.tensor([1,0,0]),
+        torch.tensor([0,0,1]),
+        ]
+
+
 class GetCodebookWeightStraightThrough(Function):
     @staticmethod
     def forward(ctx, self, neis_l, choice_idx, k_):
@@ -99,12 +143,12 @@ class TRBlock(nn.Module):
         # self.sparse_kernel = [0,1,2,3,9,10,11,12,15,16,21,22]
         # self.sparse_kernel = [1,3,4,5,7,10,12,13,14,16,19,21,22]
         self.sparse_kernels = [np.arange(27),
-                                # np.arange(8),
-                                # np.arange(8),
+                                np.arange(8),
+                                np.arange(8),
                                 ]
         self.kernel_cfgs = {
-                'kernel_size': [3],
-                'dilation':[1],
+                'kernel_size': [3,2,2],
+                'dilation':[1,2,3],
                 }
         self.k =  sum([len(sp_kernel) for sp_kernel in self.sparse_kernels])  # total K
 
@@ -139,7 +183,7 @@ class TRBlock(nn.Module):
                 self.downsample = ME.MinkowskiConvolution(inplanes, planes, kernel_size=1, dimension=3)
 
             self.q = nn.Sequential(
-                MinkoskiConvBNReLU(planes, planes, kernel_size=1),
+                MinkoskiConvBNReLU(planes, planes, kernel_size=3),
                 MinkoskiConvBNReLU(planes, self.vec_dim, kernel_size=3),
             )
             self.v = MinkoskiConvBNReLU(planes, planes, kernel_size=3)
@@ -359,10 +403,10 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
         temp - the softmax temperature
         '''
 
-        self.h = 2 # the num-head, noted that since all heads are parallel, could view as expansion
+        self.h = 1 # the num-head, noted that since all heads are parallel, could view as expansion
         self.M = 3
-        # self.qk_type = 'sub'
-        self.qk_type = 'conv'
+        self.qk_type = 'pairwise'
+        # self.qk_type = 'conv'
         self.conv_v = True
         # self.vec_dim = 1
         # self.vec_dim = 4
@@ -408,23 +452,7 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
         else:
             self.v = MinkoskiConvBNReLU(planes, planes*self.h, kernel_size=1)
 
-        if not self.skip_choice:
-            if self.qk_type == 'conv':
-                # since conv already contains the neighbor info, so no pos_enc
-                self.q = nn.Sequential(
-                    ME.MinkowskiConvolution(planes, self.vec_dim, kernel_size=3,dimension=3),
-                    # ME.MinkowskiBatchNorm(self.vec_dim),
-                        )
-                # self.q = MinkoskiConvBNReLU(planes, self.vec_dim, kernel_size=3)
-                # self.q = MinkoskiConvBNReLU(planes, self.vec_dim, kernel_size=1) # DEBUG_OBLY!
-            elif self.qk_type == 'sub':
-                self.q = MinkoskiConvBNReLU(planes, self.vec_dim, kernel_size=1)
-                self.map_qk = nn.Linear(self.vec_dim, self.vec_dim)
-            else:
-                raise NotImplementedError
-
         self.codebook = nn.ModuleList([])
-
         self.CUSTOM_KERNEL = True
         if self.CUSTOM_KERNEL:
             kgargs0 = {
@@ -467,6 +495,20 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
                         # ME.MinkowskiReLU(),
                         )
                     )
+            # DEBUG:  rewrite Q for custom-kernel
+            if not self.skip_choice:
+                if self.qk_type == 'conv':
+                    self.q = nn.ModuleList([])
+                    for i_ in range(self.M):
+                        self.q.append(
+                            nn.Sequential(
+                                ME.MinkowskiConvolution(planes,self.vec_dim,  kernel_size=3, dimension=3, kernel_generator=kgs[i_]),
+                                )
+                            )
+                elif self.qk_type == 'pairwise':
+                    self.q = MinkoskiConvBNReLU(planes, self.vec_dim, kernel_size=1)
+                    # self.pos_enc = MinkoskiConvBNReLU(3, self.vec_dim, kernel_size=1)
+
         else:
             kgargs0 = {
                 "kernel_size": 3,
@@ -487,6 +529,22 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
                         # ME.MinkowskiReLU(),
                         )
                     )
+            if not self.skip_choice:
+                if self.qk_type == 'conv':
+                    # since conv already contains the neighbor info, so no pos_enc
+                    self.q = nn.Sequential(
+                        ME.MinkowskiConvolution(planes, self.vec_dim, kernel_size=3,dimension=3),
+                        # ME.MinkowskiBatchNorm(self.vec_dim),
+                            )
+                    # self.q = MinkoskiConvBNReLU(planes, self.vec_dim, kernel_size=3)
+                    # self.q = MinkoskiConvBNReLU(planes, self.vec_dim, kernel_size=1) # DEBUG_OBLY!
+                elif self.qk_type == 'pairwise':
+                    self.q = MinkoskiConvBNReLU(planes, self.vec_dim, kernel_size=1)
+                    # self.pos_enc = MinkoskiConvBNReLU(3, self.vec_dim, kernel_size=1)
+                    # self.map_qk = nn.Linear(self.vec_dim, self.vec_dim)
+                else:
+                    raise NotImplementedError
+
         # specify some of the Priors
         if self.codebook_prior:
 
@@ -524,7 +582,6 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
 
             # codebook_weight = torch.stack([m[0].kernel for m in self.codebook])
             # torch.save(codebook_weight, '/home/zhaotianchen/project/point-transformer/SpatioTemporalSegmentation-ScanNet/plot/codebook_weight.pth')
-
         self.out_bn_relu = nn.Sequential(
                 ME.MinkowskiConvolution(planes*self.h, planes, kernel_size=1, dimension=3),
                 ME.MinkowskiBatchNorm(planes),
@@ -806,18 +863,28 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
         if not self.skip_choice:
 
             if self.qk_type == 'conv':
-
-                q_ = self.q(x)
-                q_f = self.expand_vec_dim(q_.F)
-                q_= ME.SparseTensor(features=q_f, coordinate_map_key=q_.coordinate_map_key, coordinate_manager=q_.coordinate_manager) # [N, dim]
-                N, dim = q_.F.shape
+                if not self.CUSTOM_KERNEL:
+                    q_ = self.q(x)
+                    q_f = self.expand_vec_dim(q_.F)
+                    q_= ME.SparseTensor(features=q_f, coordinate_map_key=q_.coordinate_map_key, coordinate_manager=q_.coordinate_manager) # [N, dim]
+                    N, dim = q_.F.shape
+                    qs = [q_]*self.M
+                else:
+                    qs = []
+                    for _ in range(self.M):
+                        q_ = self.q[_](x)
+                        q_f =self.expand_vec_dim(q_.F)
+                        qs.append(
+                            ME.SparseTensor(features=q_f, coordinate_map_key=q_.coordinate_map_key, coordinate_manager=q_.coordinate_manager) # [N, dim]
+                                )
+                        N, dim = q_f.shape
 
                 # get dot-product of conv-weight & q_
                 choice = []
                 out = []
                 for _ in range(self.M):
                     self.codebook[_][0].kernel.requires_grad = False
-                    choice_ = self.codebook[_](q_)
+                    choice_ = self.codebook[_](qs[_])
                     choice.append(choice_.F.reshape(
                         [choice_.shape[0], self.vec_dim, self.planes*self.h // self.vec_dim]
                             ).sum(-1)
@@ -844,54 +911,62 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
                 self.register_buffer('attn_map', attn_map)
                 self.register_buffer('choice_map', choice)
 
-            elif self.qk_type == 'sub':
-                # DEBUG: currently should not used
+            elif self.qk_type == 'pairwise':
+
                 q_ = self.q(x)
                 q_f = q_.F
+                N, _ = q_.F.shape
 
-                codebook_weight = []
-                for _ in range(self.M):
-                    codebook_weight.append(self.codebook[_][0].kernel)
-                codebook_weight = torch.stack(codebook_weight, dim=-1) # [K, vec_dim, M]  
+                choices = []
+                for i_m, kg in enumerate(self.kgargs):  # iter over M
 
-                neis_d = q_.coordinate_manager.get_kernel_map(q_.coordinate_map_key,
-                                                                q_.coordinate_map_key,
-                                                                kernel_size=3,
-                                                                stride=1,
-                                                                    )
-                N, dim = q_.F.shape
+                    # codebook_weight = []
+                    # for _ in range(self.M):
+                        # codebook_weight.append(self.codebook[_][0].kernel)
+                    # codebook_weight = torch.stack(codebook_weight, dim=-1) # [K, vec_dim, M]  
+                    if 'dimension' in kg.keys():
+                        del kg['dimension']
+                    neis_d = q_.coordinate_manager.get_kernel_map(q_.coordinate_map_key,
+                                                                    q_.coordinate_map_key,
+                                                                    **kg
+                                                                        )
 
-                choice = []
-                for k_ in range(self.k):
+                    choice = []
+                    for k_ in range(len(neis_d.keys())):
 
-                    if not k_ in neis_d.keys():
-                        continue
+                        if not k_ in neis_d.keys():
+                            continue
 
-                    neis_ = torch.gather(q_.F, dim=0, index=neis_d[k_][0].reshape(-1,1).expand(-1,self.vec_dim).long())
-                    neis = torch.zeros(N,self.vec_dim, device=q_.F.device)  # DEBUG: not sure if needs decalre every time
-                    neis.scatter_(dim=0, index=neis_d[k_][1].reshape(-1,1).expand(-1,self.vec_dim).long(), src=neis_)
+                        neis_ = torch.gather(q_.F, dim=0, index=neis_d[k_][0].reshape(-1,1).expand(-1,self.vec_dim).long())
+                        neis = torch.zeros(N,self.vec_dim, device=q_.F.device)  # DEBUG: not sure if needs decalre every time
+                        neis.scatter_(dim=0, index=neis_d[k_][1].reshape(-1,1).expand(-1,self.vec_dim).long(), src=neis_)
 
-                    sparse_mask_cur_k = (neis.abs().sum(-1) > 0).float()
-                    neis = neis - (q_.F*sparse_mask_cur_k.unsqueeze(-1).expand(-1, self.vec_dim))
-                    neis = self.map_qk(neis)  # apply a linear layer over the neighbor
-                    neis = neis*sparse_mask_cur_k.unsqueeze(-1).expand(-1, self.vec_dim)
+                        sparse_mask_cur_k = (neis.abs().sum(-1) > 0).float()
+                        # neis = neis - (q_.F*sparse_mask_cur_k.unsqueeze(-1).expand(-1, self.vec_dim))
+                        # neis = self.map_qk(neis)  # apply a linear layer over the neighbor
+                        neis = neis*(q_.F*sparse_mask_cur_k.unsqueeze(-1).expand(-1, self.vec_dim))
+                        neis = neis*sparse_mask_cur_k.unsqueeze(-1).expand(-1, self.vec_dim)
 
-                    out_cur_k = self.expand_vec_dim(neis).unsqueeze(-1)*codebook_weight[k_].unsqueeze(0)
-                    out_cur_k = out_cur_k.sum(1).permute(0,1)  # [M, N]
+                        out_cur_k = self.expand_vec_dim(neis)*self.codebook[i_m][0].kernel[k_].unsqueeze(0)
+                        out_cur_k = out_cur_k.sum(1)  # [N]
 
-                    choice.append(out_cur_k)
+                        choice.append(out_cur_k)
 
-                # choice = F.softmax(torch.stack(choice, dim=-1), dim=-1).sum(-1)
-                choice = torch.stack(choice, dim=-1).sum(-1)
-                choice = F.softmax(choice/self.temp, dim=-1)
-                if self.smooth_choice:
-                    # trying use avg_pool instead of conv
-                    choice = ME.SparseTensor(features=choice, coordinate_map_key=q_.coordinate_map_key, coordinate_manager=q_.coordinate_manager) # [N, dim]
-                    choice = self.smooth_conv(choice).F
+                    # choice = F.softmax(torch.stack(choice, dim=-1), dim=-1).sum(-1)
+                    choice = torch.stack(choice, dim=-1)  # [N,K]
+                    choice = F.softmax(choice/self.temp, dim=-1).sum(-1)
+                    choices.append(choice) # [N]
 
-                choice = choice.unsqueeze(1).expand(-1, dim, -1) # [N, dim, M]
-                self.register_buffer('choice_map')
-                self.register_buffer('coord_map')
+                choices = torch.stack(choices, dim=-1)
+                choices = F.softmax(choices/self.temp, dim=-1)   # [N,M]
+
+                # if self.smooth_choice:
+                    # # trying use avg_pool instead of conv
+                    # choice = ME.SparseTensor(features=choice, coordinate_map_key=q_.coordinate_map_key, coordinate_manager=q_.coordinate_manager) # [N, dim]
+                    # choice = self.smooth_conv(choice).F
+                choice = choices.unsqueeze(1).expand(-1, self.vec_dim, -1) # [N, dim, M]
+                self.register_buffer('choice_map', choices)
+                # self.register_buffer('coord_map')
 
         if self.skip_choice:
             N, dim = v_.shape
@@ -938,7 +1013,7 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
             out = out.sum(-1)
         else:
             # normal-case: apply the attn_weight aggregation with the channelwiseConvolution
-            out = torch.zeros([N, dim], device=v_.device)
+            out = torch.zeros([N, self.planes*self.h], device=v_.device)
             for _ in range(self.M):
                 self.codebook[_][0].kernel.requires_grad = True
                 out_ = self.codebook[_](v_)
@@ -1031,209 +1106,209 @@ class ConvTRBlock(nn.Module):
         return outs
 
 
-class DiscreteQKTRBlock(TRBlock):
+# class DiscreteQKTRBlock(TRBlock):
 
-    def __init__(self,
-                   inplanes,
-                   planes,
-                   stride=1,
-                   dilation=1,
-                   downsample=None,
-                   conv_type=ConvType.HYPERCUBE,
-                   nonlinearity_type='ReLU',
-                   bn_momentum=0.1,
-                   D=3):
+    # def __init__(self,
+                   # inplanes,
+                   # planes,
+                   # stride=1,
+                   # dilation=1,
+                   # downsample=None,
+                   # conv_type=ConvType.HYPERCUBE,
+                   # nonlinearity_type='ReLU',
+                   # bn_momentum=0.1,
+                   # D=3):
 
-        super(DiscreteQKTRBlock, self).__init__(
-                inplanes,
-                planes,
-                )
+        # super(DiscreteQKTRBlock, self).__init__(
+                # inplanes,
+                # planes,
+                # )
 
-        self.type = 'discrete_qk'
-        '''
-        the discrete_qk version of the TR
-        Q and its neighbor has discrete actiavtion from the codebook
-        they substract and linear-mapped into the attention_weight
-        which is applied on the value
-        (possible hard to train)
-        ------------------
-        qk_type:
-            - conv
-            - substration
-        conv_v: use conv or linear for gen value
-        vec_dim: the attn_map feature dim
-        M - codebook size
-        temp - the softmax temperature
-        '''
+        # self.type = 'discrete_qk'
+        # '''
+        # the discrete_qk version of the TR
+        # Q and its neighbor has discrete actiavtion from the codebook
+        # they substract and linear-mapped into the attention_weight
+        # which is applied on the value
+        # (possible hard to train)
+        # ------------------
+        # qk_type:
+            # - conv
+            # - substration
+        # conv_v: use conv or linear for gen value
+        # vec_dim: the attn_map feature dim
+        # M - codebook size
+        # temp - the softmax temperature
+        # '''
 
-        # self.M = 12
-        # self.M = 4
-        self.expansion=1
-        self.M = 1
-        self.qk_type = 'dot'
-        # self.qk_type = 'conv'
-        self.conv_v = False
-        # self.vec_dim = 1
-        self.vec_dim = planes // 8
-        # self.vec_dim = 8
-        self.temp = 1
-        # self.top_k_choice = self.M
-        self.top_k_choice = False
-        self.neighbor_type = 'sparse_query'
-        self.k = 27
+        # # self.M = 12
+        # # self.M = 4
+        # self.expansion=1
+        # self.M = 1
+        # self.qk_type = 'dot'
+        # # self.qk_type = 'conv'
+        # self.conv_v = False
+        # # self.vec_dim = 1
+        # self.vec_dim = planes // 8
+        # # self.vec_dim = 8
+        # self.temp = 1
+        # # self.top_k_choice = self.M
+        # self.top_k_choice = False
+        # self.neighbor_type = 'sparse_query'
+        # self.k = 27
 
-        self.vq_loss = 0.
-        self.vq_lambda = 1.e-3
-        self.vq_loss_commit_beta= 0.5
+        # self.vq_loss = 0.
+        # self.vq_lambda = 1.e-3
+        # self.vq_loss_commit_beta= 0.5
 
-        # === some additonal tricks ===
-        self.skip_choice = False # only_used in debug mode, notice that this mode contains unused params, so could not work with ddp
-        self.smooth_choice = False
+        # # === some additonal tricks ===
+        # self.skip_choice = False # only_used in debug mode, notice that this mode contains unused params, so could not work with ddp
+        # self.smooth_choice = False
 
-        if self.inplanes != self.planes:
-            self.linear_top = MinkoskiConvBNReLU(inplanes, planes, kernel_size=1)
-            self.downsample = ME.MinkowskiConvolution(inplanes, planes, kernel_size=1, dimension=3)
+        # if self.inplanes != self.planes:
+            # self.linear_top = MinkoskiConvBNReLU(inplanes, planes, kernel_size=1)
+            # self.downsample = ME.MinkowskiConvolution(inplanes, planes, kernel_size=1, dimension=3)
 
-        if self.qk_type == 'conv':
-            # since conv already contains the neighbor info, so no pos_enc
-            self.q = MinkoskiConvBNReLU(planes, self.vec_dim, kernel_size=3)
-        elif self.qk_type == 'sub':
-            self.q = MinkoskiConvBNReLU(planes, self.vec_dim, kernel_size=3)
+        # if self.qk_type == 'conv':
+            # # since conv already contains the neighbor info, so no pos_enc
             # self.q = MinkoskiConvBNReLU(planes, self.vec_dim, kernel_size=3)
-            self.map_qk = nn.Linear(self.vec_dim, self.vec_dim)
-        elif self.qk_type == 'dot':
-            self.q = MinkoskiConvBNReLU(planes, self.vec_dim, kernel_size=3)
-            self.map_choice = nn.Sequential(
-                    nn.Linear(self.planes, self.planes),
-                    nn.ReLU(),
-                )
-        else:
-            raise NotImplementedError
+        # elif self.qk_type == 'pairwise':
+            # self.q = MinkoskiConvBNReLU(planes, self.vec_dim, kernel_size=3)
+            # # self.q = MinkoskiConvBNReLU(planes, self.vec_dim, kernel_size=3)
+            # self.map_qk = nn.Linear(self.vec_dim, self.vec_dim)
+        # elif self.qk_type == 'dot':
+            # self.q = MinkoskiConvBNReLU(planes, self.vec_dim, kernel_size=3)
+            # self.map_choice = nn.Sequential(
+                    # nn.Linear(self.planes, self.planes),
+                    # nn.ReLU(),
+                # )
+        # else:
+            # raise NotImplementedError
 
-        if self.conv_v == True:
-            self.v = MinkoskiConvBNReLU(planes, planes*self.expansion, kernel_size=3)
-        else:
-            self.v = MinkoskiConvBNReLU(planes, planes*self.expansion, kernel_size=1)
-        self.codebook = nn.Parameter(
-                # torch.nn.init.xavier_uniform_(
-                torch.nn.init.kaiming_uniform_(
-                    torch.empty(self.planes, self.M), nonlinearity='relu'
-                ) / 10 # / 10  to make the data around 1e-2, which is important for training!
-            )
-        self.out_bn_relu = nn.Sequential(
-                ME.MinkowskiConvolution(planes*self.expansion, planes, kernel_size=1, dimension=3),
-                ME.MinkowskiBatchNorm(planes),
-                ME.MinkowskiReLU(),
-                )
+        # if self.conv_v == True:
+            # self.v = MinkoskiConvBNReLU(planes, planes*self.expansion, kernel_size=3)
+        # else:
+            # self.v = MinkoskiConvBNReLU(planes, planes*self.expansion, kernel_size=1)
+        # self.codebook = nn.Parameter(
+                # # torch.nn.init.xavier_uniform_(
+                # torch.nn.init.kaiming_uniform_(
+                    # torch.empty(self.planes, self.M), nonlinearity='relu'
+                # ) / 10 # / 10  to make the data around 1e-2, which is important for training!
+            # )
+        # self.out_bn_relu = nn.Sequential(
+                # ME.MinkowskiConvolution(planes*self.expansion, planes, kernel_size=1, dimension=3),
+                # ME.MinkowskiBatchNorm(planes),
+                # ME.MinkowskiReLU(),
+                # )
 
-        if self.smooth_choice:
-            self.smooth_conv = ME.MinkowskiChannelwiseConvolution(self.M, kernel_size=3, dimension=3) # the fixed low-pass filter for local neighbors
+        # if self.smooth_choice:
+            # self.smooth_conv = ME.MinkowskiChannelwiseConvolution(self.M, kernel_size=3, dimension=3) # the fixed low-pass filter for local neighbors
 
-    def forward(self, x, iter_=None):
-        '''
-        TODO:
-        1st do qk projection: [N, dim, k]
-                - conv: directly use conv neighbor aggregation(extra params), output: [N, vec_dim]
-                - substract: use linear mapping, then gather neighbor & substract. output: [N, vec_dim, k] -> [N, vec_dim] (requires extra transform, memory-hungry)
-        2nd: q_ do dot product with M set of conv weights(apply conv): [N, dim, M] -> [N, dim, M], the apply softmax
-            - (q may be vec_dim instead of dim, broadcast to dims)
-        3rd: use attn_map: [N, M] to aggregate M convs for each point
-        '''
+    # def forward(self, x, iter_=None):
+        # '''
+        # TODO:
+        # 1st do qk projection: [N, dim, k]
+                # - conv: directly use conv neighbor aggregation(extra params), output: [N, vec_dim]
+                # - substract: use linear mapping, then gather neighbor & substract. output: [N, vec_dim, k] -> [N, vec_dim] (requires extra transform, memory-hungry)
+        # 2nd: q_ do dot product with M set of conv weights(apply conv): [N, dim, M] -> [N, dim, M], the apply softmax
+            # - (q may be vec_dim instead of dim, broadcast to dims)
+        # 3rd: use attn_map: [N, M] to aggregate M convs for each point
+        # '''
 
-        if self.planes != self.inplanes:
-            res = self.downsample(x)
-            x = self.linear_top(x)
-        else:
-            res = x
+        # if self.planes != self.inplanes:
+            # res = self.downsample(x)
+            # x = self.linear_top(x)
+        # else:
+            # res = x
 
-        v_ = self.v(x)
+        # v_ = self.v(x)
 
-        if self.qk_type == 'conv':
-            raise NotImplementedError
+        # if self.qk_type == 'conv':
+            # raise NotImplementedError
 
-        elif self.qk_type == 'sub':
-            raise NotImplementedError
+        # elif self.qk_type == 'pairwise':
+            # raise NotImplementedError
 
-        elif self.qk_type == 'dot':
-            q_ = self.q(x)
-            q_f = q_.F # the continous q: [N, vec_dim]
+        # elif self.qk_type == 'dot':
+            # q_ = self.q(x)
+            # q_f = q_.F # the continous q: [N, vec_dim]
 
-            N, _  = q_f.shape
-            dim, M = self.codebook.shape
+            # N, _  = q_f.shape
+            # dim, M = self.codebook.shape
 
 
-            index = torch.tensor(list(range(self.vec_dim))*(self.planes // self.vec_dim), device=q_f.device).long()
-            q_f = q_f.index_select(-1, index)
+            # index = torch.tensor(list(range(self.vec_dim))*(self.planes // self.vec_dim), device=q_f.device).long()
+            # q_f = q_f.index_select(-1, index)
 
-            # get_vq_loss diffs as l2_reg
-            self.vq_loss = 0. # clear every iter
-            for m_ in range(self.M):
-                diff_a = (self.codebook[None,:,m_].detach() - q_f).abs().sum()
-                diff_b = (self.codebook[None,:,m_] - q_f.detach()).abs().sum()
-                self.vq_loss = self.vq_loss + diff_a + self.vq_loss_commit_beta*diff_b
-            self.vq_loss = self.vq_lambda*self.vq_loss/N
+            # # get_vq_loss diffs as l2_reg
+            # self.vq_loss = 0. # clear every iter
+            # for m_ in range(self.M):
+                # diff_a = (self.codebook[None,:,m_].detach() - q_f).abs().sum()
+                # diff_b = (self.codebook[None,:,m_] - q_f.detach()).abs().sum()
+                # self.vq_loss = self.vq_loss + diff_a + self.vq_loss_commit_beta*diff_b
+            # self.vq_loss = self.vq_lambda*self.vq_loss/N
 
-            discrete_q = GetCodebookWeightStraightThroughQK.apply(self,q_f)  # [N, dim]  
+            # discrete_q = GetCodebookWeightStraightThroughQK.apply(self,q_f)  # [N, dim]  
 
-            if self.smooth_choice:
-                dummy_kernel = nn.Parameter(torch.ones_like(self.smooth_conv.kernel))
-                self.smooth_conv.kernel = dummy_kernel
-                self.smooth_conv.kernel.requires_grad = False
-                # choice = self.smooth_conv(choice)
+            # if self.smooth_choice:
+                # dummy_kernel = nn.Parameter(torch.ones_like(self.smooth_conv.kernel))
+                # self.smooth_conv.kernel = dummy_kernel
+                # self.smooth_conv.kernel.requires_grad = False
+                # # choice = self.smooth_conv(choice)
 
-            neis_d = q_.coordinate_manager.get_kernel_map(q_.coordinate_map_key,
-                                                            q_.coordinate_map_key,
-                                                            kernel_size=3,
-                                                            stride=1,
-                                                            )
-            # assert q_.coordinate_manager == v_.coordinate_manager
+            # neis_d = q_.coordinate_manager.get_kernel_map(q_.coordinate_map_key,
+                                                            # q_.coordinate_map_key,
+                                                            # kernel_size=3,
+                                                            # stride=1,
+                                                            # )
+            # # assert q_.coordinate_manager == v_.coordinate_manager
 
-            out_qk = []
-            for k_ in range(self.k):
+            # out_qk = []
+            # for k_ in range(self.k):
 
-                if not k_ in neis_d.keys():
-                    continue
+                # if not k_ in neis_d.keys():
+                    # continue
 
-                neis_ = torch.gather(discrete_q, dim=0, index=neis_d[k_][0].reshape(-1,1).expand(-1,self.planes).long())
-                neis = torch.zeros(N,self.planes, device=q_.F.device)  # DEBUG: not sure if needs decalre every time
-                neis = torch.scatter(neis, dim=0, index=neis_d[k_][1].reshape(-1,1).expand(-1,self.planes).long(), src=neis_)
-                sparse_mask_cur_k = (neis.abs().sum(-1) > 0).float()
-                sparse_mask_cur_k = sparse_mask_cur_k.unsqueeze(-1).expand(-1, self.planes)
-                # DEBUG: currently only support attn_dim=1
-                out_cur_k = (neis*discrete_q*sparse_mask_cur_k).sum(-1)
-
-                out_qk.append(out_cur_k)  # [N, 1]
-
-            out_qk = torch.stack(out_qk, dim=-1)  # [N, k, 1]
-            out_qk = F.softmax(out_qk/self.temp, dim=-1) # debug_only
-
-            if self.skip_choice:
-                dummy_qk = torch.ones_like(out_qk)
-
-            out = torch.zeros_like(v_.F)
-            for k_ in range(self.k):
-
-                if not k_ in neis_d.keys():
-                    continue
-
-                neis_ = torch.gather(v_.F, dim=0, index=neis_d[k_][0].reshape(-1,1).expand(-1,self.planes).long())
-                neis = torch.zeros(N,self.planes, device=q_.F.device)  # DEBUG: not sure if needs decalre every time
+                # neis_ = torch.gather(discrete_q, dim=0, index=neis_d[k_][0].reshape(-1,1).expand(-1,self.planes).long())
+                # neis = torch.zeros(N,self.planes, device=q_.F.device)  # DEBUG: not sure if needs decalre every time
                 # neis = torch.scatter(neis, dim=0, index=neis_d[k_][1].reshape(-1,1).expand(-1,self.planes).long(), src=neis_)
-                neis.scatter_(dim=0, index=neis_d[k_][1].reshape(-1,1).expand(-1,self.planes).long(), src=neis_)
-                sparse_mask_cur_k = (neis.abs().sum(-1) > 0).float()
-                sparse_mask_cur_k = sparse_mask_cur_k.unsqueeze(-1).expand(-1, self.planes)
-                # DEBUG: currently only support attn_dim=1
-                if self.skip_choice:
-                    out_cur_k = (neis*dummy_qk[:,k_].unsqueeze(-1))
-                else:
-                    out_cur_k = (neis*out_qk[:,k_].unsqueeze(-1))
-                out += out_cur_k
+                # sparse_mask_cur_k = (neis.abs().sum(-1) > 0).float()
+                # sparse_mask_cur_k = sparse_mask_cur_k.unsqueeze(-1).expand(-1, self.planes)
+                # # DEBUG: currently only support attn_dim=1
+                # out_cur_k = (neis*discrete_q*sparse_mask_cur_k).sum(-1)
 
-        out = ME.SparseTensor(features=out, coordinate_map_key=x.coordinate_map_key, coordinate_manager=x.coordinate_manager)
-        out = self.out_bn_relu(out)
-        out = out + res
+                # out_qk.append(out_cur_k)  # [N, 1]
 
-        return out
+            # out_qk = torch.stack(out_qk, dim=-1)  # [N, k, 1]
+            # out_qk = F.softmax(out_qk/self.temp, dim=-1) # debug_only
+
+            # if self.skip_choice:
+                # dummy_qk = torch.ones_like(out_qk)
+
+            # out = torch.zeros_like(v_.F)
+            # for k_ in range(self.k):
+
+                # if not k_ in neis_d.keys():
+                    # continue
+
+                # neis_ = torch.gather(v_.F, dim=0, index=neis_d[k_][0].reshape(-1,1).expand(-1,self.planes).long())
+                # neis = torch.zeros(N,self.planes, device=q_.F.device)  # DEBUG: not sure if needs decalre every time
+                # # neis = torch.scatter(neis, dim=0, index=neis_d[k_][1].reshape(-1,1).expand(-1,self.planes).long(), src=neis_)
+                # neis.scatter_(dim=0, index=neis_d[k_][1].reshape(-1,1).expand(-1,self.planes).long(), src=neis_)
+                # sparse_mask_cur_k = (neis.abs().sum(-1) > 0).float()
+                # sparse_mask_cur_k = sparse_mask_cur_k.unsqueeze(-1).expand(-1, self.planes)
+                # # DEBUG: currently only support attn_dim=1
+                # if self.skip_choice:
+                    # out_cur_k = (neis*dummy_qk[:,k_].unsqueeze(-1))
+                # else:
+                    # out_cur_k = (neis*out_qk[:,k_].unsqueeze(-1))
+                # out += out_cur_k
+
+        # out = ME.SparseTensor(features=out, coordinate_map_key=x.coordinate_map_key, coordinate_manager=x.coordinate_manager)
+        # out = self.out_bn_relu(out)
+        # out = out + res
+
+        # return out
 
 
 

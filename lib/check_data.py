@@ -3,10 +3,11 @@ import MinkowskiEngine as ME
 
 def check_data(model, train_data_loader, val_data_loader, config):
     data_iter = train_data_loader.__iter__()
+    import ipdb; ipdb.set_trace()
 
     sample_size = 1
-    # strides = [2,4,8,16]
-    strides = [2]
+    strides = [2,4,8,16]
+    # strides = [2]
 
     for stride in strides:
 
@@ -47,10 +48,10 @@ def check_data(model, train_data_loader, val_data_loader, config):
         # d['neis'] = all_neis
         d['sparse_mask'] = torch.cat(all_neis_scenes, dim=-1)
         print('Stride:{} Shape:'.format(stride), d['sparse_mask'].shape)
-        # name = "sparse_mask_s{}_scannet.pth".format(stride)
-        name = 'test-kitti'
+        name = "sparse_mask_s{}_nuscenes.pth".format(stride)
+        # name = 'test-kitti'
         torch.save(d, '/home/zhaotianchen/project/point-transformer/SpatioTemporalSegmentation-ScanNet/plot/final/{}'.format(name))
-        import ipdb; ipdb.set_trace()
+        # import ipdb; ipdb.set_trace()
 
     import ipdb; ipdb.set_trace()
 

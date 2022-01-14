@@ -26,12 +26,13 @@ def polar2cat(input_xyz_polar):
 
 
 class Nuscenes(data.Dataset):
-    def __init__(self, config, train=True, cylinder_voxelize=False):
+    def __init__(self, config, train=True, cylinder_voxelize=False, sample_stride=1):
 
         self.config = config
         self.train = train
         self.split='train' if self.train else "val"
         self.cylinder_voxelize = cylinder_voxelize
+        self.sample_stride = sample_stride
 
         self.NUM_IN_CHANNEL=5
         self.NUM_LABELS=16 # TODO: fix
@@ -63,6 +64,9 @@ class Nuscenes(data.Dataset):
         with open(self.label_filename_path, 'rb') as f:
             self.label_filenames = pickle.load(f)
 
+        self.nusc_infos = self.nusc_infos[::self.sample_stride]
+        self.label_filenames = self.label_filenames[::self.sample_stride]
+
         # self.point_cloud_dataset = in_dataset
         self.grid_size = np.asarray([480, 360, 32])
         self.rotate_aug = False
@@ -93,7 +97,7 @@ class Nuscenes(data.Dataset):
 
     def __len__(self):
         'Denotes the total number of samples'
-        return len(self.nusc_infos)
+        return len(self.nusc_infos) 
 
     def __getitem__(self, index):
         info = self.nusc_infos[index]

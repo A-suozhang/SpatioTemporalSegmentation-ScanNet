@@ -38,8 +38,6 @@ def train(model, data_loader, val_data_loader, config, transform_data_fn=None):
     # Set up the train flag for batch normalization
     model.train()
 
-    import ipdb; ipdb.set_trace()
-
     # Configuration
     data_timer, iter_timer = Timer(), Timer()
     data_time_avg, iter_time_avg = AverageMeter(), AverageMeter()
