@@ -405,12 +405,9 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
 
         self.h = 1 # the num-head, noted that since all heads are parallel, could view as expansion
         self.M = 3
-        self.qk_type = 'pairwise'
-        # self.qk_type = 'conv'
+        self.qk_type = 'pairwise' # 'conv'
         self.conv_v = True
-        # self.vec_dim = 1
-        # self.vec_dim = 4
-        self.vec_dim = self.planes // 8
+        self.vec_dim = 8
         self.top_k_choice = False
         # self.neighbor_type = 'sparse_query'
         self.k = 27
@@ -419,26 +416,26 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
 
         # === some additonal tricks ===
         self.skip_choice = False # only_used in debug mode, notice that this mode contains unused params, so could not support ddp for now
-        self.gradual_split = False
-        self.smooth_choice = False
+        # self.gradual_split = False
+        # self.smooth_choice = False
 
-        self.diverse_reg = False
-        self.diverse_lambda = (1.e-4)
+        # self.diverse_reg = False
+        # self.diverse_lambda = (1.e-4)
 
-        self.codebook_prior = False
-        self.hard_mask = False
+        self.codebook_prior = True
+        self.hard_mask = True
 
-        self.sparse_pattern_reg = False
+        self.sparse_pattern_reg = True
 
-        num_class = 21
-        self.with_label_embedding = False
-        if self.with_label_embedding:
-            self.label_reg_lambda = (5.e-5)
-            self.aux_head = ME.MinkowskiConvolution(self.planes, num_class, kernel_size=1, dimension=3)
-            self.aux_criterion = nn.CrossEntropyLoss(ignore_index=-1)
+        # num_class = 21
+        # self.with_label_embedding = False
+        # if self.with_label_embedding:
+            # self.label_reg_lambda = (5.e-5)
+            # self.aux_head = ME.MinkowskiConvolution(self.planes, num_class, kernel_size=1, dimension=3)
+            # self.aux_criterion = nn.CrossEntropyLoss(ignore_index=-1)
 
-        if self.with_label_embedding:
-            self.label_embedding = nn.Parameter(torch.rand(num_class, planes))
+        # if self.with_label_embedding:
+            # self.label_embedding = nn.Parameter(torch.rand(num_class, planes))
 
         if self.inplanes != self.planes:
             self.linear_top = MinkoskiConvBNReLU(inplanes, planes, kernel_size=1)
@@ -484,8 +481,7 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
                 # "region_offsets": ro0,
                 "dimension": 3,
                 }
-            self.kgargs = [kgargs0, kgargs1, kgargs2]
-            # self.kgargs = [kgargs0, kgargs1]
+            self.kgargs = [kgargs0, kgargs1, kgargs2] # len should align with M
             kgs = [ME.KernelGenerator(**kg) for kg in self.kgargs]
             for i_ in range(self.M):
                 self.codebook.append(
@@ -495,7 +491,6 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
                         # ME.MinkowskiReLU(),
                         )
                     )
-            # DEBUG:  rewrite Q for custom-kernel
             if not self.skip_choice:
                 if self.qk_type == 'conv':
                     self.q = nn.ModuleList([])
@@ -545,9 +540,11 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
                 else:
                     raise NotImplementedError
 
-        # specify some of the Priors
         if self.codebook_prior:
-
+            import ipdb; ipdb.set_trace()
+            # 3 masks
+            # each contains masks at differnt stride
+            mask1 = torch.load('./plot/final/sparse_masks.pth')
             mask0 = []
             mask1 = np.array([
                     [10,11,12,20,21,22],
@@ -588,11 +585,11 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
                 ME.MinkowskiReLU(),
                 )
 
-        if self.smooth_choice:
-            self.smooth_conv = ME.MinkowskiChannelwiseConvolution(self.M, kernel_size=3, dimension=3) # the fixed low-pass filter for local neighbors
-            dummy_kernel = nn.Parameter(torch.ones_like(self.smooth_conv.kernel))
-            self.smooth_conv.kernel = dummy_kernel
-            self.smooth_conv.kernel.requires_grad = False
+        # if self.smooth_choice:
+            # self.smooth_conv = ME.MinkowskiChannelwiseConvolution(self.M, kernel_size=3, dimension=3) # the fixed low-pass filter for local neighbors
+            # dummy_kernel = nn.Parameter(torch.ones_like(self.smooth_conv.kernel))
+            # self.smooth_conv.kernel = dummy_kernel
+            # self.smooth_conv.kernel.requires_grad = False
 
     def expand_vec_dim(self,x):
         # x shold be like [N, vec_dim]; [N, vec_dim, M]
@@ -607,7 +604,7 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
 
         return x
 
-    def get_sparse_pattern(self, x, type_=2):
+    def get_sparse_pattern(self, x, choice, type_=1):
 
         # FORMULA 1: get codebook kernel shapes and directly use the sparse-pattern matching 
         # as the guidance of choice
@@ -637,6 +634,7 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
                     sparse_pattern_ = torch.zeros([N, 1], device=x.device)
 
                 if hasattr(self, "codebook_masks"):
+                    # TODO: acquire the stride corresponding 
                     cur_mask = self.codebook_masks[m_]
                 else:
                     cur_mask = []
@@ -662,19 +660,20 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
                 else:
                     sparse_pattern_ = sparse_pattern_ / cur_k
                 sparse_patterns.append(sparse_pattern_)
-            sparse_patterns = torch.stack(sparse_patterns, dim=-1)
-
-            self.register_buffer("sparse_patterns",sparse_patterns)
-
+            sparse_patterns = torch.stack(sparse_patterns, dim=-1) # [N,D,M]
             # Reg Type1:  encourage the kernel to lean to map with more matching neighbors
             temp_ = 0.1
             eps = 1.e-3
-            self.sparse_pattern = F.softmax((sparse_patterns+eps)/temp_, dim=-1)  # [N. M]
+            sparse_patterns = F.softmax((F.softmax((sparse_patterns+eps)/temp_, dim=1)+eps)/temp_, dim=-1)  # [N. vec-dim. M] 
+            self.register_buffer("sparse_patterns",sparse_patterns)
+
+            return choice*self.sparse_patterns
 
         # formula 2: MultiScale Estimation of how sparse a point is 
         # apply softmax in the normalized N points dimension
         # calc the relative sparsity distance to many centers as regs
         elif type_ == 2:
+            raise NotImplementedError
 
             eps = 1.e-3
             T = 25
@@ -807,8 +806,8 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
         self.register_buffer('coord_map', x.C)
         self.schedule_update(iter_)
 
-        if self.sparse_pattern_reg:
-            self.get_sparse_pattern(x)
+        # if self.sparse_pattern_reg:
+            # self.get_sparse_pattern(x)
 
         if self.planes != self.inplanes:
             res = self.downsample(x)
@@ -857,11 +856,12 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
 
         v_ = self.v(x)
 
-        if self.diverse_reg:
-            self.get_diversity_reg()
+        # if self.diverse_reg:
+            # self.get_diversity_reg()
 
-        if not self.skip_choice:
-
+        if self.skip_choice:
+            pass
+        else:  # no skip choice
             if self.qk_type == 'conv':
                 if not self.CUSTOM_KERNEL:
                     q_ = self.q(x)
@@ -903,8 +903,8 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
                 else:
                     pass
 
-                if self.sparse_pattern_reg:
-                    choice = choice*self.sparse_patterns
+                # if self.sparse_pattern_reg:
+                    # choice = choice*self.sparse_patterns
 
                 # attn_map = torch.stack([self.codebook[_][0].kernel for _ in range(self.M) ], dim=0) # [M. K], in some case(CUSTOM_KERNEL)
                 attn_map = torch.cat([self.codebook[_][0].kernel for _ in range(self.M)],dim=0) # [M. K]
@@ -967,6 +967,8 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
                 choice = choices.unsqueeze(1).expand(-1, self.vec_dim, -1) # [N, dim, M]
                 self.register_buffer('choice_map', choices)
                 # self.register_buffer('coord_map')
+            if self.sparse_pattern_reg:
+                choice = self.get_sparse_pattern(x, choice)
 
         if self.skip_choice:
             N, dim = v_.shape
@@ -1027,8 +1029,8 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
         out = self.out_bn_relu(out)
         out = out + res
 
-        if self.with_label_embedding:
-            self.get_label_embedding(out, aux)
+        # if self.with_label_embedding:
+            # self.get_label_embedding(out, aux)
 
         return out
 
