@@ -74,6 +74,7 @@ def main():
         json_config['multiprocess'] = False
         json_config['log_dir'] = config.log_dir
         json_config['val_threads'] = config.val_threads
+        json_config['submit'] = config.submit
         config = edict(json_config)
 
         config.val_batch_size = val_bs
@@ -382,10 +383,10 @@ def main():
             dataset = SemanticKITTI(root=config.semantic_kitti_path,
                                    num_points = None,
                                    voxel_size=config.voxel_size,
-                                   submit=False)
+                                   submit=config.submit)
             val_data_loader = torch.utils.data.DataLoader( # shuffle=false, repeat=false
                 dataset['test'],
-                batch_size=config.batch_size,
+                batch_size=config.val_batch_size,
                 num_workers=config.val_threads,
                 pin_memory=True,
                 collate_fn=t.cfl_collate_fn_factory(False)
@@ -549,10 +550,15 @@ def main():
             test(model, val_data_loader, config, save_pred=True, split='val')
     else:
         assert config.multiprocess == False
+        # if test for submission, make a submit directory at current directory
+        submit_dir = os.path.join(os.getcwd(), 'submit', 'sequences')
+        if config.submit and not os.path.exists(submit_dir):
+            os.makedirs(submit_dir)
+            print("Made submission directory: " + submit_dir)
         if point_scannet:
             test_points(model, val_data_loader, config)
         else:
-            test(model, val_data_loader, config)
+            test(model, val_data_loader, config, submit_dir=submit_dir)
 
 if __name__ == '__main__':
     __spec__ = None

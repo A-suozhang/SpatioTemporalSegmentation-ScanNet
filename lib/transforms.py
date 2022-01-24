@@ -234,7 +234,11 @@ class cfl_collate_fn_factory:
     self.limit_numpoints = limit_numpoints
 
   def __call__(self, list_data):
-    coords, feats, labels, unique_map, inverse_map = list(zip(*list_data))
+    filename = None
+    if len(list(zip(*list_data))) == 6:
+      coords, feats, labels, unique_map, inverse_map, filename = list(zip(*list_data))
+    else:
+      coords, feats, labels, unique_map, inverse_map = list(zip(*list_data))
     coords_batch, feats_batch, labels_batch = [], [], []
     batch_id = 0
     batch_num_points = 0
@@ -282,7 +286,7 @@ class cfl_collate_fn_factory:
     # Concatenate all lists
     coords_batch, feats_batch, labels_batch = ME.utils.sparse_collate(coords_batch, feats_batch, labels_batch)
 
-    return coords_batch, feats_batch, labels_batch, unique_map, inverse_map
+    return coords_batch, feats_batch, labels_batch, unique_map, inverse_map, filename
 
 # class cflp_collate_fn_factory:
 #   """Generates collate function for coords, feats, labels, and point cloud

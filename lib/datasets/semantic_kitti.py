@@ -3,6 +3,7 @@ import os.path
 import torch
 
 import numpy as np
+import torch.nn.functional as F
 
 from lib.sparse_voxelization import SparseVoxelizer
 
@@ -52,6 +53,32 @@ kept_labels = [
 ]
 
 
+class Remap(object):
+    def __init__(self) -> None:
+        kept_labels_ordered = []
+        for k in label_name_mapping:
+            _label = label_name_mapping[k]
+            if _label in kept_labels:
+                kept_labels_ordered.append(_label)
+
+        inv_map = dict()
+        for i, label in enumerate(kept_labels_ordered):
+            key = i
+            for k in label_name_mapping:
+                if label_name_mapping[k] == label:
+                    value = k
+                    break
+            inv_map[key] = value
+
+        max_key = max(inv_map.keys()) + 1
+        remap_lut = np.zeros((max_key), dtype=np.int32)
+        remap_lut[list(inv_map.keys())] = list(inv_map.values())
+        self.remap_lut = remap_lut
+    
+    def getRemapLUT(self):
+        return self.remap_lut
+
+
 class SemanticKITTI(dict):
 
     def __init__(self, root, voxel_size, num_points,**kwargs):
@@ -72,9 +99,10 @@ class SemanticKITTI(dict):
                 'test':
                     SemanticKITTIInternal(root,
                                           voxel_size,
-                                          num_points,
+                                          split='test',
+                                          num_points=num_points,
                                           sample_stride=1,
-                                          split='test')
+                                          submit=True)
             })
         else:
             super().__init__({
@@ -109,10 +137,11 @@ class SemanticKITTIInternal:
             trainval = True
         else:
             trainval = False
+        self.submit = submit
         self.NUM_IN_CHANNEL = 4
         self.NUM_LABELS = len(kept_labels)
         self.IGNORE_LABELS = [-1]  # labels that are not evaluated
-        self.NEED_PRED_POSTPROCESSING = False
+        self.NEED_PRED_POSTPROCESSING = True
         self.root = root
         self.split = split
         self.voxel_size = voxel_size
@@ -171,6 +200,8 @@ class SemanticKITTIInternal:
         self.num_classes = cnt
         self.angle = 0.0
 
+        self.class_names = kept_labels
+
         # We don't do any more augmentation in SparseVoxelizer
         # because we already done in this Class
         self.sparse_voxelizer = SparseVoxelizer(
@@ -191,13 +222,53 @@ class SemanticKITTIInternal:
         # d1['feats'] = outs[1]
         # d1['target'] = outs[2]
         # torch.save(d1, '/home/zhaotianchen/project/point-transformer/SpatioTemporalSegmentation-ScanNet/plot/kitti-my.pth')
+        self.point_num_ratio = torch.tensor(torch.load('./point_ratio_val.pth')).cuda()
+        self.class_reweight_lambda = 1.e-1 # around 3x
+        self.class_reweight_topk = 1
+
+        if self.class_reweight_lambda:
+            class_reweight_masks = self.point_num_ratio.argsort()[self.class_reweight_topk:]
+        else:
+            class_reweight_masks = []
+            # class_reweight_indexes = [7,11] 
+
+        class_reweight = F.softmax(self.point_num_ratio/self.class_reweight_lambda)*len(self.point_num_ratio)
+        class_reweight[class_reweight_masks] = 1
+        class_reweight = 1/class_reweight
+        self.class_reweight = class_reweight
+
+
+    def get_prediction(self, output, target):
+        output_ = F.softmax(output/5)  # make the pred softer, simialr with 0.1
         # import ipdb; ipdb.set_trace()
+        output_ = output_*self.class_reweight
+        # print(class_reweight)
+
+        # debugging the 7,11 class missing
+        debug_index = 7
+        if len(torch.where(target == debug_index)[0])>0:
+            idxs = torch.where(target == debug_index)[0]
+            for idx_ in idxs:
+                print(output_[idx_].max(), output_[idx_][debug_index])
+            print('\n')
+
+        return output_.max(1)[1]
 
     def set_angle(self, angle):
         self.angle = angle
 
     def __len__(self):
         return len(self.files)
+
+    def get_classnames(self):
+        kept_labels_ordered = []
+        for k in label_name_mapping:
+            _label = label_name_mapping[k]
+            if _label in kept_labels:
+                kept_labels_ordered.append(_label)
+
+        return kept_labels_ordered
+
 
     def __getitem__(self, index):
         with open(self.files[index], 'rb') as b:
@@ -254,6 +325,8 @@ class SemanticKITTIInternal:
             return_transformation=False
         )
 
+        # add filename to save result for submission
+        outs = (*outs, self.files[index])
         # outs = (coords, feats, labels, unique_map, inverse_map)
         assert isinstance(outs, tuple)
         return outs
