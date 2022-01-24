@@ -26,8 +26,9 @@ import torch
 from config import get_config
 import shutil
 
-from lib.test import test
+from lib.test import test, test_points
 from lib.train import train
+from lib.train import train_point
 from lib.multitrain import train as train_mp
 from lib.check_data import check_data
 from lib.utils import load_state_with_same_shape, get_torch_device, count_parameters
@@ -180,8 +181,8 @@ def main():
             # collate_fn = t.cfl_collate_fn_factory(False) # no limit num-points
             trainset = DatasetClass(root='/data/eva_share_users/zhaotianchen/scannet/raw/scannet_pickles',
                                       npoints=config.num_points,
-                                      split='debug',
-                                      # split='train',
+                                      # split='debug',
+                                      split='train',
                                       with_norm=False,
                                       )
             train_data_loader = torch.utils.data.DataLoader(
@@ -195,8 +196,8 @@ def main():
 
             valset = val_DatasetClass(root='/data/eva_share_users/zhaotianchen/scannet/raw/scannet_pickles',
                                       scene_list_dir='/data/eva_share_users/zhaotianchen/scannet/raw/metadata',
-                                      split='debug',
-                                      # split='eval',
+                                      # split='debug',
+                                      split='eval',
                                       block_points=config.num_points,
                                       with_norm=False,
                                       delta=1.0,
@@ -489,7 +490,7 @@ def main():
     else:
         h = None
         vec_dim = None
-    logging.info('===> Model Args:\n PLANES: {} \n LAYERS: {}\n HEADS: {}\n Vec-dim: {}\n'.format(model.PLANES, model.LAYERS, h, vec_dim))
+    # logging.info('===> Model Args:\n PLANES: {} \n LAYERS: {}\n HEADS: {}\n Vec-dim: {}\n'.format(model.PLANES, model.LAYERS, h, vec_dim))
     logging.info(model)
 
     # Set the number of threads

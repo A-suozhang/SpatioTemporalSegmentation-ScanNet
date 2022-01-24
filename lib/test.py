@@ -336,150 +336,151 @@ def vote(predict, vote_num, pred, points_idx):
                         vote_num[pidx_, 0] += 1
         return predict, vote_num
 
-# def test_points(model,
-                                 # data_loader,
-                                 # config,
-                                 # with_aux=False,
-                                 # save_dir=None,
-                                 # split='eval',
-                                 # use_voxel=True):
-        # '''
-        # :param pn_list: sn (list => int), the number of points in a scene
-        # :param scene_list: sn (list => str), scene id
-        # '''
+def test_points(model,
+                                 data_loader,
+                                 config,
+                                 with_aux=False,
+                                 save_dir=None,
+                                 split='eval',
+                                 use_voxel=True):
+        '''
+        :param pn_list: sn (list => int), the number of points in a scene
+        :param scene_list: sn (list => str), scene id
+        '''
 
-        # pn_list = data_loader.dataset.point_num
-        # scene_list = data_loader.dataset.scene_list
-        # SEM_LABELS = data_loader.dataset.semantic_labels_list
+        pn_list = data_loader.dataset.point_num
+        scene_list = data_loader.dataset.scene_list
+        SEM_LABELS = data_loader.dataset.semantic_labels_list
+        NUM_CLASSES = data_loader.dataset.NUM_LABELS
 
-        # model.eval()
-        # total_seen = 0
-        # total_correct = 0
-        # total_seen_class = [0] * NUM_CLASSES
-        # total_correct_class = [0] * NUM_CLASSES
-        # total_iou_deno_class = [0] * NUM_CLASSES
+        model.eval()
+        total_seen = 0
+        total_correct = 0
+        total_seen_class = [0] * NUM_CLASSES
+        total_correct_class = [0] * NUM_CLASSES
+        total_iou_deno_class = [0] * NUM_CLASSES
 
-        # if save_dir is not None:
-                # save_dict = {}
-                # save_dict['pred'] = []
+        if save_dir is not None:
+                save_dict = {}
+                save_dict['pred'] = []
 
-        # use_voxel = not config.pure_point
+        use_voxel = not config.pure_point
 
-        # scene_num = len(scene_list)
-        # for scene_index in range(scene_num):
-                # logging.info(' ======= {}/{} ======= '.format(scene_index, scene_num))
-                # # scene_index = 0
-                # scene_id = scene_list[scene_index]
-                # point_num = pn_list[scene_index]
-                # predict = np.zeros((point_num, NUM_CLASSES), dtype=np.float32) # pn,21
-                # vote_num = np.zeros((point_num, 1), dtype=np.int) # pn,1
-                # for idx, batch_data in enumerate(data_loader):
-                        # # logging.info('batch {}'.format(idx))
-                        # if with_aux:
-                                # pc, seg, aux, smpw, pidx= batch_data
-                                # aux = aux.cuda()
-                                # seg = seg.cuda()
-                        # else:
-                                # pc, seg, smpw, pidx= batch_data
-                        # if pidx.max() > point_num:
-                                # import ipdb; ipdb.set_trace()
+        scene_num = len(scene_list)
+        for scene_index in range(scene_num):
+                logging.info(' ======= {}/{} ======= '.format(scene_index, scene_num))
+                # scene_index = 0
+                scene_id = scene_list[scene_index]
+                point_num = pn_list[scene_index]
+                predict = np.zeros((point_num, NUM_CLASSES), dtype=np.float32) # pn,21
+                vote_num = np.zeros((point_num, 1), dtype=np.int) # pn,1
+                for idx, batch_data in enumerate(data_loader):
+                        # logging.info('batch {}'.format(idx))
+                        if with_aux:
+                                pc, seg, aux, smpw, pidx= batch_data
+                                aux = aux.cuda()
+                                seg = seg.cuda()
+                        else:
+                                pc, seg, smpw, pidx= batch_data
+                        if pidx.max() > point_num:
+                                import ipdb; ipdb.set_trace()
 
-                        # pc = pc.cuda().float()
-                        # '''
-                        # use voxel-forward for testing the scannet
-                        # '''
-                        # if use_voxel:
-                                # coords = torch.unbind(pc[:,:,:3]/config.voxel_size, dim=0)
-                                # # Normalize the xyz after the coord is set
-                                # # pc[:,:,:3] = pc[:,:,:3] / pc[:,:,:3].mean()
-                                # feats = torch.unbind(pc[:,:,:], dim=0) # use all 6 chs for eval
-                                # coords, feats= ME.utils.sparse_collate(coords, feats) # the returned coords adds a batch-dimw
-                                # pc = ME.TensorField(features=feats.float(),coordinates=coords.cuda()) # [xyz, norm_xyz, rgb]
-                                # voxels = pc.sparse()
-                                # seg = seg.view(-1)
-                                # inputs = voxels
+                        pc = pc.cuda().float()
+                        '''
+                        use voxel-forward for testing the scannet
+                        '''
+                        if use_voxel:
+                                coords = torch.unbind(pc[:,:,:3]/config.voxel_size, dim=0)
+                                # Normalize the xyz after the coord is set
+                                # pc[:,:,:3] = pc[:,:,:3] / pc[:,:,:3].mean()
+                                feats = torch.unbind(pc[:,:,:], dim=0) # use all 6 chs for eval
+                                coords, feats= ME.utils.sparse_collate(coords, feats) # the returned coords adds a batch-dimw
+                                pc = ME.TensorField(features=feats.float(),coordinates=coords.cuda()) # [xyz, norm_xyz, rgb]
+                                voxels = pc.sparse()
+                                seg = seg.view(-1)
+                                inputs = voxels
 
-                        # else:
-                                # # DEBUG: discrete input xyz for point-based method
-                                # feats = torch.unbind(pc[:,:,:], dim=0)
-                                # coords = torch.unbind(pc[:,:,:3]/config.voxel_size, dim=0)
-                                # coords, feats= ME.utils.sparse_collate(coords, feats) # the returned coords adds a batch-dim
+                        else:
+                                # DEBUG: discrete input xyz for point-based method
+                                feats = torch.unbind(pc[:,:,:], dim=0)
+                                coords = torch.unbind(pc[:,:,:3]/config.voxel_size, dim=0)
+                                coords, feats= ME.utils.sparse_collate(coords, feats) # the returned coords adds a batch-dim
 
-                                # pc = ME.TensorField(features=feats.float(),coordinates=coords.cuda()) # [xyz, norm_xyz, rgb]
-                                # voxels = pc.sparse()
-                                # pc_ = voxels.slice(pc)
-                                # # pc = torch.cat([pc_.C[:,1:],pc_.F[:,:3:]],dim=1).reshape([-1, config.num_points, 6])
-                                # pc = pc_.F.reshape([-1, config.num_points, 6])
+                                pc = ME.TensorField(features=feats.float(),coordinates=coords.cuda()) # [xyz, norm_xyz, rgb]
+                                voxels = pc.sparse()
+                                pc_ = voxels.slice(pc)
+                                # pc = torch.cat([pc_.C[:,1:],pc_.F[:,:3:]],dim=1).reshape([-1, config.num_points, 6])
+                                pc = pc_.F.reshape([-1, config.num_points, 6])
 
-                                # # discrete_coords = coords.reshape([-1, config.num_points, 4])[:,:,1:] # the batch does not have drop-last
-                                # # pc[:,:,:3] = discrete_coords
+                                # discrete_coords = coords.reshape([-1, config.num_points, 4])[:,:,1:] # the batch does not have drop-last
+                                # pc[:,:,:3] = discrete_coords
 
-                                # pc = pc.transpose(1,2)
-                                # inputs = pc
+                                pc = pc.transpose(1,2)
+                                inputs = pc
 
-                        # if with_aux:
-                                # # DEBUG: Use target as instance for now
-                                # pred = model(inputs, instance=aux) # B,N,C
-                        # else:
-                                # pred = model(inputs) # B,N,C
+                        if with_aux:
+                                # DEBUG: Use target as instance for now
+                                pred = model(inputs, instance=aux) # B,N,C
+                        else:
+                                pred = model(inputs) # B,N,C
 
-                        # if use_voxel:
-                                # assert isinstance(pred, ME.SparseTensor)
-                                # pred = pred.slice(pc).F
-                                # try:
-                                        # pred = pred.reshape([-1, config.num_points, NUM_CLASSES])       # leave the 1st dim, since no droplast
-                                # except RuntimeError:
-                                        # import ipdb; ipdb.set_trace()
+                        if use_voxel:
+                                assert isinstance(pred, ME.SparseTensor)
+                                pred = pred.slice(pc).F
+                                try:
+                                        pred = pred.reshape([-1, config.num_points, NUM_CLASSES])       # leave the 1st dim, since no droplast
+                                except RuntimeError:
+                                        import ipdb; ipdb.set_trace()
 
-                        # pred = torch.nn.functional.softmax(pred, dim=2)
-                        # pred = pred.cpu().detach().numpy()
+                        pred = torch.nn.functional.softmax(pred, dim=2)
+                        pred = pred.cpu().detach().numpy()
 
-                        # pidx = pidx.numpy() # B,N
-                        # predict, vote_num = vote(predict, vote_num, pred, pidx)
+                        pidx = pidx.numpy() # B,N
+                        predict, vote_num = vote(predict, vote_num, pred, pidx)
 
-                # predict = predict / vote_num
+                predict = predict / vote_num
 
-                # if save_dir is not None:
-                        # if np.isnan(predict).any():
-                                # print("found nan in scene{}".format(scene_id))
-                                # import ipdb; ipdb.set_trace()
-                        # save_dict['pred'].append(np.argmax(predict, axis=-1))
+                if save_dir is not None:
+                        if np.isnan(predict).any():
+                                print("found nan in scene{}".format(scene_id))
+                                import ipdb; ipdb.set_trace()
+                        save_dict['pred'].append(np.argmax(predict, axis=-1))
 
-                # # predict = np.argmax(predict[:, 1:], axis=-1) # pn  # debug WHY?
-                # predict = np.argmax(predict, axis=-1) # pn
-                # labels = SEM_LABELS[scene_index]
+                # predict = np.argmax(predict[:, 1:], axis=-1) # pn  # debug WHY?
+                predict = np.argmax(predict, axis=-1) # pn
+                labels = SEM_LABELS[scene_index]
 
-                # '''
-                # additional logic for handling 20 class output
-                # '''
-                # labels = labels - 1
-                # correct = predict == labels
-                # correct = correct[labels != -1]
+                '''
+                additional logic for handling 20 class output
+                '''
+                labels = labels - 1
+                correct = predict == labels
+                correct = correct[labels != -1]
 
-                # total_seen += np.sum(labels.size) # point_num
-                # # total_correct += np.sum((predict == labels) & (labels > 0))
-                # total_correct += np.sum(correct)
-                # logging.info('accuracy:{} '.format(total_correct / total_seen))
-                # for l in range(NUM_CLASSES):
-                        # total_seen_class[l] += np.sum((labels == l) & (labels >= 0))
-                        # total_correct_class[l] += np.sum((predict == l) & (labels == l))
-                        # total_iou_deno_class[l] += np.sum(((predict == l) & (labels >= 0)) | (labels == l))
+                total_seen += np.sum(labels.size) # point_num
+                # total_correct += np.sum((predict == labels) & (labels > 0))
+                total_correct += np.sum(correct)
+                logging.info('accuracy:{} '.format(total_correct / total_seen))
+                for l in range(NUM_CLASSES):
+                        total_seen_class[l] += np.sum((labels == l) & (labels >= 0))
+                        total_correct_class[l] += np.sum((predict == l) & (labels == l))
+                        total_iou_deno_class[l] += np.sum(((predict == l) & (labels >= 0)) | (labels == l))
 
-                # '''Uncomment this to save the map, this could take about 500M sapce'''
-                # # save_map(model, config)
-                # # import ipdb; ipdb.set_trace()
+                '''Uncomment this to save the map, this could take about 500M sapce'''
+                # save_map(model, config)
+                # import ipdb; ipdb.set_trace()
 
-        # # final save
-        # if save_dir is not None:
-                # torch.save(save_dict, os.path.join(save_dir,'{}_pred.pth'.format(split)))
+        # final save
+        if save_dir is not None:
+                torch.save(save_dict, os.path.join(save_dir,'{}_pred.pth'.format(split)))
 
-        # IoU = np.array(total_correct_class)/(np.array(total_iou_deno_class,dtype=np.float)+1e-6)
-        # logging.info('eval point avg class IoU: %f' % (np.mean(IoU)))
-        # IoU_Class = 'Each Class IoU:::\n'
-        # for i in range(IoU.shape[0]):
-                # logging.info('Class %d : %.4f'%(i+1, IoU[i]))
-        # logging.info('eval accuracy: %f'% (total_correct / float(total_seen)))
-        # logging.info('eval avg class acc: %f' % (np.mean(np.array(total_correct_class)/(np.array(total_seen_class,dtype=np.float)+1e-6))))
+        IoU = np.array(total_correct_class)/(np.array(total_iou_deno_class,dtype=np.float)+1e-6)
+        logging.info('eval point avg class IoU: %f' % (np.mean(IoU)))
+        IoU_Class = 'Each Class IoU:::\n'
+        for i in range(IoU.shape[0]):
+                logging.info('Class %d : %.4f'%(i+1, IoU[i]))
+        logging.info('eval accuracy: %f'% (total_correct / float(total_seen)))
+        logging.info('eval avg class acc: %f' % (np.mean(np.array(total_correct_class)/(np.array(total_seen_class,dtype=np.float)+1e-6))))
 
 
 

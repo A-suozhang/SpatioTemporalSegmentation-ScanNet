@@ -335,7 +335,7 @@ class PTBlock(nn.Module):
             # downsample_block cfg
             self.POS_ENCODING=True
             self.CAT_POS=False
-            self.SKIP_ATTN = True # skip-attn means linear + max(mini-pointnet)
+            self.SKIP_ATTN = False # skip-attn means linear + max(mini-pointnet)
 
             self.QK_POS_ONLY = False
             self.V_POS_ONLY = False
@@ -348,7 +348,7 @@ class PTBlock(nn.Module):
             # DEBUG: if the normal block has skip-attn will result in nan
             self.POS_ENCODING=True
             self.CAT_POS=False
-            self.SKIP_ATTN = True
+            self.SKIP_ATTN = False
 
             self.QK_POS_ONLY = False
             self.V_POS_ONLY = False
@@ -380,7 +380,7 @@ class PTBlock(nn.Module):
         else:
             self.alpha = nn.Sequential(
                 nn.Conv1d(self.hidden_dim, self.hidden_dim, 1),
-                # nn.BatchNorm1d(self.hidden_dim)
+                nn.BatchNorm1d(self.hidden_dim)
             )
 
         self.gamma = nn.Sequential(

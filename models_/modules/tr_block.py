@@ -405,7 +405,8 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
 
         self.h = 1 # the num-head, noted that since all heads are parallel, could view as expansion
         self.M = 3
-        self.qk_type = 'pairwise' # 'conv'
+        # self.qk_type = 'pairwise'
+        self.qk_type = 'conv'
         self.conv_v = True
         self.vec_dim = 8
         self.top_k_choice = False
@@ -422,8 +423,8 @@ class DiscreteAttnTRBlock(nn.Module): # ddp could not contain unused parameter, 
         # self.diverse_reg = False
         # self.diverse_lambda = (1.e-4)
 
-        self.codebook_prior = True
-        self.hard_mask = True
+        self.codebook_prior = False
+        self.hard_mask = False
 
         self.sparse_pattern_reg = True
 
