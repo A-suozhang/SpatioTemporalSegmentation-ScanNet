@@ -124,9 +124,9 @@ def train(model, data_loader, val_data_loader, config, transform_data_fn=None):
                 pointcloud = None
 
                 if config.return_transformation:
-                    coords, input, target, _, _, pointcloud, transformation = data_iter.next()
+                    coords, input, target, _, _, pointcloud, transformation, _ = data_iter.next()
                 else:
-                    coords, input, target, _, _ = data_iter.next()  # ignore unique_map and inverse_map
+                    coords, input, target, _, _, _ = data_iter.next()  # ignore unique_map and inverse_map
 
                 if config.use_aux:
                     assert target.shape[1] == 2

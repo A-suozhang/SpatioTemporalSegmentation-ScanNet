@@ -107,6 +107,7 @@ data_arg.add_argument('--voxel_size', type=float, default=0.1)
 # data_arg.add_argument('--voxel_size', type=float, default=0.05)
 data_arg.add_argument('--num_points', type=int, default=8192)
 data_arg.add_argument('--pure_point', type=bool, default=False)
+# data_arg.add_argument('--class_reweight_lambda', type=float, default=1.e4)
 
 # Point Cloud Dataset
 data_arg.add_argument(
@@ -185,6 +186,7 @@ test_arg.add_argument(
     '--test_config', default=None, type=str, help='path to the json config file for testing.')
 test_arg.add_argument('--test_phase', type=str, default='test', help='Dataset for test')
 test_arg.add_argument('--weights_for_inner_model', type=bool, default=False, help='Dataset for test')
+test_arg.add_argument('--submit', type=str2bool, default=False, help='SemanticKITTI submit to test server')
 
 # Misc
 misc_arg = add_argument_group('Misc')

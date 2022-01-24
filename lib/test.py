@@ -6,6 +6,7 @@
 import logging
 import warnings
 import os
+from pathlib import Path
 
 import numpy as np
 import torch
@@ -18,6 +19,7 @@ from lib.utils import Timer, AverageMeter, precision_at_one, fast_hist, per_clas
 
 import MinkowskiEngine as ME
 
+from lib.datasets.semantic_kitti import Remap
 
 def print_info(iteration,
                              max_iteration,
@@ -42,7 +44,10 @@ def print_info(iteration,
                         mAP=np.nanmean(ap_class), mAcc=np.nanmean(acc))
         if class_names is not None:
             debug_str += "\nClasses: " + " ".join(class_names) + '\n'
-        debug_str += 'IOU: ' + ' '.join('{:.03f}'.format(i) for i in ious) + '\n'
+        debug_str += 'IOU: \n'
+        for cn, i in zip(class_names, ious):
+            debug_str += ('({}):{:.03f}\n' .format(cn, i))
+        debug_str += '\n'
         debug_str += 'mAP: ' + ' '.join('{:.03f}'.format(i) for i in ap_class) + '\n'
         debug_str += 'mAcc: ' + ' '.join('{:.03f}'.format(i) for i in acc) + '\n'
 
@@ -57,7 +62,7 @@ def average_precision(prob_np, target_np):
         return average_precision_score(label, prob_np, None)
 
 
-def test(model, data_loader, config, transform_data_fn=None, has_gt=True, save_pred=False, split=None):
+def test(model, data_loader, config, transform_data_fn=None, has_gt=True, save_pred=False, split=None, submit_dir=None):
     device = get_torch_device(config.is_cuda)
     dataset = data_loader.dataset
     num_labels = dataset.NUM_LABELS
@@ -89,19 +94,24 @@ def test(model, data_loader, config, transform_data_fn=None, has_gt=True, save_p
     # Clear cache (when run in val mode, cleanup training cache)
     torch.cuda.empty_cache()
 
+    # semantic kitti label inverse mapping
+    if config.submit:
+        remap_lut = Remap().getRemapLUT()
+
     with torch.no_grad():
 
         # Calc of the iou
         total_correct = np.zeros(num_labels)
         total_seen = np.zeros(num_labels)
         total_positive = np.zeros(num_labels)
+        point_nums = np.zeros([19])
 
         for iteration in range(max_iter):
             data_timer.tic()
             if config.return_transformation:
-                coords, input, target, unique_map_list, inverse_map_list, pointcloud, transformation = data_iter.next()
+                coords, input, target, unique_map_list, inverse_map_list, pointcloud, transformation, filename = data_iter.next()
             else:
-                coords, input, target, unique_map_list, inverse_map_list = data_iter.next()
+                coords, input, target, unique_map_list, inverse_map_list, filename = data_iter.next()
             data_time = data_timer.toc(False)
 
             if config.use_aux:
@@ -138,7 +148,7 @@ def test(model, data_loader, config, transform_data_fn=None, has_gt=True, save_p
             assert sum([int(t.shape[0]) for t in unique_map_list]) == len(pred), "number of points in unique_map doesn't match predition, do not enable preprocessing"
             iter_time = iter_timer.toc(False)
 
-            if config.save_pred:
+            if config.save_pred or config.submit:
                 # troublesome processing for splitting each batch's data, and export
                 batch_ids = sinput.C[:,0]
                 splits_at = torch.stack([torch.where(batch_ids == i)[0][-1] for i in torch.unique(batch_ids)]).int()
@@ -146,15 +156,23 @@ def test(model, data_loader, config, transform_data_fn=None, has_gt=True, save_p
                 splits_at_leftshift_one = splits_at.roll(shifts=1)
                 splits_at_leftshift_one[0] = 0
                 # len_per_batch = splits_at - splits_at_leftshift_one
-
                 len_sum = 0
                 batch_id = 0
                 for start, end in zip(splits_at_leftshift_one, splits_at):
                     len_sum += len(pred[int(start):int(end)])
                     pred_this_batch = pred[int(start):int(end)]
                     coord_this_batch = pred[int(start):int(end)]
-                    save_dict['pred'].append(pred_this_batch[inverse_map_list[batch_id]])
-                    # save_dict['coord'].append(coord_this_batch[inverse_map_list[batch_id]])
+                    if config.save_pred:
+                        save_dict['pred'].append(pred_this_batch[inverse_map_list[batch_id]])
+                    else: # save submit result
+                        submission_path = filename[batch_id].replace(config.semantic_kitti_path, submit_dir).replace('velodyne', 'predictions').replace('.bin', '.label')
+                        parent_dir = Path(submission_path).parent.absolute()
+                        if not os.path.exists(parent_dir):
+                            os.makedirs(parent_dir)
+                        label_pred = pred_this_batch[inverse_map_list[batch_id]].cpu().numpy()
+                        label_pred = remap_lut[label_pred].astype(np.uint32)
+                        label_pred.tofile(submission_path)
+                        print(submission_path)
                     batch_id += 1
                 assert len_sum == len(pred)
 
@@ -213,6 +231,11 @@ def test(model, data_loader, config, transform_data_fn=None, has_gt=True, save_p
                 # print(np.nanmean(per_class_iu(hist)), np.nanmean(ious_))
                 # ious = np.array(ious_)*100
 
+
+                # calc the ratio of total points
+                # for i_ in range(19):
+                    # point_nums[i_] += (target == i_).sum().detach()
+
                 # skip calculating aps
                 ap = average_precision(prob.cpu().detach().numpy(), target_np)
                 aps = np.vstack((aps, ap))
@@ -221,7 +244,7 @@ def test(model, data_loader, config, transform_data_fn=None, has_gt=True, save_p
                     warnings.simplefilter("ignore", category=RuntimeWarning)
                     ap_class = np.nanmean(aps, 0) * 100.
 
-            if iteration % config.test_stat_freq == 0 and iteration > 0:
+            if iteration % config.test_stat_freq == 0 and iteration > 0 and not config.submit:
                 reordered_ious = dataset.reorder_result(ious)
                 reordered_ap_class = dataset.reorder_result(ap_class)
                 # dirty fix for semnaticcKITTI has no getclassnames
