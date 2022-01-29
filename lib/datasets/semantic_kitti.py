@@ -100,6 +100,7 @@ class SemanticKITTI(dict):
                     SemanticKITTIInternal(root,
                                           voxel_size,
                                           split='test',
+                                          # split='val',   # DEBUG_ONLY
                                           num_points=num_points,
                                           sample_stride=1,
                                           submit=True)
@@ -222,37 +223,41 @@ class SemanticKITTIInternal:
         # d1['feats'] = outs[1]
         # d1['target'] = outs[2]
         # torch.save(d1, '/home/zhaotianchen/project/point-transformer/SpatioTemporalSegmentation-ScanNet/plot/kitti-my.pth')
-        self.point_num_ratio = torch.tensor(torch.load('./point_ratio_val.pth')).cuda()
-        self.class_reweight_lambda = 1.e-1 # around 3x
-        self.class_reweight_topk = 1
+        self.use_class_reweight = False
+        if self.use_class_reweight:
+            self.point_num_ratio = torch.tensor(torch.load('./point_ratio_val.pth')).cuda()
+            self.class_reweight_lambda = 1.e-1 # around 3x
+            self.class_reweight_topk = 1
 
-        if self.class_reweight_lambda:
-            class_reweight_masks = self.point_num_ratio.argsort()[self.class_reweight_topk:]
-        else:
-            class_reweight_masks = []
-            # class_reweight_indexes = [7,11] 
+            if self.class_reweight_lambda:
+                class_reweight_masks = self.point_num_ratio.argsort()[self.class_reweight_topk:]
+            else:
+                class_reweight_masks = []
+                # class_reweight_indexes = [7,11] 
 
-        class_reweight = F.softmax(self.point_num_ratio/self.class_reweight_lambda)*len(self.point_num_ratio)
-        class_reweight[class_reweight_masks] = 1
-        class_reweight = 1/class_reweight
-        self.class_reweight = class_reweight
+            class_reweight = F.softmax(self.point_num_ratio/self.class_reweight_lambda)*len(self.point_num_ratio)
+            class_reweight[class_reweight_masks] = 1
+            class_reweight = 1/class_reweight
+            self.class_reweight = class_reweight
 
 
     def get_prediction(self, output, target):
-        output_ = F.softmax(output/5)  # make the pred softer, simialr with 0.1
-        # import ipdb; ipdb.set_trace()
-        output_ = output_*self.class_reweight
-        # print(class_reweight)
+        if not self.use_class_reweight:
+            return output.max(1)[1]
+        else:
+            output_ = F.softmax(output/5)  # make the pred softer, simialr with 0.1
+            output_ = output_*self.class_reweight
+            # print(class_reweight)
 
-        # debugging the 7,11 class missing
-        debug_index = 7
-        if len(torch.where(target == debug_index)[0])>0:
-            idxs = torch.where(target == debug_index)[0]
-            for idx_ in idxs:
-                print(output_[idx_].max(), output_[idx_][debug_index])
-            print('\n')
+            # debugging the 7,11 class missing
+            debug_index = 7
+            if len(torch.where(target == debug_index)[0])>0:
+                idxs = torch.where(target == debug_index)[0]
+                for idx_ in idxs:
+                    print(output_[idx_].max(), output_[idx_][debug_index])
+                print('\n')
 
-        return output_.max(1)[1]
+            return output_.max(1)[1]
 
     def set_angle(self, angle):
         self.angle = angle
